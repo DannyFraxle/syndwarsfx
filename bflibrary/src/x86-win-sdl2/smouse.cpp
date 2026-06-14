@@ -19,6 +19,7 @@
 /******************************************************************************/
 #include <stdbool.h>
 #include <SDL.h>
+#include <SDL_syswm.h>
 #include "bfmouse.h"
 
 #if defined(HAVE_CONFIG_H)
@@ -53,26 +54,38 @@ static long             lbHwCursorHotY   = 0;
 
 static void LbI_UpdateHardwareCursor(void)
 {
-    if (lbHwCursor != NULL) {
-        SDL_FreeCursor(lbHwCursor);
-        lbHwCursor = NULL;
+    // Remove the window-class cursor once so Windows has nothing to fall back
+    // on between SDL WM_SETCURSOR dispatches.
+#if defined(WIN32)
+    {
+        static bool class_cursor_cleared = false;
+        if (!class_cursor_cleared) {
+            SDL_SysWMinfo wminfo;
+            SDL_VERSION(&wminfo.version);
+            if (SDL_GetWindowWMInfo(lbWindow, &wminfo)) {
+                SetClassLongPtr(wminfo.info.win.window, GCLP_HCURSOR, (LONG_PTR)NULL);
+                class_cursor_cleared = true;
+            }
+        }
     }
+#endif
 
     const TbSprite *spr = lbHwCursorSprite;
     if (spr == NULL || spr->SWidth == 0 || spr->SHeight == 0 || spr->Data == NULL) {
         SDL_ShowCursor(SDL_DISABLE);
+        if (lbHwCursor != NULL) {
+            SDL_FreeCursor(lbHwCursor);
+            lbHwCursor = NULL;
+        }
         return;
     }
 
     int sw = spr->SWidth;
     int sh = spr->SHeight;
-    int surf_w = sw;
-    int surf_h = sh;
 
-    SDL_Surface *surf = SDL_CreateRGBSurfaceWithFormat(0, surf_w, surf_h, 32, SDL_PIXELFORMAT_RGBA8888);
+    SDL_Surface *surf = SDL_CreateRGBSurfaceWithFormat(0, sw, sh, 32, SDL_PIXELFORMAT_RGBA8888);
     if (surf == NULL) return;
 
-    // All pixels transparent to start.
     SDL_memset(surf->pixels, 0, (size_t)surf->h * surf->pitch);
 
     // Decode 8bpp RLE sprite (0=end-of-row, N>0=N opaque pixels, N<0=skip -N).
@@ -89,7 +102,7 @@ static void LbI_UpdateHardwareCursor(void)
                     unsigned char idx = *sprdata++;
                     SDL_Color c = lbPaletteColors[idx];
                     Uint32 pxval = SDL_MapRGBA(surf->format, c.r, c.g, c.b, 255);
-                    if (col < surf_w) {
+                    if (col < sw) {
                         Uint32 *row_ptr = (Uint32 *)((Uint8 *)surf->pixels + row * surf->pitch);
                         row_ptr[col] = pxval;
                     }
@@ -98,18 +111,23 @@ static void LbI_UpdateHardwareCursor(void)
         }
     }
 
-    // pointer_hotspot values are negative offsets (e.g. {-7,-7} = tip at pixel 7,7).
-    // SDL hotspot is the pixel within the sprite that is the pointer tip — negate to convert.
     int hot_x = (int)(-lbHwCursorHotX);
     int hot_y = (int)(-lbHwCursorHotY);
     if (hot_x < 0) hot_x = 0;
     if (hot_y < 0) hot_y = 0;
-    lbHwCursor = SDL_CreateColorCursor(surf, hot_x, hot_y);
+    SDL_Cursor *newCursor = SDL_CreateColorCursor(surf, hot_x, hot_y);
     SDL_FreeSurface(surf);
 
-    if (lbHwCursor != NULL) {
-        SDL_SetCursor(lbHwCursor);
+    if (newCursor != NULL) {
+        // Set the new cursor BEFORE freeing the old one. SDL_FreeCursor() on
+        // the current cursor resets SDL_CurrentCursor to SDL_DefaultCursor
+        // (the white system arrow), creating a visible flash between the free
+        // and the next SDL_SetCursor call. Swap order eliminates that gap.
+        SDL_SetCursor(newCursor);
         SDL_ShowCursor(SDL_ENABLE);
+        if (lbHwCursor != NULL)
+            SDL_FreeCursor(lbHwCursor);
+        lbHwCursor = newCursor;
     }
 }
 
@@ -154,12 +172,16 @@ TbResult LbMouseChangeSpriteOffset(long hot_x, long hot_y)
         return Lb_FAIL;
     LOGDBG("setting hs (%ld,%ld)", hot_x, hot_y);
 
-    if (!pointerHandler.SetPointerOffset(-hot_x, -hot_y))
-        return Lb_FAIL;
+    // Do NOT call pointerHandler.SetPointerOffset here. SetHotspot() calls
+    // Draw(true) which blits the software cursor sprite into lbScreenSurface,
+    // causing a 1-frame ghost whenever the hotspot changes. The hardware SDL
+    // cursor handles its own hotspot via SDL_CreateColorCursor.
 
-    lbHwCursorHotX = hot_x;
-    lbHwCursorHotY = hot_y;
-    LbI_UpdateHardwareCursor();
+    if (hot_x != lbHwCursorHotX || hot_y != lbHwCursorHotY) {
+        lbHwCursorHotX = hot_x;
+        lbHwCursorHotY = hot_y;
+        LbI_UpdateHardwareCursor();
+    }
 
     return Lb_SUCCESS;
 }
@@ -191,8 +213,34 @@ TbResult LbMouseChangeSprite(const struct TbSprite *pointer_spr)
     if (!pointerHandler.SetMousePointer(pointer_spr))
         return Lb_FAIL;
 
-    lbHwCursorSprite = pointer_spr;
-    LbI_UpdateHardwareCursor();
+    if (pointer_spr != lbHwCursorSprite) {
+        lbHwCursorSprite = pointer_spr;
+        LbI_UpdateHardwareCursor();
+    }
+
+    return Lb_SUCCESS;
+}
+
+TbResult LbMouseChangeSpriteWithOffset(const struct TbSprite *pointer_spr, long hot_x, long hot_y)
+{
+    if (!lbMouseInstalled)
+        return Lb_FAIL;
+
+    bool sprite_changed  = (pointer_spr != lbHwCursorSprite);
+    bool hotspot_changed = (hot_x != lbHwCursorHotX || hot_y != lbHwCursorHotY);
+
+    // SetMousePointer needed for software-cursor position tracking internals.
+    // SetPointerOffset is intentionally skipped: its SetHotspot() calls Draw(true)
+    // which blits the software cursor into lbScreenSurface and appears as a ghost.
+    if (!pointerHandler.SetMousePointer(pointer_spr))
+        return Lb_FAIL;
+
+    if (sprite_changed || hotspot_changed) {
+        lbHwCursorSprite = pointer_spr;
+        lbHwCursorHotX   = hot_x;
+        lbHwCursorHotY   = hot_y;
+        LbI_UpdateHardwareCursor();
+    }
 
     return Lb_SUCCESS;
 }
