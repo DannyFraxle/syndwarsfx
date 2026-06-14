@@ -32,12 +32,88 @@
 #include "privbflog.h"
 
 extern SDL_Window *lbWindow;
+extern SDL_Color lbPaletteColors[256];
 
 extern "C" {
 
 #define AUTORESET_MIN_SHIFT 50
 
 };
+
+// ---------------------------------------------------------------------------
+// SDL hardware cursor — decodes the 8bpp RLE sprite into a scaled RGBA
+// SDL_Cursor so that the OS compositor moves it independently of the
+// software blit rate.  Position tracking stays in the existing bflib path.
+// ---------------------------------------------------------------------------
+
+static SDL_Cursor      *lbHwCursor       = NULL;
+static const TbSprite  *lbHwCursorSprite = NULL;
+static long             lbHwCursorHotX   = 0;
+static long             lbHwCursorHotY   = 0;
+
+static void LbI_UpdateHardwareCursor(void)
+{
+    if (lbHwCursor != NULL) {
+        SDL_FreeCursor(lbHwCursor);
+        lbHwCursor = NULL;
+    }
+
+    const TbSprite *spr = lbHwCursorSprite;
+    if (spr == NULL || spr->SWidth == 0 || spr->SHeight == 0 || spr->Data == NULL) {
+        SDL_ShowCursor(SDL_DISABLE);
+        return;
+    }
+
+    int sw = spr->SWidth;
+    int sh = spr->SHeight;
+    int surf_w = sw;
+    int surf_h = sh;
+
+    SDL_Surface *surf = SDL_CreateRGBSurfaceWithFormat(0, surf_w, surf_h, 32, SDL_PIXELFORMAT_RGBA8888);
+    if (surf == NULL) return;
+
+    // All pixels transparent to start.
+    SDL_memset(surf->pixels, 0, (size_t)surf->h * surf->pitch);
+
+    // Decode 8bpp RLE sprite (0=end-of-row, N>0=N opaque pixels, N<0=skip -N).
+    unsigned char *sprdata = (unsigned char *)spr->Data;
+    for (int row = 0; row < sh; row++) {
+        int col = 0;
+        while (1) {
+            int pxlen = (signed char)*sprdata++;
+            if (pxlen == 0) break;
+            if (pxlen < 0) {
+                col += -pxlen;
+            } else {
+                for (int i = 0; i < pxlen; i++, col++) {
+                    unsigned char idx = *sprdata++;
+                    SDL_Color c = lbPaletteColors[idx];
+                    Uint32 pxval = SDL_MapRGBA(surf->format, c.r, c.g, c.b, 255);
+                    if (col < surf_w) {
+                        Uint32 *row_ptr = (Uint32 *)((Uint8 *)surf->pixels + row * surf->pitch);
+                        row_ptr[col] = pxval;
+                    }
+                }
+            }
+        }
+    }
+
+    // pointer_hotspot values are negative offsets (e.g. {-7,-7} = tip at pixel 7,7).
+    // SDL hotspot is the pixel within the sprite that is the pointer tip — negate to convert.
+    int hot_x = (int)(-lbHwCursorHotX);
+    int hot_y = (int)(-lbHwCursorHotY);
+    if (hot_x < 0) hot_x = 0;
+    if (hot_y < 0) hot_y = 0;
+    lbHwCursor = SDL_CreateColorCursor(surf, hot_x, hot_y);
+    SDL_FreeSurface(surf);
+
+    if (lbHwCursor != NULL) {
+        SDL_SetCursor(lbHwCursor);
+        SDL_ShowCursor(SDL_ENABLE);
+    }
+}
+
+// ---------------------------------------------------------------------------
 
 TbResult LbMousePlace(void)
 {
@@ -61,18 +137,14 @@ TbResult LbMouseRemove(void)
     return Lb_SUCCESS;
 }
 
-
+// Hardware cursor is active: skip software Backup/Draw/Undraw on WScreen.
 TbResult LbMouseOnBeginSwap(void)
 {
-    if (!pointerHandler.PointerBeginSwap())
-        return Lb_FAIL;
     return Lb_SUCCESS;
 }
 
 TbResult LbMouseOnEndSwap(void)
 {
-    if (!pointerHandler.PointerEndSwap())
-        return Lb_FAIL;
     return Lb_SUCCESS;
 }
 
@@ -84,6 +156,10 @@ TbResult LbMouseChangeSpriteOffset(long hot_x, long hot_y)
 
     if (!pointerHandler.SetPointerOffset(-hot_x, -hot_y))
         return Lb_FAIL;
+
+    lbHwCursorHotX = hot_x;
+    lbHwCursorHotY = hot_y;
+    LbI_UpdateHardwareCursor();
 
     return Lb_SUCCESS;
 }
@@ -114,6 +190,9 @@ TbResult LbMouseChangeSprite(const struct TbSprite *pointer_spr)
 
     if (!pointerHandler.SetMousePointer(pointer_spr))
         return Lb_FAIL;
+
+    lbHwCursorSprite = pointer_spr;
+    LbI_UpdateHardwareCursor();
 
     return Lb_SUCCESS;
 }
@@ -215,6 +294,13 @@ TbResult LbMouseSuspend(void)
 
     if (!pointerHandler.Release())
         return Lb_FAIL;
+
+    if (lbHwCursor != NULL) {
+        SDL_FreeCursor(lbHwCursor);
+        lbHwCursor = NULL;
+    }
+    lbHwCursorSprite = NULL;
+    SDL_ShowCursor(SDL_DISABLE);
 
     return Lb_SUCCESS;
 }

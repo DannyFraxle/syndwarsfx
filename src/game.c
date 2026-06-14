@@ -1831,6 +1831,8 @@ void screen_sorted_sprite_persn_render_callback(ushort sspr)
     }
 }
 
+static TbBool gameturn_animation_advance = false;
+
 void process_engine_unk3(void)
 {
     PlayerInfo *p_locplayer;
@@ -1850,10 +1852,12 @@ void process_engine_unk3(void)
     mech_unkn_dw_1DC890 = mech_unkn_tile_x3;
     mech_unkn_dw_1DC894 = mech_unkn_tile_y3;
 
-    process_map_craters();
+    if (gameturn_animation_advance)
+        process_map_craters();
 
-    if (((ingame.Flags & GamF_BillboardBAT) == 0) &&
-      ((ingame.Flags & GamF_BillboardMovies) != 0))
+    if (gameturn_animation_advance
+      && ((ingame.Flags & GamF_BillboardBAT) == 0)
+      && ((ingame.Flags & GamF_BillboardMovies) != 0))
     {
         dword_176CBC += fifties_per_gameturn;
         if (dword_176CBC > 80)
@@ -1893,7 +1897,8 @@ void process_engine_unk3(void)
     {
         clear_super_quick_lights();
     }
-    process_explode();
+    if (gameturn_animation_advance)
+        process_explode();
     assert(vec_tmap[1] != NULL);
     vec_map = vec_tmap[1];
     face_transp_tinted_surface_col = deep_radar_surface_col;
@@ -7058,52 +7063,63 @@ void game_process(void)
 
     while ( !exit_game )
     {
-        process_sound_heap();
-        navi2_unkn_counter -= 2;
-        if (navi2_unkn_counter < 0)
-            navi2_unkn_counter = 0;
-        if (navi2_unkn_counter > navi2_unkn_counter_max)
-            navi2_unkn_counter_max = navi2_unkn_counter;
-        if (keyboard_mode_direct)
-            input_char = LbKeyboard();
-        if (ingame.DisplayMode == DpM_PURPLEMNU) {
-            LOGDBG("id=%d  trial alloc = %d turn %lu", 0, triangulation, gameturn);
-        }
-        input();
-        update_tick_time();
-        draw_game();
-        debug_trace_turn_bound(gameturn);
-        load_packet();
-        if ( ((active_flags_general_unkn01 & 0x8000) != 0) !=
-          ((ingame.Flags & GamF_ThermalView) != 0) )
-            LbPaletteSet(display_palette);
-        active_flags_general_unkn01 = ingame.Flags;
-        if ((ingame.DisplayMode == DpM_ENGINEPLY)
-          || (ingame.DisplayMode == DpM_UNKN_1)
-          || (ingame.DisplayMode == DpM_UNKN_3B))
-            process_things();
-        if (debug_hud_things)
-            things_debug_hud();
-        if (ingame.DisplayMode != DpM_PURPLEMNU)
-            process_packets();
-        joy_input();
+        TbBool do_gameturn = is_game_turn_due();
 
-        if (ingame.DisplayMode == DpM_PURPLEMNU)
+        if (do_gameturn)
         {
-            game_update();
+            process_sound_heap();
+            navi2_unkn_counter -= 2;
+            if (navi2_unkn_counter < 0)
+                navi2_unkn_counter = 0;
+            if (navi2_unkn_counter > navi2_unkn_counter_max)
+                navi2_unkn_counter_max = navi2_unkn_counter;
+            if (keyboard_mode_direct)
+                input_char = LbKeyboard();
+            if (ingame.DisplayMode == DpM_PURPLEMNU) {
+                LOGDBG("id=%d  trial alloc = %d turn %lu", 0, triangulation, gameturn);
+            }
+            input();
+            update_tick_time();
+            load_packet();
+            if ( ((active_flags_general_unkn01 & 0x8000) != 0) !=
+              ((ingame.Flags & GamF_ThermalView) != 0) )
+                LbPaletteSet(display_palette);
+            active_flags_general_unkn01 = ingame.Flags;
+            if ((ingame.DisplayMode == DpM_ENGINEPLY)
+              || (ingame.DisplayMode == DpM_UNKN_1)
+              || (ingame.DisplayMode == DpM_UNKN_3B))
+                process_things();
+            if (debug_hud_things)
+                things_debug_hud();
+            if (ingame.DisplayMode != DpM_PURPLEMNU)
+                process_packets();
+            joy_input();
+        }
+
+        // Swap before draw_game() so every 60fps presentation fires at a
+        // uniform 16.7 ms interval.  draw_game()'s cost is absorbed by
+        // wait_next_displayframe() rather than pushing the swap deadline.
+        display_unlock();
+        game_handle_sdl_events();
+        display_lock();
+
+        if (!skip_redraw_this_turn())
             swap_wscreen();
-        }
-        else if (!skip_redraw_this_turn())
+
+        if (do_gameturn)
         {
-            game_update();
-            LbScreenSwapClear(0);
+            gameturn_animation_advance = true;
+            draw_game();
+            gameturn_animation_advance = false;
+            debug_trace_turn_bound(gameturn);
+            update_unkn_changing_colors();
+            game_process_orbital_station_explode();
+            gameturn++;
+            render_anim_turn = gameturn;
+            scene_post_effect_prepare();
         }
 
-        update_unkn_changing_colors();
-        game_process_orbital_station_explode();
-        gameturn++;
-        render_anim_turn = gameturn;
-        scene_post_effect_prepare();
+        wait_next_displayframe();
     }
     PacketRecord_Close();
     LbPaletteFade(NULL, 0x10u, 1);
