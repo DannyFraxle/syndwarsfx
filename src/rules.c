@@ -29,6 +29,7 @@
 #include "scanner.h"
 #include "swlog.h"
 #include "weapon.h"
+#include "hwrender_glue.h"
 /******************************************************************************/
 
 enum RulesEngineConfigCmd {
@@ -92,6 +93,21 @@ const struct TbNamedEnum rules_conf_any_bool[] = {
   {"True",			1},
   {"False",			2},
   {NULL,			0},
+};
+
+enum RulesFx3dConfigCmd {
+    RFx3dCmd_AntiAliasing = 1,
+    RFx3dCmd_GroundTextureFilter,
+    RFx3dCmd_ObjectTextureFilter,
+    RFx3dCmd_SpriteTextureFilter,
+};
+
+const struct TbNamedEnum rules_conf_fx3d_cmnds[] = {
+  {"AntiAliasing",			RFx3dCmd_AntiAliasing},
+  {"GroundTextureFilter",	RFx3dCmd_GroundTextureFilter},
+  {"ObjectTextureFilter",	RFx3dCmd_ObjectTextureFilter},
+  {"SpriteTextureFilter",	RFx3dCmd_SpriteTextureFilter},
+  {NULL,					0},
 };
 
 TbBool read_rules_file(void)
@@ -384,6 +400,61 @@ TbBool read_rules_file(void)
         LbIniSkipToNextLine(&parser);
     }
 #undef COMMAND_TEXT
+
+    // Parse the optional [fx3d] section (OpenGL hardware renderer settings)
+    done = false;
+    if (LbIniFindSection(&parser, "fx3d") != Lb_SUCCESS) {
+        CONFDBGLOG("No \"[%s]\" section; FX3D options left at default.", "fx3d");
+        done = true;
+    }
+#define COMMAND_TEXT(cmd_num) LbNamedEnumGetName(rules_conf_fx3d_cmnds,cmd_num)
+    while (!done)
+    {
+        int cmd_num;
+
+        cmd_num = LbIniRecognizeKey(&parser, rules_conf_fx3d_cmnds);
+        switch (cmd_num)
+        {
+        case RFx3dCmd_AntiAliasing:
+            i = LbIniValueGetLongInt(&parser, &k);
+            if (i <= 0) {
+                CONFWRNLOG("Could not read \"%s\" command parameter.", COMMAND_TEXT(cmd_num));
+                break;
+            }
+            fx3d_aa_samples = (k > 0) ? (int)k : 0;
+            CONFDBGLOG("%s %d", COMMAND_TEXT(cmd_num), fx3d_aa_samples);
+            break;
+        case RFx3dCmd_GroundTextureFilter:
+            i = LbIniValueGetNamedEnum(&parser, rules_conf_any_bool);
+            if (i <= 0) { CONFWRNLOG("Could not recognize \"%s\" command parameter.", COMMAND_TEXT(cmd_num)); break; }
+            fx3d_filter_ground = (i == 1);
+            break;
+        case RFx3dCmd_ObjectTextureFilter:
+            i = LbIniValueGetNamedEnum(&parser, rules_conf_any_bool);
+            if (i <= 0) { CONFWRNLOG("Could not recognize \"%s\" command parameter.", COMMAND_TEXT(cmd_num)); break; }
+            fx3d_filter_objects = (i == 1);
+            break;
+        case RFx3dCmd_SpriteTextureFilter:
+            i = LbIniValueGetNamedEnum(&parser, rules_conf_any_bool);
+            if (i <= 0) { CONFWRNLOG("Could not recognize \"%s\" command parameter.", COMMAND_TEXT(cmd_num)); break; }
+            fx3d_filter_sprites = (i == 1);
+            break;
+        case 0: // comment
+            break;
+        case -1: // end of buffer
+        case -3: // end of section
+            done = true;
+            break;
+        default:
+            CONFWRNLOG("Unrecognized command.");
+            break;
+        }
+        LbIniSkipToNextLine(&parser);
+    }
+#undef COMMAND_TEXT
+
+    // Apply command-line overrides over rules.ini and publish MSAA settings.
+    fx3d_config_finalize();
 
     zoom_update(zoom_min, zoom_max);
     LbIniParseEnd(&parser);

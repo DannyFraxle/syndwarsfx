@@ -1,6 +1,7 @@
 #include <SDL.h>
 #include <getopt.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "bfmemory.h"
 #include "bffile.h"
@@ -170,6 +171,18 @@ static void tests_execute(void)
     exit(0);
 }
 
+/** Parse an on/off command-line value. Returns 1 for on/true/yes/1/enable,
+ *  0 otherwise (including NULL). */
+static int cmdln_parse_onoff(const char *s)
+{
+    if (s == NULL)
+        return 0;
+    if (!strcasecmp(s, "on") || !strcasecmp(s, "true") || !strcasecmp(s, "yes")
+      || !strcasecmp(s, "1") || !strcasecmp(s, "enable") || !strcasecmp(s, "enabled"))
+        return 1;
+    return 0;
+}
+
 static TbBool process_options(int *argc, char ***argv)
 {
     int index;
@@ -185,6 +198,10 @@ static TbBool process_options(int *argc, char ***argv)
       {"self-test",   0, NULL, 't'},
       {"help",        0, NULL, 'h'},
       {"hwrender",    0, NULL, 0x100},
+      {"hwrender-aa",             1, NULL, 0x101},
+      {"hwrender-filter-ground",  1, NULL, 0x102},
+      {"hwrender-filter-objects", 1, NULL, 0x103},
+      {"hwrender-filter-sprites", 1, NULL, 0x104},
       {NULL,          0, NULL,  0 },
     };
 
@@ -333,6 +350,24 @@ static TbBool process_options(int *argc, char ***argv)
         case 0x100: /* --hwrender : use the FX3D OpenGL renderer if built in */
             hwrender_set_requested(true);
             LOGDBG("FX3D hardware renderer requested");
+            break;
+
+        case 0x101: /* --hwrender-aa=N : MSAA sample count (0=off) */
+            fx3d_cli_aa = (optarg != NULL) ? atoi(optarg) : 0;
+            if (fx3d_cli_aa < 0)
+                fx3d_cli_aa = 0;
+            break;
+
+        case 0x102: /* --hwrender-filter-ground=on|off */
+            fx3d_cli_filter_ground = cmdln_parse_onoff(optarg);
+            break;
+
+        case 0x103: /* --hwrender-filter-objects=on|off */
+            fx3d_cli_filter_objects = cmdln_parse_onoff(optarg);
+            break;
+
+        case 0x104: /* --hwrender-filter-sprites=on|off */
+            fx3d_cli_filter_sprites = cmdln_parse_onoff(optarg);
             break;
 
         case 's':

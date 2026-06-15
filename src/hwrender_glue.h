@@ -26,6 +26,28 @@ extern "C" {
 #endif
 /******************************************************************************/
 
+/* --- FX3D configuration (from rules.ini [fx3d] and/or command line) --- */
+
+/** MSAA sample count: 0 = none, otherwise 2/4/8. */
+extern int fx3d_aa_samples;
+/** Texture filtering per category: 0 = nearest (crisp), 1 = linear (smooth). */
+extern int fx3d_filter_ground;
+extern int fx3d_filter_objects;
+extern int fx3d_filter_sprites;
+
+/** Command-line overrides; -1 means "not set on the command line", so rules.ini
+ *  provides the value. The CLI parser sets these; fx3d_config_finalize() applies
+ *  them over whatever rules.ini set. */
+extern int fx3d_cli_aa;
+extern int fx3d_cli_filter_ground;
+extern int fx3d_cli_filter_objects;
+extern int fx3d_cli_filter_sprites;
+
+/** Apply command-line overrides over the rules.ini values and publish the MSAA
+ *  sample count to the screen backend. Call once, right after rules.ini is read
+ *  (and before the video mode / GL window is set up). */
+void fx3d_config_finalize(void);
+
 /** True when --hwrender was requested on the command line AND the build
  *  includes the hardware renderer. Always false in a software-only build. */
 TbBool hwrender_requested(void);

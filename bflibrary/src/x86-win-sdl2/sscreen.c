@@ -78,6 +78,11 @@ SDL_Window *lbWindow = NULL;
  *  FX3D hardware renderer glue) before the video mode is established. */
 int lbUseOpenGLWindow = 0;
 
+/** MSAA sample count for the OpenGL window (0 = off). Set by the host before
+ *  the window is created; the multisample pixel format must be requested prior
+ *  to SDL_CreateWindow. */
+int lbGLMultisampleSamples = 0;
+
 /** When an OpenGL window is in use, the software surface flip is invalid, so
  *  screen swaps are delegated to this hook (set by the host's GL renderer).
  *  It presents the current frame and swaps the GL buffers. If left NULL while
@@ -531,6 +536,13 @@ TbResult LbScreenSetupAnyMode(TbScreenMode mode, TbScreenCoord width,
             if (windowpos != SDL_WINDOWPOS_UNDEFINED)
                 SDL_SetWindowPosition(lbWindow, windowpos, windowpos);
         }
+    }
+
+    // Request a multisample-capable pixel format before the GL window is
+    // created, so MSAA is available to the context made on it later.
+    if (lbUseOpenGLWindow) {
+        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, lbGLMultisampleSamples > 0 ? 1 : 0);
+        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, lbGLMultisampleSamples);
     }
 
     // Set SDL video mode and create window, if not created before

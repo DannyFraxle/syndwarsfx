@@ -20,6 +20,34 @@
  * it simply never activates anything in a software-only build. */
 static TbBool hwr_glue_requested = false;
 
+/* FX3D config, with defaults (overridden by rules.ini [fx3d] then CLI). */
+int fx3d_aa_samples = 0;
+int fx3d_filter_ground = 1;
+int fx3d_filter_objects = 1;
+int fx3d_filter_sprites = 0;
+
+int fx3d_cli_aa = -1;
+int fx3d_cli_filter_ground = -1;
+int fx3d_cli_filter_objects = -1;
+int fx3d_cli_filter_sprites = -1;
+
+void fx3d_config_finalize(void)
+{
+    /* Command line wins over rules.ini for any explicitly-set option. */
+    if (fx3d_cli_aa >= 0)             fx3d_aa_samples    = fx3d_cli_aa;
+    if (fx3d_cli_filter_ground >= 0)  fx3d_filter_ground = fx3d_cli_filter_ground;
+    if (fx3d_cli_filter_objects >= 0) fx3d_filter_objects = fx3d_cli_filter_objects;
+    if (fx3d_cli_filter_sprites >= 0) fx3d_filter_sprites = fx3d_cli_filter_sprites;
+#if defined(HAVE_HWRENDER)
+    {
+        /* Publish the MSAA sample count so the GL window is created with a
+         * multisample pixel format. */
+        extern int lbGLMultisampleSamples;
+        lbGLMultisampleSamples = fx3d_aa_samples;
+    }
+#endif
+}
+
 #if defined(HAVE_HWRENDER)
 
 #include "hwr_api.h"
@@ -99,6 +127,14 @@ TbBool hwrender_startup(int view_w, int view_h)
     if (lbWindow == NULL) {
         LOGERR("FX3D: no SDL window to attach a GL context to");
         return false;
+    }
+    {
+        HwrConfig cfg;
+        cfg.aa_samples     = fx3d_aa_samples;
+        cfg.filter_ground  = fx3d_filter_ground;
+        cfg.filter_objects = fx3d_filter_objects;
+        cfg.filter_sprites = fx3d_filter_sprites;
+        hwr_set_config(&cfg);
     }
     if (hwr_init(lbWindow) != HWR_OK) {
         LOGERR("FX3D: hardware renderer init failed: %s", hwr_last_error());

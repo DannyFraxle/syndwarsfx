@@ -28,6 +28,18 @@ const HwrSceneSource *hwr_source = NULL;
 
 static char hwr_error_buf[256] = "no error";
 static int  hwr_ready = 0;
+static HwrConfig hwr_cfg = { 0, 1, 1, 0 };
+
+void hwr_set_config(const HwrConfig *cfg)
+{
+    if (cfg != NULL)
+        hwr_cfg = *cfg;
+}
+
+const HwrConfig *hwr_config(void)
+{
+    return &hwr_cfg;
+}
 
 static SDL_Window   *hwr_window = NULL;
 static SDL_GLContext hwr_context = NULL;
@@ -97,6 +109,8 @@ int hwr_init(void *sdl_window)
     glDisable(GL_CULL_FACE);   /* mesh winding is inconsistent in the data */
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
+    if (hwr_cfg.aa_samples > 0)
+        glEnable(GL_MULTISAMPLE);  /* MSAA pixel format requested at window creation */
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 
     hwr_ready = 1;

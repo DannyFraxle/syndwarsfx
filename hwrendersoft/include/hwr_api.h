@@ -28,6 +28,25 @@ extern "C" {
 #define HWR_OK     0
 #define HWR_ERROR (-1)
 
+/** Renderer configuration, supplied by the host (from rules.ini / CLI) before
+ *  hwr_init(). aa_samples is the MSAA sample count (0 = off; otherwise 2/4/8).
+ *  The filter_* flags select GL_LINEAR (1) vs GL_NEAREST (0) for each texture
+ *  category; they take effect as the corresponding phases create textures. */
+typedef struct {
+    int aa_samples;
+    int filter_ground;
+    int filter_objects;
+    int filter_sprites;
+} HwrConfig;
+
+/** Store the renderer configuration. Call before hwr_init() so the MSAA sample
+ *  count is known when the GL context is created. Safe to call again later to
+ *  update the texture-filter flags. */
+void hwr_set_config(const HwrConfig *cfg);
+
+/** Read-only access to the current configuration (never NULL). */
+const HwrConfig *hwr_config(void);
+
 /** Create a GL 3.3 core context on the given SDL_Window and load GL.
  *  win is an SDL_Window* (void* to keep SDL out of this header). The window
  *  must have been created with the SDL_WINDOW_OPENGL flag. Returns HWR_OK or

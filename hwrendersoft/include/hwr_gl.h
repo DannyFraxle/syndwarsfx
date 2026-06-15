@@ -53,6 +53,7 @@ typedef ptrdiff_t      GLsizeiptr;
 #define GL_COLOR_BUFFER_BIT               0x00004000
 #define GL_DEPTH_BUFFER_BIT               0x00000100
 #define GL_DEPTH_TEST                     0x0B71
+#define GL_MULTISAMPLE                    0x809D
 #define GL_CULL_FACE                      0x0B44
 #define GL_BLEND                          0x0BE2
 #define GL_SRC_ALPHA                      0x0302
