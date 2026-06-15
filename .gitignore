@@ -1,7 +1,7 @@
 *.h.in
 /debug
 /release
-/autom4te.cache
+autom4te.cache/
 config.guess
 config.sub
 config.log
