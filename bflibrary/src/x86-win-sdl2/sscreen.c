@@ -538,9 +538,14 @@ TbResult LbScreenSetupAnyMode(TbScreenMode mode, TbScreenCoord width,
         }
     }
 
-    // Request a multisample-capable pixel format before the GL window is
-    // created, so MSAA is available to the context made on it later.
+    // Request the GL pixel format before the window is created. On WGL the
+    // depth-buffer size and double-buffering are part of the window's pixel
+    // format, chosen here at SDL_CreateWindow time - setting them later (when
+    // the GL context is made current) is ignored. Without this the 3D renderer
+    // gets a context with 0 depth bits and depth testing silently does nothing.
     if (lbUseOpenGLWindow) {
+        SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+        SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
         SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, lbGLMultisampleSamples > 0 ? 1 : 0);
         SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, lbGLMultisampleSamples);
     }

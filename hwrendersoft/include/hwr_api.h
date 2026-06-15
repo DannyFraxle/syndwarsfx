@@ -74,6 +74,25 @@ void hwr_draw_frame(void);
 void hwr_present_indexed(const uint8_t *px, int w, int h, int pitch,
     const uint8_t *pal6);
 
+/** Begin a 3D scene frame: sync the viewport and clear colour + depth. Call
+ *  before the floor/face/sprite passes, then composite the keyed overlay. */
+void hwr_scene_begin(void);
+
+/** Render the level floor as 3D geometry for this frame, pulling camera, floor
+ *  geometry and texture pages from the bound scene source. pal8 is the active
+ *  256*3 8-bit palette; filter_linear selects smooth vs crisp sampling. Returns
+ *  nonzero if anything was drawn. Does not clear or swap. */
+int hwr_floor_render(const uint8_t *pal8, int filter_linear);
+
+/** Drop cached floor GPU art (texture pages); call on level change. */
+void hwr_floor_reset(void);
+
+/** Present the 8-bit framebuffer over the current GL scene, discarding pixels
+ *  whose palette index equals key_index (so the 3D scene shows through). Same as
+ *  hwr_present_indexed but with the compositing key; key_index < 0 disables it. */
+void hwr_present_indexed_keyed(const uint8_t *px, int w, int h, int pitch,
+    const uint8_t *pal, int key_index);
+
 /** Swap the GL back buffer to the screen. */
 void hwr_present(void);
 

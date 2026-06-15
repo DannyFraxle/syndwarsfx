@@ -152,6 +152,7 @@
 #include "rules.h"
 #include "scandraw.h"
 #include "thing.h"
+#include "hwrender_glue.h"
 #include "thing_expld.h"
 #include "thing_search.h"
 #include "thing_onface.h"
@@ -1888,7 +1889,10 @@ void process_engine_unk3(void)
             draw_background_stars();
         if (game_perspective == 6) {
             draw_background_stars();
-        } else {
+        } else if (!hwrender_floor_gate()) {
+            /* When the FX3D renderer is active it draws the floor as 3D geometry;
+             * hwrender_floor_gate() keys the framebuffer and we skip the SW floor.
+             * Inert (returns false) in a software-only build. */
             lvdraw_do_floor();
         }
     }

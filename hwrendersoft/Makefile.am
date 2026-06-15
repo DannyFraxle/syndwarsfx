@@ -19,6 +19,7 @@ libhwrender_a_SOURCES = \
   src/hwr_init.c \
   src/hwr_draw.c \
   src/hwr_blit.c \
+  src/hwr_floor.c \
   src/source_sw.c
 
 libhwrender_a_CPPFLAGS = \

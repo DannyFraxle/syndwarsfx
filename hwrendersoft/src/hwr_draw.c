@@ -1,6 +1,8 @@
 /******************************************************************************/
 // Syndicate Wars FX3D - OpenGL hardware renderer for Bullfrog titles.
 /******************************************************************************/
+/**                        2026 danny@fraxle.net                             **/
+/******************************************************************************/
 /** @file hwr_draw.c
  *     Per-frame top-level draw orchestration.
  * @par Purpose:
@@ -18,6 +20,14 @@
 #include "hwr_api.h"
 #include "hwr_gl.h"
 #include "hwr_internal.h"
+
+void hwr_scene_begin(void)
+{
+    if (!hwr_is_ready())
+        return;
+    hwr_sync_viewport();
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+}
 
 void hwr_draw_frame(void)
 {

@@ -58,6 +58,18 @@ void hwrender_set_requested(TbBool on);
 /** True once the GL backend has been initialised and is drawing. */
 TbBool hwrender_active(void);
 
+/** Palette index used as the transparent composite key: where the software
+ *  engine view is gated for 3D, WScreen is filled with this index, and the GL
+ *  overlay discards it so the 3D scene shows through. */
+#define HWR_KEY_INDEX 255
+
+/** Called in place of the software floor draw. When the hardware renderer is
+ *  active and drawing the engine view, this fills the engine framebuffer with
+ *  the composite key (so the 3D floor shows through) and returns true, meaning
+ *  the caller must skip the software floor. Returns false otherwise (caller
+ *  draws the software floor as normal). Inert in a software-only build. */
+TbBool hwrender_floor_gate(void);
+
 /** Initialise the GL backend on the current SDL window. Call after the video
  *  mode is set. No-op (returns false) in a software-only build or when not
  *  requested. */

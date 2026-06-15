@@ -1,6 +1,8 @@
 /******************************************************************************/
 // Syndicate Wars FX3D - OpenGL hardware renderer for Bullfrog titles.
 /******************************************************************************/
+/**                        2026 danny@fraxle.net                             **/
+/******************************************************************************/
 /** @file hwr_blit.c
  *     Presents the game's 8-bit indexed framebuffer through OpenGL.
  * @par Purpose:
@@ -37,8 +39,11 @@ static const char *blit_frag_src =
     "out vec4 frag;\n"
     "uniform sampler2D uScreen;   // R8, palette index in 0..255\n"
     "uniform sampler2D uPalette;  // RGB8 256x1, full-range 8-bit colour\n"
+    "uniform int uKey;            // index to discard (<0 = none)\n"
     "void main(){\n"
     "    float idx = texture(uScreen, vUV).r * 255.0;\n"
+    "    if (uKey >= 0 && int(idx + 0.5) == uKey)\n"
+    "        discard;             // let the 3D scene below show through\n"
     "    vec3 c = texture(uPalette, vec2((idx + 0.5) / 256.0, 0.5)).rgb;\n"
     "    frag = vec4(c, 1.0);\n"
     "}\n";
@@ -50,6 +55,7 @@ static GLuint blit_screen_tex = 0;
 static GLuint blit_pal_tex = 0;
 static GLint  blit_loc_screen = -1;
 static GLint  blit_loc_palette = -1;
+static GLint  blit_loc_key = -1;
 static int    blit_ready = 0;
 
 static GLuint compile_shader(GLenum type, const char *src)
@@ -103,6 +109,7 @@ static int blit_init(void)
     }
     blit_loc_screen  = glGetUniformLocation(blit_prog, "uScreen");
     blit_loc_palette = glGetUniformLocation(blit_prog, "uPalette");
+    blit_loc_key     = glGetUniformLocation(blit_prog, "uKey");
 
     glGenVertexArrays(1, &blit_vao);
     glBindVertexArray(blit_vao);
@@ -133,8 +140,8 @@ static int blit_init(void)
     return HWR_OK;
 }
 
-void hwr_present_indexed(const uint8_t *px, int w, int h, int pitch,
-    const uint8_t *pal6)
+static void blit_core(const uint8_t *px, int w, int h, int pitch,
+    const uint8_t *pal, int key_index, int do_clear)
 {
     if (!hwr_is_ready() || px == NULL || w <= 0 || h <= 0)
         return;
@@ -145,9 +152,10 @@ void hwr_present_indexed(const uint8_t *px, int w, int h, int pitch,
     (void)pitch;
 
     hwr_sync_viewport();   /* the window resizes per game video mode */
-    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_DEPTH_TEST);   /* the overlay sits on top of the 3D scene */
     glDisable(GL_BLEND);
-    glClear(GL_COLOR_BUFFER_BIT);
+    if (do_clear)
+        glClear(GL_COLOR_BUFFER_BIT);
 
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
@@ -155,20 +163,35 @@ void hwr_present_indexed(const uint8_t *px, int w, int h, int pitch,
     glBindTexture(GL_TEXTURE_2D, blit_screen_tex);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, w, h, 0, GL_RED, GL_UNSIGNED_BYTE, px);
 
-    if (pal6 != NULL) {
+    if (pal != NULL) {
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, blit_pal_tex);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, 256, 1, 0, GL_RGB,
-            GL_UNSIGNED_BYTE, pal6);
+            GL_UNSIGNED_BYTE, pal);
     }
 
     glUseProgram(blit_prog);
     glUniform1i(blit_loc_screen, 0);
     glUniform1i(blit_loc_palette, 1);
+    glUniform1i(blit_loc_key, key_index);
 
     glBindVertexArray(blit_vao);
     glDrawArrays(GL_TRIANGLES, 0, 6);
     glBindVertexArray(0);
 
-    hwr_gl_check("hwr_present_indexed");
+    hwr_gl_check("blit_core");
+}
+
+void hwr_present_indexed(const uint8_t *px, int w, int h, int pitch,
+    const uint8_t *pal)
+{
+    /* Full opaque blit: clear first, no key (menus / non-engine screens). */
+    blit_core(px, w, h, pitch, pal, -1, 1);
+}
+
+void hwr_present_indexed_keyed(const uint8_t *px, int w, int h, int pitch,
+    const uint8_t *pal, int key_index)
+{
+    /* Overlay over the already-rendered 3D scene: no clear, discard key pixels. */
+    blit_core(px, w, h, pitch, pal, key_index, 0);
 }

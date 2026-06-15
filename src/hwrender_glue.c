@@ -53,8 +53,10 @@ void fx3d_config_finalize(void)
 #include "hwr_api.h"
 #include "hwr_source_sw.h"
 #include "bfscreen.h"
+#include "game_options.h"
 #include "swlog.h"
 
+#include <string.h>
 #include <SDL.h>
 
 /* Set in bflibrary's SDL2 screen backend so the window is created with the
@@ -73,29 +75,71 @@ extern SDL_Color lbPaletteColors[256];
 
 static TbBool hwr_glue_active = false;
 
+/* Set by hwrender_floor_gate() when the engine view was gated for 3D this
+ * frame; tells the present path to render the 3D scene and key the overlay. */
+int hwr_floor_gated_frame = 0;
+/* Key index the source side discards (kept in sync with HWR_KEY_INDEX). */
+extern int hwr_sw_key_index;
+
 /* Present the current 8-bit WScreen through the GL pipeline and swap. Shared by
  * the main-loop present and the bflibrary swap hook. */
 static void glue_present(void)
 {
     int w = lbDisplay.GraphicsScreenWidth;
     int h = lbDisplay.GraphicsScreenHeight;
+    unsigned char pal[256 * 3];
+    int c;
 
     if (!hwr_glue_active)
         return;
-    if (lbDisplay.WScreen != NULL && w > 0 && h > 0) {
-        unsigned char pal[256 * 3];
-        int c;
-        for (c = 0; c < 256; c++) {
-            pal[c * 3 + 0] = lbPaletteColors[c].r;
-            pal[c * 3 + 1] = lbPaletteColors[c].g;
-            pal[c * 3 + 2] = lbPaletteColors[c].b;
-        }
+    if (lbDisplay.WScreen == NULL || w <= 0 || h <= 0) {
+        hwr_draw_frame();
+        hwr_present();
+        hwr_floor_gated_frame = 0;
+        return;
+    }
+
+    for (c = 0; c < 256; c++) {
+        pal[c * 3 + 0] = lbPaletteColors[c].r;
+        pal[c * 3 + 1] = lbPaletteColors[c].g;
+        pal[c * 3 + 2] = lbPaletteColors[c].b;
+    }
+
+    if (ingame.DisplayMode == DpM_ENGINEPLY) {
+        /* In-game engine view: render the 3D scene, then composite the software
+         * objects/sprites/HUD on top, discarding the key so the floor shows.
+         * Driven by the display mode (not a per-frame flag) so skipped-redraw
+         * frames stay consistent instead of flashing the key colour. */
+        hwr_scene_begin();
+        hwr_floor_render(pal, fx3d_filter_ground);
+        hwr_present_indexed_keyed((const unsigned char *)lbDisplay.WScreen,
+            w, h, w, pal, HWR_KEY_INDEX);
+    } else {
+        /* Menus / non-engine screens: plain full blit. */
         hwr_present_indexed((const unsigned char *)lbDisplay.WScreen, w, h, w,
             pal);
-    } else {
-        hwr_draw_frame();
     }
     hwr_present();
+    hwr_floor_gated_frame = 0;
+}
+
+TbBool hwrender_floor_gate(void)
+{
+    int w, h;
+    if (!hwr_glue_active)
+        return false;
+    w = lbDisplay.GraphicsScreenWidth;
+    h = lbDisplay.GraphicsScreenHeight;
+    /* Snapshot the engine camera now, while the projection globals are valid for
+     * the floor (later BAT/billboard sub-renders overwrite them). */
+    hwr_sw_capture();
+    if (lbDisplay.WScreen != NULL && w > 0 && h > 0) {
+        /* Fill the engine framebuffer with the key; SW objects/sprites/HUD draw
+         * over it, the 3D floor shows through it at present time. */
+        memset(lbDisplay.WScreen, HWR_KEY_INDEX, (size_t)w * h);
+    }
+    hwr_floor_gated_frame = 1;
+    return true;
 }
 
 void hwrender_set_requested(TbBool on)
@@ -141,6 +185,7 @@ TbBool hwrender_startup(int view_w, int view_h)
         return false;
     }
     hwr_set_source(hwr_sw_source(view_w, view_h));
+    hwr_sw_key_index = HWR_KEY_INDEX;
     lbScreenSwapHook = glue_present;
     hwr_glue_active = true;
     /* Make sure the GL window is shown, raised and holds input focus from the
@@ -180,6 +225,7 @@ void hwrender_shutdown(void)
 void   hwrender_set_requested(TbBool on)   { hwr_glue_requested = on; }
 TbBool hwrender_requested(void)            { return false; }
 TbBool hwrender_active(void)               { return false; }
+TbBool hwrender_floor_gate(void)           { return false; }
 TbBool hwrender_startup(int w, int h)      { (void)w; (void)h; return false; }
 TbBool hwrender_present_frame(void)        { return false; }
 void   hwrender_shutdown(void)             { }

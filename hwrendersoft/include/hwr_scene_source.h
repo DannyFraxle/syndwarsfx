@@ -29,25 +29,39 @@ extern "C" {
 /******************************************************************************/
 
 /** A single textured, lit vertex in world space.
- *  Coordinates are world units (Y already negated for OpenGL by the source).
- *  u,v index into the texture atlas in texels; the shader normalises them.
- *  light is a 0..255 per-vertex shade applied on top of point lighting. */
+ *  Coordinates are world units in the same frame as HwrCamera.mvp.
+ *  u,v are texels (0..255) into the texture page; page selects the layer of the
+ *  indexed texture-array. light is a 0..255 per-vertex shade applied on top of
+ *  point lighting. */
 typedef struct {
     float x, y, z;
     float u, v;
+    float tile_depth;  /* per-tile constant scrd, matches SW bucket sort depth */
+    uint8_t page;
     uint8_t light;
 } HwrVertex;
 
-/** Camera state derived from the game's isometric projection
- *  (engn_anglexz / overall_scale in Syndicate Wars). The backend builds an
- *  orthographic-ish view-projection matrix from these. */
+/** The indexed texture pages backing the geometry: count layers of
+ *  width*height 8-bit (palette-index) texels, layer-major. Supplied by the
+ *  source so the backend can upload a GL_R8 texture array. */
 typedef struct {
-    float angle_xz;     /**< Horizontal rotation, radians. */
-    float angle_y;      /**< Pitch of the isometric view, radians. */
-    float scale;        /**< World-to-screen scale (overall_scale). */
-    float centre_x;     /**< World-space point the camera is centred on. */
-    float centre_z;
-    int   view_w, view_h; /**< Viewport size in pixels. */
+    const uint8_t *texels;   /**< count * width * height bytes, or NULL. */
+    int width, height, count;
+} HwrTexturePages;
+
+/** Raw factors of the game's isometric projection (transform_shpoint), so the
+ *  vertex shader can reproduce it exactly - including the mode-5 perspective
+ *  foreshortening, which no single matrix can express. d10/d14 are sin/cos of
+ *  the XZ rotation and d18/d1c sin/cos of the view tilt (all *65536); scale is
+ *  overall_scale; cx/cy8/cz are the camera centre (cy8 = 8*engn_yc); centre_x/y
+ *  are the screen centre (D3C/D40); perspective is game_perspective. */
+typedef struct {
+    float d10, d14, d18, d1c;
+    float scale;
+    float centre_x, centre_y;
+    float cx, cy8, cz;
+    int   perspective;
+    int   view_w, view_h;
 } HwrCamera;
 
 /** A batch of geometry: indexed triangles over a shared vertex array.
@@ -55,7 +69,7 @@ typedef struct {
 typedef struct {
     const HwrVertex *verts;
     int              vert_count;
-    const uint16_t  *indices;
+    const uint32_t  *indices;
     int              index_count;
 } HwrGeometryBatch;
 
@@ -105,6 +119,16 @@ typedef struct HwrSceneSource {
 
     /** 256*3 bytes of 6-bit-per-channel palette (raw game values 0..63). */
     const uint8_t *(*get_palette)(void *ctx);
+
+    /** Indexed texture pages backing the floor/face geometry. Returns 0 and
+     *  fills *out on success; the texels pointer must stay valid for the frame.
+     *  May be NULL if the source provides no textures. */
+    int (*get_texture_pages)(void *ctx, HwrTexturePages *out);
+
+    /** The palette index used as the transparent key when compositing the
+     *  software HUD/objects over the 3D scene (see the hybrid present path).
+     *  May be NULL if compositing is not used. */
+    int (*get_key_index)(void *ctx);
 } HwrSceneSource;
 
 /******************************************************************************/

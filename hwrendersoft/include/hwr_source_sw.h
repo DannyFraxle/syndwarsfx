@@ -28,6 +28,11 @@ extern "C" {
  *  source. Pass the result to hwr_set_source(). */
 const HwrSceneSource *hwr_sw_source(int view_w, int view_h);
 
+/** Snapshot the engine-view camera (projection factors + centre) for this
+ *  frame. Call at floor-draw time, while the projection globals still hold the
+ *  engine view (before BAT/billboard sub-renders overwrite them). */
+void hwr_sw_capture(void);
+
 /******************************************************************************/
 #ifdef __cplusplus
 }

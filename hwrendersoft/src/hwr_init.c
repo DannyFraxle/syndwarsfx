@@ -1,6 +1,8 @@
 /******************************************************************************/
 // Syndicate Wars FX3D - OpenGL hardware renderer for Bullfrog titles.
 /******************************************************************************/
+/**                        2026 danny@fraxle.net                             **/
+/******************************************************************************/
 /** @file hwr_init.c
  *     GL context lifecycle, error reporting and the bound scene source.
  * @par Purpose:

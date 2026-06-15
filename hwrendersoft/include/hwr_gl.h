@@ -67,7 +67,10 @@ typedef ptrdiff_t      GLsizeiptr;
 #define GL_TEXTURE_MIN_FILTER             0x2801
 #define GL_TEXTURE_MAG_FILTER             0x2800
 #define GL_NEAREST                        0x2600
+#define GL_LINEAR                         0x2601
 #define GL_CLAMP_TO_EDGE                  0x812F
+#define GL_TEXTURE_2D_ARRAY               0x8C1A
+#define GL_TEXTURE_WRAP_R                 0x8072
 #define GL_RED                            0x1903
 #define GL_RGB                            0x1907
 #define GL_RGB8                           0x8051
@@ -127,6 +130,7 @@ typedef void   (HWR_APIENTRY *PFN_glDeleteTextures)(GLsizei, const GLuint *);
 typedef void   (HWR_APIENTRY *PFN_glBindTexture)(GLenum, GLuint);
 typedef void   (HWR_APIENTRY *PFN_glActiveTexture)(GLenum);
 typedef void   (HWR_APIENTRY *PFN_glTexImage2D)(GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const void *);
+typedef void   (HWR_APIENTRY *PFN_glTexImage3D)(GLenum, GLint, GLint, GLsizei, GLsizei, GLsizei, GLint, GLenum, GLenum, const void *);
 typedef void   (HWR_APIENTRY *PFN_glTexParameteri)(GLenum, GLenum, GLint);
 
 typedef GLuint (HWR_APIENTRY *PFN_glCreateShader)(GLenum);
@@ -145,6 +149,7 @@ typedef void   (HWR_APIENTRY *PFN_glUseProgram)(GLuint);
 typedef GLint  (HWR_APIENTRY *PFN_glGetUniformLocation)(GLuint, const GLchar *);
 typedef void   (HWR_APIENTRY *PFN_glUniform1i)(GLint, GLint);
 typedef void   (HWR_APIENTRY *PFN_glUniform1f)(GLint, GLfloat);
+typedef void   (HWR_APIENTRY *PFN_glUniform2f)(GLint, GLfloat, GLfloat);
 typedef void   (HWR_APIENTRY *PFN_glUniform3f)(GLint, GLfloat, GLfloat, GLfloat);
 typedef void   (HWR_APIENTRY *PFN_glUniform4f)(GLint, GLfloat, GLfloat, GLfloat, GLfloat);
 typedef void   (HWR_APIENTRY *PFN_glUniformMatrix4fv)(GLint, GLsizei, GLboolean, const GLfloat *);
