@@ -79,7 +79,10 @@ TbResult LbPaletteSet(const ubyte *palette)
     // Check real surface forat rather than mode format - the SDL is allowed
     // to loosly interpret the requested mode, so the screen surface data are
     // the only believable source of screen properties
-    if (to_SDLSurf(lbScreenSurface)->format->BitsPerPixel <= 8) {
+    // In OpenGL mode there is no software screen surface (lbScreenSurface is
+    // NULL); the palette only needs to reach the 8-bit draw surface below.
+    if ((lbScreenSurface != NULL) &&
+        (to_SDLSurf(lbScreenSurface)->format->BitsPerPixel <= 8)) {
         if (SDL_SetPaletteColors(to_SDLSurf(lbScreenSurface)->format->palette,
             lbPaletteColors, 0, PALETTE_8b_COLORS) < 0) {
             LOGERR("SetPalette to ScreenSurface failed: %s", SDL_GetError());

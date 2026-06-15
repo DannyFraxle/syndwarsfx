@@ -43,6 +43,7 @@
 #include "mouse.h"
 #include "util.h"
 #include "swlog.h"
+#include "hwrender_glue.h"
 
 /******************************************************************************/
 
@@ -90,7 +91,11 @@ void swap_wscreen(void)
     was_locked = LbScreenIsLocked();
     if ( was_locked )
         LbScreenUnlock();
-    LbScreenSwap();
+    /* When the FX3D hardware renderer is active it owns the GL back buffer and
+     * presents the frame itself; in that case skip the software surface flip.
+     * The call is inert (returns false) in a software-only build. */
+    if ( !hwrender_present_frame() )
+        LbScreenSwap();
     if ( was_locked )
     {
       while ( LbScreenLock() != Lb_SUCCESS )
@@ -168,6 +173,8 @@ void setup_simple_screen_mode(TbScreenMode mode)
     LbScreenSetup(mode, mdinfo->Width, mdinfo->Height, display_palette);
 
     mouse_update_on_screen_mode_change(false);
+
+    hwrender_startup(lbDisplay.PhysicalScreenWidth, lbDisplay.PhysicalScreenHeight);
 }
 
 void setup_screen_mode(TbScreenMode mode)
@@ -196,6 +203,10 @@ void setup_screen_mode(TbScreenMode mode)
 
     setup_vecs(lbDisplay.WScreen, vec_tmap[0], lbDisplay.PhysicalScreenWidth,
         lbDisplay.PhysicalScreenWidth, lbDisplay.PhysicalScreenHeight);
+
+    /* Bring up the FX3D hardware renderer once the GL-capable window exists.
+     * Inert in a software-only build or when --hwrender was not requested. */
+    hwrender_startup(lbDisplay.PhysicalScreenWidth, lbDisplay.PhysicalScreenHeight);
 }
 
 void screen_save_backup_buffer(struct ScreenBufBkp *bkp)

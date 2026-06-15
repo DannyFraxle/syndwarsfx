@@ -21,6 +21,7 @@
 #include "packet.h"
 #include "thing.h"
 #include "util.h"
+#include "hwrender_glue.h"
 
 #if defined WIN32 && defined main
 // Anti SDL
@@ -183,6 +184,7 @@ static TbBool process_options(int *argc, char ***argv)
       {"level-deep-fix", 0, NULL, 'L'},
       {"self-test",   0, NULL, 't'},
       {"help",        0, NULL, 'h'},
+      {"hwrender",    0, NULL, 0x100},
       {NULL,          0, NULL,  0 },
     };
 
@@ -326,6 +328,11 @@ static TbBool process_options(int *argc, char ***argv)
 
         case 'S':
             cmdln_lores_stretch = false;
+            break;
+
+        case 0x100: /* --hwrender : use the FX3D OpenGL renderer if built in */
+            hwrender_set_requested(true);
+            LOGDBG("FX3D hardware renderer requested");
             break;
 
         case 's':

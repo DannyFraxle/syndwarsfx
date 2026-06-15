@@ -51,6 +51,8 @@ syndwarsfx_SOURCES = \
 	cybmod.h \
 	display.c \
 	display.h \
+	hwrender_glue.c \
+	hwrender_glue.h \
 	dos.c \
 	dos.h \
 	drawtext_wrp.c \
@@ -216,9 +218,18 @@ syndwarsfx_SOURCES = \
 	wrcities.c \
 	wrcities.h
 
+if USE_HWRENDER
+HWRENDER_CPPFLAGS = -I"$(top_srcdir)/hwrendersoft/include"
+HWRENDER_PROJECT_LIB = ../lib/libhwrender.a
+else
+HWRENDER_CPPFLAGS =
+HWRENDER_PROJECT_LIB =
+endif
+
 syndwarsfx_CPPFLAGS = \
   -I"$(top_srcdir)/bfsmacklib/include" \
   -I"$(top_srcdir)/swrendersoft/include" \
+  $(HWRENDER_CPPFLAGS) \
   -I"$(top_srcdir)/bfariadne/include"
 
 syndwarsfx_WRAPPERS = wrappers_dos.o wrappers_game.o wrappers_libc.o wrappers_util.o
@@ -237,7 +248,7 @@ endif
 nodist_EXTRA_syndwarsfx_SOURCES = dummy.cxx
 
 # Libraries included with the project
-syndwarsfx_PROJECT_LIBS = ../lib/libbullfrog.a ../lib/libbfsound.a ../lib/libswrender.a
+syndwarsfx_PROJECT_LIBS = ../lib/libbullfrog.a ../lib/libbfsound.a ../lib/libswrender.a $(HWRENDER_PROJECT_LIB)
 
 $(syndwarsfx_OBJECTS) $(bin_PROGRAMS): $(syndwarsfx_PROJECT_LIBS)
 
@@ -252,6 +263,11 @@ syndwarsfx_LDADD = \
 
 ../lib/libswrender.a: ../swrendersoft/libswrender.a
 	$(MAKE) -C $(<D) DESTDIR="../" prefix="" install
+
+if USE_HWRENDER
+../lib/libhwrender.a: ../hwrendersoft/libhwrender.a
+	$(MAKE) -C $(<D) DESTDIR="../" prefix="" install
+endif
 
 $(syndwarsfx_WRAPPERS:.o=.sx): %.sx: $(top_srcdir)/conf/%.conf
 	$(AM_V_GEN)$(MKW) $(MKWFLAGS) -o $@ $<

@@ -1,0 +1,56 @@
+/******************************************************************************/
+// Syndicate Wars Fan Expansion, source port of the classic game from Bullfrog.
+/******************************************************************************/
+/** @file hwrender_glue.h
+ *     Host-side glue to the optional FX3D OpenGL hardware renderer.
+ * @par Purpose:
+ *     Thin shim the game calls to drive libhwrender: read the command-line
+ *     toggle, request a GL-capable window, initialise on the SDL window, and
+ *     render+present each frame. The whole implementation is compiled out
+ *     unless configured with --enable-hwrender, so the default software build
+ *     is unaffected.
+ * @par  Copying and copyrights:
+ *     This program is free software; you can redistribute it and/or modify
+ *     it under the terms of the GNU General Public License as published by
+ *     the Free Software Foundation; either version 2 of the License, or
+ *     (at your option) any later version.
+ */
+/******************************************************************************/
+#ifndef HWRENDER_GLUE_H
+#define HWRENDER_GLUE_H
+
+#include "bftypes.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+/******************************************************************************/
+
+/** True when --hwrender was requested on the command line AND the build
+ *  includes the hardware renderer. Always false in a software-only build. */
+TbBool hwrender_requested(void);
+
+/** Record that the user asked for the hardware renderer (CLI parse). */
+void hwrender_set_requested(TbBool on);
+
+/** True once the GL backend has been initialised and is drawing. */
+TbBool hwrender_active(void);
+
+/** Initialise the GL backend on the current SDL window. Call after the video
+ *  mode is set. No-op (returns false) in a software-only build or when not
+ *  requested. */
+TbBool hwrender_startup(int view_w, int view_h);
+
+/** Render the current frame with the hardware path and present it. Returns
+ *  true if it handled the present (so the caller must skip LbScreenSwap).
+ *  Returns false when the hardware path is inactive. */
+TbBool hwrender_present_frame(void);
+
+/** Release the GL backend. Safe to call unconditionally. */
+void hwrender_shutdown(void);
+
+/******************************************************************************/
+#ifdef __cplusplus
+}
+#endif
+#endif

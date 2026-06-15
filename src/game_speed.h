@@ -47,6 +47,21 @@ ubyte get_speed_control_inputs(void);
 
 void wait_next_gameturn(void);
 
+/**
+ * Whether a game-logic turn should run on this iteration of the main loop.
+ * The simulation currently advances at a single fixed rate (game_num_fps), so
+ * every loop iteration is a turn. This is the seam where display frames will be
+ * decoupled from sim turns (see the TODO on game_num_fps); until then it simply
+ * reports true so behaviour matches the pre-decoupling main loop.
+ */
+TbBool is_game_turn_due(void);
+
+/**
+ * Paces the main loop to the next display frame. With rendering and simulation
+ * still locked together, this is the existing per-turn wait.
+ */
+void wait_next_displayframe(void);
+
 TbBool display_needs_redraw_this_turn(void);
 void update_tick_time(void);
 

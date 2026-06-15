@@ -5,8 +5,11 @@ AC_PREREQ([2.69])
 m4_define([ver_major], [0])
 m4_define([ver_minor], [3])
 m4_define([ver_release], [8])
-# Set build number to commit count only if ".git" folder is present
-m4_define([ver_build], m4_if(m4_esyscmd_s([ls -1 -d ".git" 2>&1]),.git,[m4_esyscmd_s([git rev-list --count HEAD])],[0]))
+# Set build number to the commit count; fall back to 0 when git is unavailable
+# (e.g. no ".git" folder, or git not on PATH as in a bare MinGW32 shell) so the
+# version component is never empty - an empty VER_BUILD breaks windres on the
+# Windows resource script.
+m4_define([ver_build], m4_default(m4_esyscmd_s([git rev-list --count HEAD 2>/dev/null]), [0]))
 
 m4_define([syndwarsfx_version],
       [ver_major.ver_minor.ver_release.ver_build])
@@ -14,6 +17,16 @@ m4_define([syndwarsfx_version],
 AC_INIT([Syndicate Wars Fan Expansion], [syndwarsfx_version], [unavowed@vexillium.org], [syndwarsfx])
 
 AC_CONFIG_SUBDIRS([bflibrary bfsoundlib swrendersoft])
+
+# Optional OpenGL hardware renderer ("Syndicate Wars FX3D"). Off by default so
+# the standard software build (and CI) is unaffected; its subdir is only
+# configured and built when explicitly enabled.
+AC_ARG_ENABLE([hwrender],
+    AS_HELP_STRING([--enable-hwrender],
+      [Build the OpenGL hardware renderer (FX3D) in addition to software]))
+AS_IF([test "x$enable_hwrender" = "xyes"], [
+  AC_CONFIG_SUBDIRS([hwrendersoft])
+])
 
 AC_CONFIG_SRCDIR([src/main.c])
 AC_CONFIG_HEADERS([src/config.h])
@@ -217,6 +230,14 @@ AC_SUBST(BFSOUNDLIB_CFLAGS, "-I\"\$(top_builddir)/include/bfsound\"")
 AC_SUBST(SWRENDERLIB_LIBS, "-L\"\$(top_builddir)/lib\" -lswrender")
 AC_SUBST(SWRENDERLIB_CFLAGS, "-I\"\$(top_builddir)/include/swrender\"")
 
+# Hardware (OpenGL) renderer, only when enabled.
+AM_CONDITIONAL([USE_HWRENDER], [test "x$enable_hwrender" = "xyes"])
+AS_IF([test "x$enable_hwrender" = "xyes"], [
+  AC_DEFINE([HAVE_HWRENDER], [1], [Define when the FX3D hardware renderer is built])
+  AC_SUBST(HWRENDERLIB_LIBS, "-L\"\$(top_builddir)/lib\" -lhwrender")
+  AC_SUBST(HWRENDERLIB_CFLAGS, "-I\"\$(top_builddir)/include/hwrender\"")
+])
+
 # Variables
 
 AS_IF([test "$have_darwin" = "no"], [
@@ -258,6 +279,11 @@ LIBS="$LIBS $BFSOUNDLIB_LIBS"
 
 CFLAGS="$CFLAGS $SWRENDERLIB_CFLAGS"
 LIBS="$LIBS $SWRENDERLIB_LIBS"
+
+AS_IF([test "x$enable_hwrender" = "xyes"], [
+  CFLAGS="$CFLAGS $HWRENDERLIB_CFLAGS"
+  LIBS="$LIBS $HWRENDERLIB_LIBS"
+])
 
 CFLAGS="$CFLAGS $SDL_CFLAGS"
 LIBS="$LIBS $SDL_LIBS"

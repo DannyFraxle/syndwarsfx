@@ -73,6 +73,17 @@ extern SDL_Color lbPaletteColors[256];
  */
 SDL_Window *lbWindow = NULL;
 
+/** When nonzero, the graphics window is created with the SDL_WINDOW_OPENGL
+ *  flag so an OpenGL context can be made current on it. Set by the host (the
+ *  FX3D hardware renderer glue) before the video mode is established. */
+int lbUseOpenGLWindow = 0;
+
+/** When an OpenGL window is in use, the software surface flip is invalid, so
+ *  screen swaps are delegated to this hook (set by the host's GL renderer).
+ *  It presents the current frame and swaps the GL buffers. If left NULL while
+ *  lbUseOpenGLWindow is set, swaps simply become no-ops. */
+void (*lbScreenSwapHook)(void) = NULL;
+
 volatile TbBool lbScreenDirectAccessActive = false;
 
 /** @internal
@@ -394,6 +405,9 @@ static void LbIGetSDLFlagsForMode(ulong *sdlFlags, ulong *sdlPxFormat, TbScreenM
     if ((mdinfo->VideoMode & Lb_VF_WINDOWED) == 0) {
         Flags |= SDL_WINDOW_FULLSCREEN;
     }
+    if (lbUseOpenGLWindow) {
+        Flags |= SDL_WINDOW_OPENGL;
+    }
     *sdlFlags = Flags;
     *sdlPxFormat = PxFormat;
 }
@@ -432,6 +446,10 @@ TbResult LbScreenSetupAnyMode(TbScreenMode mode, TbScreenCoord width,
     lbScreenInitialised = false;
 
     if (prevScreenSurf != NULL) {
+        // The shadow surface created for OpenGL mode is ours to free; the real
+        // window surface used in non-GL mode is owned by SDL and must not be.
+        if (lbUseOpenGLWindow)
+            SDL_FreeSurface(prevScreenSurf);
     }
 
     // No need for old video mode in window-based environments
@@ -525,11 +543,27 @@ TbResult LbScreenSetupAnyMode(TbScreenMode mode, TbScreenCoord width,
         return Lb_FAIL;
     }
 
-    lbScreenSurface = lbDrawSurface = SDL_GetWindowSurface(lbWindow);
+    if (lbUseOpenGLWindow) {
+        // OpenGL window: SDL_GetWindowSurface is invalid for such a window and
+        // the GL backend owns presentation. Create a throwaway in-memory surface
+        // so all the software-surface code paths (palette, locks, direct draws,
+        // swap blits) stay valid and harmless; the real frame is the app-owned
+        // 8-bit WScreen, which the GL path reads directly at swap time. This
+        // shadow surface is never shown.
+        lbScreenSurface = lbDrawSurface = SDL_CreateRGBSurface(0,
+          mdWidth, mdHeight, 32, 0, 0, 0, 0);
+        if (lbScreenSurface == NULL) {
+            LOGERR("failed to create GL shadow surface for mode %d: %s",
+              (int)mode, SDL_GetError());
+            return Lb_FAIL;
+        }
+    } else {
+        lbScreenSurface = lbDrawSurface = SDL_GetWindowSurface(lbWindow);
 
-    if (lbScreenSurface == NULL) {
-        LOGERR("failed to get window surface for mode %d: %s", (int)mode, SDL_GetError());
-        return Lb_FAIL;
+        if (lbScreenSurface == NULL) {
+            LOGERR("failed to get window surface for mode %d: %s", (int)mode, SDL_GetError());
+            return Lb_FAIL;
+        }
     }
 
     LbScreenUpdateIcon();
@@ -546,7 +580,8 @@ TbResult LbScreenSetupAnyMode(TbScreenMode mode, TbScreenCoord width,
     // always used (not in fullscreen and not when first creating the window);
     // To make sure we really have the BPP requested, we need to also compare
     // lbScreenSurface->format for current BPP.
-    if ((mdinfo->BitsPerPixel != lbEngineBPP) ||
+    if (lbUseOpenGLWindow ||
+        (mdinfo->BitsPerPixel != lbEngineBPP) ||
         (to_SDLSurf(lbScreenSurface)->format->BitsPerPixel != mdinfo->BitsPerPixel) ||
         (mdWidth != width) || (mdHeight != height))
 #endif
@@ -575,9 +610,14 @@ TbResult LbScreenSetupAnyMode(TbScreenMode mode, TbScreenCoord width,
 #endif
 
     lbScreenInitialised = true;
-    LOGSYNC("mode %dx%dx%d setup succeeded", (int)to_SDLSurf(lbScreenSurface)->w,
-      (int)to_SDLSurf(lbScreenSurface)->h,
-      (int)to_SDLSurf(lbScreenSurface)->format->BitsPerPixel);
+    if (lbUseOpenGLWindow) {
+        LOGSYNC("mode %dx%d setup succeeded (OpenGL present path)",
+          (int)mdWidth, (int)mdHeight);
+    } else {
+        LOGSYNC("mode %dx%dx%d setup succeeded", (int)to_SDLSurf(lbScreenSurface)->w,
+          (int)to_SDLSurf(lbScreenSurface)->h,
+          (int)to_SDLSurf(lbScreenSurface)->format->BitsPerPixel);
+    }
     if (palette != NULL)
     {
         TbResult ret;
@@ -758,6 +798,11 @@ static TbResult LbIPhysicalScreenUnlock(void)
  */
 TbResult LbIScreenSurfaceRestoreLost(void)
 {
+    // In OpenGL mode there is no window surface to (re)acquire; the shadow
+    // surface created at setup is kept as-is. Calling SDL_GetWindowSurface on a
+    // GL window fails and would wrongly null our surface.
+    if (lbUseOpenGLWindow)
+        return Lb_SUCCESS;
     lbScreenSurface = SDL_GetWindowSurface(lbWindow);
     if (lbScreenSurface == NULL) {
         LOGERR("surface restore failed: %s", SDL_GetError());
@@ -1153,6 +1198,13 @@ TbResult LbScreenSwap(void)
     TbResult ret;
     int blresult;
 
+    if (lbUseOpenGLWindow) {
+        // GL window has no software surface to flip; delegate presentation.
+        if (lbScreenSwapHook != NULL)
+            lbScreenSwapHook();
+        return Lb_SUCCESS;
+    }
+
     LOGDBG("starting");
     assert(!lbDisplay.VesaIsSetUp); // video mem paging not supported with SDL
     LbIScreenSurfaceRestoreLost();
@@ -1190,6 +1242,12 @@ TbResult LbScreenSwapClear(TbPixel colour)
 {
     TbResult ret;
     int blresult;
+
+    if (lbUseOpenGLWindow) {
+        if (lbScreenSwapHook != NULL)
+            lbScreenSwapHook();
+        return Lb_SUCCESS;
+    }
 
     LOGDBG("starting");
     assert(!lbDisplay.VesaIsSetUp); // video mem paging not supported with SDL

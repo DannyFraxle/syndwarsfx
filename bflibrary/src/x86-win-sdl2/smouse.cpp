@@ -18,6 +18,7 @@
  */
 /******************************************************************************/
 #include <stdbool.h>
+#include <stdio.h>
 #include <SDL.h>
 #include <SDL_syswm.h>
 #include "bfmouse.h"
@@ -33,6 +34,7 @@
 #include "privbflog.h"
 
 extern SDL_Window *lbWindow;
+extern int lbUseOpenGLWindow;
 extern SDL_Color lbPaletteColors[256];
 
 extern "C" {
@@ -445,10 +447,25 @@ void MouseToScreen(struct TbPoint *pos)
         clip.right = lbDisplay.GraphicsScreenWidth;
     if (clip.bottom < lbDisplay.GraphicsScreenHeight)
         clip.bottom = lbDisplay.GraphicsScreenHeight;
-    if (lbScreenSurfaceDimensions.Width != clip.right)
-        pos->x = (pos->x * clip.right) / lbScreenSurfaceDimensions.Width;
-    if (lbScreenSurfaceDimensions.Height != clip.bottom)
-        pos->y = (pos->y * clip.bottom) / lbScreenSurfaceDimensions.Height;
+    {
+        // Map raw window-pixel coords into the game's coordinate space. The
+        // divisor must be the size of the space the mouse events arrive in,
+        // i.e. the actual window. lbScreenSurfaceDimensions tracks the game
+        // mode size, which matches the window in the software path - but with
+        // an OpenGL window the SDL resize lags the mode change, so use the live
+        // window size to stay correct during that transition.
+        long surfW = lbScreenSurfaceDimensions.Width;
+        long surfH = lbScreenSurfaceDimensions.Height;
+        if (lbUseOpenGLWindow && (lbWindow != NULL)) {
+            int ww = 0, wh = 0;
+            SDL_GetWindowSize(lbWindow, &ww, &wh);
+            if (ww > 0 && wh > 0) { surfW = ww; surfH = wh; }
+        }
+        if (surfW != clip.right)
+            pos->x = (pos->x * clip.right) / surfW;
+        if (surfH != clip.bottom)
+            pos->y = (pos->y * clip.bottom) / surfH;
+    }
 
     LOGNO("before (%ld,%ld) after (%ld,%ld)", orig.x, orig.y, pos->x, pos->y);
 }

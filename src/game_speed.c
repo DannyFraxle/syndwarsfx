@@ -108,6 +108,20 @@ void wait_next_gameturn(void)
     last_loop_time = sleep_end;
 }
 
+TbBool is_game_turn_due(void)
+{
+    // Simulation and display frames are not yet decoupled; advance the sim on
+    // every loop iteration, matching the rate enforced by wait_next_gameturn().
+    return true;
+}
+
+void wait_next_displayframe(void)
+{
+    // Until frames are separated from sim turns, pacing the display frame is
+    // the same as pacing the game turn.
+    wait_next_gameturn();
+}
+
 /**
  * Checks if the game screen needs redrawing.
  */
