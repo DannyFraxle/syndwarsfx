@@ -25,7 +25,6 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <string.h>
 
 /* --- Game globals (resolved at the executable's link step) --- */
@@ -193,49 +192,9 @@ static int sw_get_camera(void *ctx, HwrCamera *out)
     return 0;
 }
 
-static void dbg_transform_center(int cx, int cz)
-{
-    /* Simulate transform_shpoint for the tile at the camera centre, in C,
-     * so we can compare the expected screen position with the shader NDC. */
-    struct HwrMapEl *me;
-    float dx, dy, dz, fa, fb, fc, scrd, shx, shy, sx, sy;
-    int gx = cx, gz = cz;
-    if (gx < 0 || gx >= HWR_MAP_TILE_WIDTH || gz < 0 || gz >= HWR_MAP_TILE_WIDTH)
-        return;
-    me = &game_my_big_map[HWR_MAP_TILE_WIDTH * gz + gx];
-    dx = (float)((gx << 8) - snap.xc);
-    dy = (float)(8 * (int)me->Alt - 8 * snap.yc);
-    dz = (float)((gz << 8) - snap.zc);
-    fa = (snap.D14 * dx - snap.D10 * dz) / 65536.0f;
-    fb = (snap.D10 * dx + snap.D14 * dz) / 65536.0f;
-    fc = (snap.D1C * dy - snap.D18 * fb) / 65536.0f;
-    scrd = (snap.D18 * dy + snap.D1C * fb) / 65536.0f;
-    if (snap.persp == 5 && scrd > 1024.0f)
-        scrd = 16384.0f * scrd / (scrd + 16384.0f);
-    shx = snap.scale * fa / 2048.0f;
-    shy = snap.scale * fc / 2048.0f;
-    if (snap.persp == 5) {
-        shx = shx * (16384.0f - scrd) / 16384.0f;
-        shy = shy * (16384.0f - scrd) / 16384.0f;
-    }
-    sx = snap.D3C + shx;
-    sy = snap.D40 - shy;
-    printf("FX3D dbg centre tile(%d,%d) alt=%d dx=%.0f dy=%.0f dz=%.0f\n"
-           "  fa=%.1f fb=%.1f fc=%.1f scrd=%.1f shx=%.1f shy=%.1f\n"
-           "  sx=%.1f sy=%.1f (screen) ndc=(%.3f,%.3f)\n"
-           "  D3C=%d D40=%d scale=%d\n",
-           gx, gz, (int)me->Alt, dx, dy, dz,
-           fa, fb, fc, scrd, shx, shy,
-           sx, sy,
-           sx / snap.D3C - 1.0f, 1.0f - sy / snap.D40,
-           snap.D3C, snap.D40, snap.scale);
-    fflush(stdout);
-}
-
 static int sw_get_floor(void *ctx, HwrGeometryBatch *out)
 {
     int cx, cz, ra, rb, gx, gz, x0, x1, z0, z1;
-    static int dbg_done = 0;
     (void)ctx;
     floor_vert_count = 0;
     floor_index_count = 0;
@@ -255,30 +214,6 @@ static int sw_get_floor(void *ctx, HwrGeometryBatch *out)
     z0 = clampi(cz - rb, 0, HWR_MAP_TILE_WIDTH - 2);
     z1 = clampi(cz + rb, 0, HWR_MAP_TILE_WIDTH - 2);
 
-    if (!dbg_done) {
-        dbg_done = 1;
-        printf("FX3D floor range: cx=%d cz=%d ra=%d rb=%d x0=%d x1=%d z0=%d z1=%d\n"
-               "  xc=%d yc=%d zc=%d texlimit=%d\n",
-               cx, cz, ra, rb, x0, x1, z0, z1,
-               snap.xc, snap.yc, snap.zc, game_textures_limit);
-        dbg_transform_center(cx, cz);
-        fflush(stdout);
-    }
-
-    if (dbg_done == 1) {
-        int skipped = 0;
-        for (gz = z0; gz <= z1; gz++) {
-            for (gx = x0; gx <= x1; gx++) {
-                int texidx2 = game_my_big_map[HWR_MAP_TILE_WIDTH * gz + gx].Texture & 0x3FFF;
-                if (texidx2 >= game_textures_limit) skipped++;
-            }
-        }
-        printf("FX3D floor: %d/%d tiles skipped (texidx >= %d), visible range %dx%d=%d\n",
-               skipped, (x1-x0+1)*(z1-z0+1), game_textures_limit,
-               x1-x0+1, z1-z0+1, (x1-x0+1)*(z1-z0+1));
-        fflush(stdout);
-        dbg_done = 2;
-    }
     for (gz = z0; gz <= z1; gz++) {
         for (gx = x0; gx <= x1; gx++) {
             struct HwrMapEl *me = &game_my_big_map[HWR_MAP_TILE_WIDTH * gz + gx];
