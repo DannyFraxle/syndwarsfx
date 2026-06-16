@@ -112,6 +112,7 @@ static void glue_present(void)
          * frames stay consistent instead of flashing the key colour. */
         hwr_scene_begin();
         hwr_floor_render(pal, fx3d_filter_ground);
+        hwr_faces_render(pal, fx3d_filter_objects);
         hwr_present_indexed_keyed((const unsigned char *)lbDisplay.WScreen,
             w, h, w, pal, HWR_KEY_INDEX);
     } else {

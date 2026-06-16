@@ -84,6 +84,11 @@ void hwr_scene_begin(void);
  *  nonzero if anything was drawn. Does not clear or swap. */
 int hwr_floor_render(const uint8_t *pal8, int filter_linear);
 
+/** Render object/building faces (Phase 4). Reuses the floor program, texture
+ *  pages and palette; call after hwr_floor_render so the pages are uploaded.
+ *  Returns nonzero if anything was drawn. Does not clear or swap. */
+int hwr_faces_render(const uint8_t *pal8, int filter_linear);
+
 /** Drop cached floor GPU art (texture pages); call on level change. */
 void hwr_floor_reset(void);
 

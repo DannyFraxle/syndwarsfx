@@ -77,16 +77,23 @@ static const char *floor_frag_src =
     "out vec4 frag;\n"
     "uniform sampler2DArray uTex;   // R8 palette indices\n"
     "uniform sampler2D uPalette;    // RGB8 256x1, active 8-bit palette\n"
+    "uniform int uTransKey;         // texel index to treat as transparent (<0 = none)\n"
     "void main(){\n"
-    "    float idx = texture(uTex, vUV).r * 255.0;\n"
-    "    vec3 c = texture(uPalette, vec2((idx + 0.5) / 256.0, 0.5)).rgb;\n"
+    "    if (vUV.z > 254.5) {       // flat-shaded face (Texture==0), no texture\n"
+    "        frag = vec4(vec3(0.55) * vLight, 1.0);\n"
+    "        return;\n"
+    "    }\n"
+    "    int idx = int(texture(uTex, vUV).r * 255.0 + 0.5);\n"
+    "    if (uTransKey >= 0 && idx == uTransKey)\n"
+    "        discard;               // see through windows/grates to faces behind\n"
+    "    vec3 c = texture(uPalette, vec2((float(idx) + 0.5) / 256.0, 0.5)).rgb;\n"
     "    frag = vec4(c * vLight, 1.0);\n"
     "}\n";
 
 static GLuint fl_prog = 0;
 static GLuint fl_vao = 0, fl_vbo = 0, fl_ebo = 0;
 static GLuint fl_tex = 0, fl_pal = 0;
-static GLint  fl_loc_tex = -1, fl_loc_pal = -1;
+static GLint  fl_loc_tex = -1, fl_loc_pal = -1, fl_loc_transkey = -1;
 static GLint  fl_loc_d10 = -1, fl_loc_d14 = -1, fl_loc_d18 = -1, fl_loc_d1c = -1;
 static GLint  fl_loc_scale = -1, fl_loc_centre = -1, fl_loc_ctr = -1, fl_loc_persp = -1;
 static int    fl_ready = 0;
@@ -134,6 +141,7 @@ static int fl_init(void)
     }
     fl_loc_tex    = glGetUniformLocation(fl_prog, "uTex");
     fl_loc_pal    = glGetUniformLocation(fl_prog, "uPalette");
+    fl_loc_transkey = glGetUniformLocation(fl_prog, "uTransKey");
     fl_loc_d10    = glGetUniformLocation(fl_prog, "uD10");
     fl_loc_d14    = glGetUniformLocation(fl_prog, "uD14");
     fl_loc_d18    = glGetUniformLocation(fl_prog, "uD18");
@@ -185,7 +193,13 @@ static int fl_init(void)
 
 static void fl_upload_pages(const HwrTexturePages *pg, int filter_linear)
 {
-    GLint filt = filter_linear ? GL_LINEAR : GL_NEAREST;
+    /* The pages are GL_R8 *palette indices*, not colours. GL_LINEAR would
+     * interpolate the indices themselves (index 20 + 200 -> 110), and
+     * palette[110] is an unrelated colour - that is the sparkle/marbling. So
+     * the indexed texture must always be NEAREST; smooth filtering, if wanted,
+     * has to be done after the palette lookup (palette-correct bilinear). */
+    GLint filt = GL_NEAREST;
+    (void)filter_linear;
     glBindTexture(GL_TEXTURE_2D_ARRAY, fl_tex);
     if (!fl_pages_uploaded && pg != NULL && pg->texels != NULL) {
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
@@ -193,14 +207,63 @@ static void fl_upload_pages(const HwrTexturePages *pg, int filter_linear)
             pg->count, 0, GL_RED, GL_UNSIGNED_BYTE, pg->texels);
         fl_pages_uploaded = 1;
     }
-    if (filter_linear != fl_filter) {
+    if (fl_filter != 0) {
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, filt);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, filt);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-        fl_filter = filter_linear;
+        fl_filter = 0;
     }
+}
+
+/* Bind the floor program, set the camera uniforms and the indexed-texture +
+ * palette samplers. Shared by the floor and face passes (both use the same
+ * transform_shpoint projection and texture pages). */
+static void fl_setup_program(const HwrCamera *cam, const unsigned char *pal8,
+    int trans_key)
+{
+    if (pal8 != NULL) {
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, fl_pal);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, 256, 1, 0, GL_RGB,
+            GL_UNSIGNED_BYTE, pal8);
+    }
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, fl_tex);
+
+    glEnable(GL_DEPTH_TEST);
+    glUseProgram(fl_prog);
+    glUniform1f(fl_loc_d10, cam->d10);
+    glUniform1f(fl_loc_d14, cam->d14);
+    glUniform1f(fl_loc_d18, cam->d18);
+    glUniform1f(fl_loc_d1c, cam->d1c);
+    glUniform1f(fl_loc_scale, cam->scale);
+    glUniform2f(fl_loc_centre, cam->centre_x, cam->centre_y);
+    glUniform3f(fl_loc_ctr, cam->cx, cam->cy8, cam->cz);
+    glUniform1i(fl_loc_persp, cam->perspective);
+    glUniform1i(fl_loc_tex, 0);
+    glUniform1i(fl_loc_pal, 1);
+    glUniform1i(fl_loc_transkey, trans_key);
+}
+
+/* Stream one indexed geometry batch through the shared VBO/EBO and draw it.
+ * The program, uniforms and textures must already be bound (fl_setup_program).
+ * Draws are sequential so reusing the buffers between batches is safe. */
+static void fl_draw_batch(const HwrGeometryBatch *batch)
+{
+    glBindVertexArray(fl_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, fl_vbo);
+    glBufferData(GL_ARRAY_BUFFER,
+        (GLsizeiptr)batch->vert_count * sizeof(HwrVertex), batch->verts,
+        GL_STREAM_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, fl_ebo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+        (GLsizeiptr)batch->index_count * sizeof(uint32_t), batch->indices,
+        GL_STREAM_DRAW);
+    glDrawElements(GL_TRIANGLES, batch->index_count, GL_UNSIGNED_INT, (void *)0);
+    glBindVertexArray(0);
 }
 
 /** Render the floor for this frame. pal8 is the active 256*3 8-bit palette;
@@ -230,46 +293,40 @@ int hwr_floor_render(const unsigned char *pal8, int filter_linear)
     }
 
     fl_upload_pages(&pages, filter_linear);
-
-    /* Stream this frame's geometry. */
-    glBindVertexArray(fl_vao);
-    glBindBuffer(GL_ARRAY_BUFFER, fl_vbo);
-    glBufferData(GL_ARRAY_BUFFER,
-        (GLsizeiptr)batch.vert_count * sizeof(HwrVertex), batch.verts,
-        GL_STREAM_DRAW);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, fl_ebo);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
-        (GLsizeiptr)batch.index_count * sizeof(uint32_t), batch.indices,
-        GL_STREAM_DRAW);
-
-    /* Palette texture (active 8-bit). */
-    if (pal8 != NULL) {
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, fl_pal);
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, 256, 1, 0, GL_RGB,
-            GL_UNSIGNED_BYTE, pal8);
-    }
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D_ARRAY, fl_tex);
-
-    glEnable(GL_DEPTH_TEST);
-    glUseProgram(fl_prog);
-    glUniform1f(fl_loc_d10, cam.d10);
-    glUniform1f(fl_loc_d14, cam.d14);
-    glUniform1f(fl_loc_d18, cam.d18);
-    glUniform1f(fl_loc_d1c, cam.d1c);
-    glUniform1f(fl_loc_scale, cam.scale);
-    glUniform2f(fl_loc_centre, cam.centre_x, cam.centre_y);
-    glUniform3f(fl_loc_ctr, cam.cx, cam.cy8, cam.cz);
-    glUniform1i(fl_loc_persp, cam.perspective);
-    glUniform1i(fl_loc_tex, 0);
-    glUniform1i(fl_loc_pal, 1);
-
-    glDrawElements(GL_TRIANGLES, batch.index_count, GL_UNSIGNED_INT, (void *)0);
-    glBindVertexArray(0);
+    fl_setup_program(&cam, pal8, -1);   /* floor tiles are fully opaque */
+    fl_draw_batch(&batch);
 
     hwr_gl_check("hwr_floor_render");
+    return 1;
+}
+
+/** Render object/building faces for this frame (Phase 4). Reuses the floor
+ *  program, texture pages and palette; pulls face geometry from the bound
+ *  source's get_faces. Assumes the texture pages are already uploaded (call
+ *  after hwr_floor_render). Returns nonzero if anything was drawn. */
+int hwr_faces_render(const unsigned char *pal8, int filter_linear)
+{
+    HwrCamera cam;
+    HwrGeometryBatch batch;
+    const HwrSceneSource *s = hwr_source;
+
+    if (!hwr_is_ready() || s == NULL || s->get_faces == NULL)
+        return 0;
+    if (s->get_camera == NULL || !fl_ready)
+        return 0;
+    if (s->get_camera(s->ctx, &cam) != 0)
+        return 0;
+    if (s->get_faces(s->ctx, &batch) <= 0 || batch.index_count <= 0)
+        return 0;
+
+    (void)filter_linear;   /* pages already uploaded with the chosen filter */
+    /* Faces are double-sided (cull stays disabled): through a window you see the
+     * building's back wall. Index 0 is the texture transparent key (windows /
+     * grates), so discard it to let those back faces show through. */
+    fl_setup_program(&cam, pal8, 0);
+    fl_draw_batch(&batch);
+
+    hwr_gl_check("hwr_faces_render");
     return 1;
 }
 

@@ -1894,6 +1894,11 @@ void process_engine_unk3(void)
              * hwrender_floor_gate() keys the framebuffer and we skip the SW floor.
              * Inert (returns false) in a software-only build. */
             lvdraw_do_floor();
+            engine_hwr_suppress_faces = 0;
+        } else {
+            /* Floor gated for 3D: also suppress the SW opaque object/building
+             * faces so the FX3D renderer draws them as geometry instead. */
+            engine_hwr_suppress_faces = 1;
         }
     }
 

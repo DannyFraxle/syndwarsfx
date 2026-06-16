@@ -117,6 +117,10 @@ extern TbPixel face_transp_tinted_line_col;
 
 extern ubyte engine_render_lights;
 
+/* When nonzero, opaque object/building faces are skipped during drawlist
+ * execution so the FX3D hardware renderer can draw them as 3D geometry. */
+extern int engine_hwr_suppress_faces;
+
 extern short word_1A5834;
 extern short word_1A5836;
 

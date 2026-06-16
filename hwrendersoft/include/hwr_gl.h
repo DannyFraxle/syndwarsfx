@@ -55,6 +55,10 @@ typedef ptrdiff_t      GLsizeiptr;
 #define GL_DEPTH_TEST                     0x0B71
 #define GL_MULTISAMPLE                    0x809D
 #define GL_CULL_FACE                      0x0B44
+#define GL_FRONT                          0x0404
+#define GL_BACK                           0x0405
+#define GL_CW                             0x0900
+#define GL_CCW                            0x0901
 #define GL_BLEND                          0x0BE2
 #define GL_SRC_ALPHA                      0x0302
 #define GL_ONE_MINUS_SRC_ALPHA            0x0303
@@ -106,6 +110,8 @@ typedef void   (HWR_APIENTRY *PFN_glEnable)(GLenum);
 typedef void   (HWR_APIENTRY *PFN_glDisable)(GLenum);
 typedef void   (HWR_APIENTRY *PFN_glBlendFunc)(GLenum, GLenum);
 typedef void   (HWR_APIENTRY *PFN_glDepthFunc)(GLenum);
+typedef void   (HWR_APIENTRY *PFN_glCullFace)(GLenum);
+typedef void   (HWR_APIENTRY *PFN_glFrontFace)(GLenum);
 typedef GLenum (HWR_APIENTRY *PFN_glGetError)(void);
 typedef const GLubyte_compat *(HWR_APIENTRY *PFN_glGetString)(GLenum);
 typedef void   (HWR_APIENTRY *PFN_glDrawElements)(GLenum, GLsizei, GLenum, const void *);

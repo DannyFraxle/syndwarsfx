@@ -36,6 +36,36 @@ ushort tnext_special_obj_face4 = 1;
 
 ushort tnext_screen_point = 0;
 
+/* When nonzero, the opaque object/building face draw-item types are skipped
+ * during drawlist execution. Set by the FX3D hardware renderer (which draws
+ * those faces as 3D geometry instead); the keyed gaps let the GL scene show
+ * through. Reflective/transparent faces, sprites, objects and HUD still draw
+ * in software. Always 0 in a software-only build. */
+int engine_hwr_suppress_faces = 0;
+
+/* True for the opaque face draw-item types the FX3D renderer takes over. */
+static TbBool drawitem_is_suppressed_face(ubyte type)
+{
+    if (!engine_hwr_suppress_faces)
+        return false;
+    switch (type)
+    {
+    /* Standard object/building faces, drawn as 3D geometry by FX3D (they live
+     * in game_object_faces3/4). Special faces (DrIT_SpObFace4) come from a
+     * separate runtime-built array the GL emitter does not read, so they are
+     * left to the software renderer to avoid leaving holes. */
+    case DrIT_ObFace3Txtr:
+    case DrIT_Unkn10:
+    case DrIT_ObFace4Txtr:
+    case DrIT_ObFace3G:
+    case DrIT_ObFace4G:
+    case DrIT_ObFacePole:
+        return true;
+    default:
+        return false;
+    }
+}
+
 /******************************************************************************/
 // from engindrwlstx_spr
 void draw_sort_line1a(ushort sln);
@@ -107,6 +137,8 @@ void draw_drawitem_1(ushort dihead)
     for (iidx = dihead; iidx != 0; iidx = itm->Child)
     {
       itm = &game_draw_list[iidx];
+      if (drawitem_is_suppressed_face(itm->Type))
+          continue;
       switch (itm->Type)
       {
       case DrIT_ObFace3Txtr:
@@ -176,6 +208,8 @@ void draw_drawitem_2(ushort dihead)
       if (i > BUCKET_ITEMS_MAX)
           break;
       itm = &game_draw_list[iidx];
+      if (drawitem_is_suppressed_face(itm->Type))
+          continue;
       switch (itm->Type)
       {
       case DrIT_ObFace3Txtr:
