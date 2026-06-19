@@ -456,6 +456,15 @@ TbBool read_rules_file(void)
     // Apply command-line overrides over rules.ini and publish MSAA settings.
     fx3d_config_finalize();
 
+#if defined(HAVE_HWRENDER)
+    {
+        char lights_fname[DISKPATH_SIZE];
+        extern void hwr_lights_load(const char *);
+        snprintf(lights_fname, DISKPATH_SIZE-1, "%s/fx3d_lights.ini", pinfo->directory);
+        hwr_lights_load(lights_fname);
+    }
+#endif
+
     zoom_update(zoom_min, zoom_max);
     LbIniParseEnd(&parser);
     LbMemoryFree(conf_buf);

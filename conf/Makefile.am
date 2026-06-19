@@ -21,6 +21,7 @@ conf_DATA = \
 	pop2-0.ini \
 	pop2-1.ini \
 	pop2-3.ini \
+	fx3d_lights.ini \
 	rules.ini \
 	weapons.ini \
 	miss000.ini \

@@ -74,11 +74,14 @@ typedef struct {
 } HwrGeometryBatch;
 
 /** A point light. r,g,b are linear 0..1 (already 6-bit-expanded by the
- *  source). radius is in world units; intensity falls off to zero at radius. */
+ *  source). radius is the inverse-square attenuation constant; max_dist2 is the
+ *  per-pixel distance-cull radius squared (PRCCOORD²), set per-light by the
+ *  scene source (can widen for elevated lights so their pool reaches the ground). */
 typedef struct {
     float x, y, z;
     float r, g, b;
     float radius;
+    float max_dist2;       /* per-light distance-cull threshold, default = global_base */
 } HwrLight;
 
 /** A camera-facing billboard sprite (a Thing). pos is the world anchor;

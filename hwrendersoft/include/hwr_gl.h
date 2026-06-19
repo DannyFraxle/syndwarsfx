@@ -46,6 +46,7 @@ typedef ptrdiff_t      GLsizeiptr;
 #define GL_TRUE                           1
 #define GL_NONE                           0
 #define GL_TRIANGLES                      0x0004
+#define GL_TRIANGLE_STRIP                 0x0005
 #define GL_UNSIGNED_BYTE                  0x1401
 #define GL_UNSIGNED_SHORT                 0x1403
 #define GL_UNSIGNED_INT                   0x1405
@@ -66,6 +67,7 @@ typedef ptrdiff_t      GLsizeiptr;
 #define GL_TEXTURE_2D                     0x0DE1
 #define GL_TEXTURE0                       0x84C0
 #define GL_TEXTURE1                       0x84C1
+#define GL_TEXTURE2                       0x84C2
 #define GL_TEXTURE_WRAP_S                 0x2802
 #define GL_TEXTURE_WRAP_T                 0x2803
 #define GL_TEXTURE_MIN_FILTER             0x2801
@@ -92,6 +94,24 @@ typedef ptrdiff_t      GLsizeiptr;
 #define GL_INFO_LOG_LENGTH                0x8B84
 #define GL_VERSION                        0x1F02
 #define GL_NO_ERROR                       0
+#define GL_REPEAT                         0x2901
+#define GL_RGB16F                         0x881B
+#define GL_RGB32F                         0x8815
+#define GL_RGBA32F                        0x8814
+#define GL_R16F                           0x822D
+#define GL_RGBA                           0x1908
+#define GL_HALF_FLOAT                     0x140B
+/* Framebuffer / renderbuffer objects (for the SSAO G-buffer). */
+#define GL_FRAMEBUFFER                    0x8D40
+#define GL_RENDERBUFFER                   0x8D41
+#define GL_COLOR_ATTACHMENT0              0x8CE0
+#define GL_COLOR_ATTACHMENT1              0x8CE1
+#define GL_DEPTH_ATTACHMENT               0x8D00
+#define GL_FRAMEBUFFER_COMPLETE           0x8CD5
+#define GL_DEPTH_COMPONENT24              0x81A6
+#define GL_DEPTH_COMPONENT                0x1902
+#define GL_TEXTURE3                       0x84C3
+#define GL_POLYGON_OFFSET_FILL            0x8037
 
 /* GL entry points use the platform's GL calling convention. On Windows that is
  * __stdcall (APIENTRY); calling through a cdecl pointer there corrupts the
@@ -128,6 +148,7 @@ typedef void   (HWR_APIENTRY *PFN_glGenVertexArrays)(GLsizei, GLuint *);
 typedef void   (HWR_APIENTRY *PFN_glDeleteVertexArrays)(GLsizei, const GLuint *);
 typedef void   (HWR_APIENTRY *PFN_glBindVertexArray)(GLuint);
 typedef void   (HWR_APIENTRY *PFN_glEnableVertexAttribArray)(GLuint);
+typedef void   (HWR_APIENTRY *PFN_glDisableVertexAttribArray)(GLuint);
 typedef void   (HWR_APIENTRY *PFN_glVertexAttribPointer)(GLuint, GLint, GLenum, GLboolean, GLsizei, const void *);
 typedef void   (HWR_APIENTRY *PFN_glVertexAttribIPointer)(GLuint, GLint, GLenum, GLsizei, const void *);
 
@@ -155,10 +176,29 @@ typedef void   (HWR_APIENTRY *PFN_glUseProgram)(GLuint);
 typedef GLint  (HWR_APIENTRY *PFN_glGetUniformLocation)(GLuint, const GLchar *);
 typedef void   (HWR_APIENTRY *PFN_glUniform1i)(GLint, GLint);
 typedef void   (HWR_APIENTRY *PFN_glUniform1f)(GLint, GLfloat);
+typedef void   (HWR_APIENTRY *PFN_glUniform1fv)(GLint, GLsizei, const GLfloat *);
 typedef void   (HWR_APIENTRY *PFN_glUniform2f)(GLint, GLfloat, GLfloat);
 typedef void   (HWR_APIENTRY *PFN_glUniform3f)(GLint, GLfloat, GLfloat, GLfloat);
+typedef void   (HWR_APIENTRY *PFN_glUniform3fv)(GLint, GLsizei, const GLfloat *);
 typedef void   (HWR_APIENTRY *PFN_glUniform4f)(GLint, GLfloat, GLfloat, GLfloat, GLfloat);
 typedef void   (HWR_APIENTRY *PFN_glUniformMatrix4fv)(GLint, GLsizei, GLboolean, const GLfloat *);
+typedef void   (HWR_APIENTRY *PFN_glUniform2fv)(GLint, GLsizei, const GLfloat *);
+
+/* Framebuffer / renderbuffer objects. */
+typedef void   (HWR_APIENTRY *PFN_glGenFramebuffers)(GLsizei, GLuint *);
+typedef void   (HWR_APIENTRY *PFN_glDeleteFramebuffers)(GLsizei, const GLuint *);
+typedef void   (HWR_APIENTRY *PFN_glBindFramebuffer)(GLenum, GLuint);
+typedef void   (HWR_APIENTRY *PFN_glFramebufferTexture2D)(GLenum, GLenum, GLenum, GLuint, GLint);
+typedef GLenum (HWR_APIENTRY *PFN_glCheckFramebufferStatus)(GLenum);
+typedef void   (HWR_APIENTRY *PFN_glDrawBuffers)(GLsizei, const GLenum *);
+typedef void   (HWR_APIENTRY *PFN_glDrawBuffer)(GLenum);
+typedef void   (HWR_APIENTRY *PFN_glReadBuffer)(GLenum);
+typedef void   (HWR_APIENTRY *PFN_glPolygonOffset)(GLfloat, GLfloat);
+typedef void   (HWR_APIENTRY *PFN_glGenRenderbuffers)(GLsizei, GLuint *);
+typedef void   (HWR_APIENTRY *PFN_glDeleteRenderbuffers)(GLsizei, const GLuint *);
+typedef void   (HWR_APIENTRY *PFN_glBindRenderbuffer)(GLenum, GLuint);
+typedef void   (HWR_APIENTRY *PFN_glRenderbufferStorage)(GLenum, GLenum, GLsizei, GLsizei);
+typedef void   (HWR_APIENTRY *PFN_glFramebufferRenderbuffer)(GLenum, GLenum, GLenum, GLuint);
 
 /* --- The resolved entry points (defined in hwr_gl.c) --- */
 #define HWR_GL_FUNC(ret, name, args) extern PFN_##name name;

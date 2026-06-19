@@ -51,6 +51,9 @@ void fx3d_config_finalize(void)
 #if defined(HAVE_HWRENDER)
 
 #include "hwr_api.h"
+#include "hwr_lights.h"
+#include "hwr_tuning.h"
+#include "hwr_thingbrowse.h"
 #include "hwr_source_sw.h"
 #include "bfscreen.h"
 #include "game_options.h"
@@ -110,9 +113,27 @@ static void glue_present(void)
          * objects/sprites/HUD on top, discarding the key so the floor shows.
          * Driven by the display mode (not a per-frame flag) so skipped-redraw
          * frames stay consistent instead of flashing the key colour. */
-        hwr_scene_begin();
-        hwr_floor_render(pal, fx3d_filter_ground);
-        hwr_faces_render(pal, fx3d_filter_objects);
+        {
+            HwrLightDefaults d = hwr_lights_defaults();
+            int dw = 0, dh = 0;
+            hwr_drawable_size(&dw, &dh);
+            hwr_sun_config(d.sun_enable, d.sun_bright, d.sun_ambient,
+                d.sun_azimuth, d.sun_elevation, d.sun_pcf,
+                d.sun_bias, d.sun_slope, d.sun_units, d.sun_debug,
+                d.sun_haze);
+            hwr_ssao_config(d.ssao_enable, d.ssao_radius, d.ssao_world,
+                d.ssao_strength, d.ssao_bias, d.ssao_debug);
+            hwr_thingno_debug(d.thingno_debug);
+            hwr_scene_begin();
+            hwr_sun_shadow_pass();           /* depth from sun -> shadow map */
+            hwr_ssao_begin(dw, dh);          /* binds the G-buffer (or back buffer) */
+            hwr_floor_render(pal, fx3d_filter_ground);
+            hwr_faces_render(pal, fx3d_filter_objects);
+            hwr_ssao_resolve();              /* composites colour*AO to back buffer */
+            hwr_thingno_render();            /* overlay ThingNo debug labels */
+            hwr_thingbrowse_render();        /* thing category browser (F5) */
+            hwr_tuning_render();             /* lighting tuning panel (F7) */
+        }
         hwr_present_indexed_keyed((const unsigned char *)lbDisplay.WScreen,
             w, h, w, pal, HWR_KEY_INDEX);
     } else {

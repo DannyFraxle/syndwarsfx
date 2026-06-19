@@ -129,6 +129,15 @@ void hwr_sync_viewport(void)
         glViewport(0, 0, dw, dh);
 }
 
+void hwr_drawable_size(int *w, int *h)
+{
+    int dw = 0, dh = 0;
+    if (hwr_ready && hwr_window != NULL)
+        SDL_GL_GetDrawableSize(hwr_window, &dw, &dh);
+    if (w != NULL) *w = dw;
+    if (h != NULL) *h = dh;
+}
+
 void hwr_present(void)
 {
     if (hwr_ready && hwr_window != NULL)

@@ -22,10 +22,15 @@
  */
 /******************************************************************************/
 #include "hwr_scene_source.h"
+#include "hwr_lights.h"
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
+#include <math.h>
+
+#include "hwr_api.h"
 
 /* --- Game globals (resolved at the executable's link step) --- */
 /* Camera centre, from engincam.h (s32). */
@@ -127,6 +132,36 @@ struct HwrObject {          /* == struct SingleObject, sizeof 36 */
     uint8_t  field_20[3];
     uint8_t  field_23;
 };
+struct HwrFullLight {       /* == struct FullLight, sizeof 32 */
+    int16_t  Intensity, TrueIntensity, Command, NextFull;
+    int16_t  X, Y, Z;
+    int16_t  lgtfld_E, lgtfld_10, lgtfld_12;
+    uint8_t  lgtfld_14[10];
+    uint16_t Flags;
+};
+struct HwrQuickLight {      /* == struct QuickLight, sizeof 6 */
+    uint16_t Ratio, Light, NextQuick;
+};
+struct HwrThingMini {       /* first bytes of struct Thing, sizeof 168 */
+    int16_t  Parent, Next, LinkParent, LinkChild;
+    uint8_t  SubType, Type;
+    int16_t  State;
+    uint32_t Flag;
+    int16_t  LinkSame, LinkSameGroup, Radius, ThingOffset;
+    int32_t  X, Y, Z;
+};
+struct HwrSimpleThingMini { /* == struct SimpleThing, sizeof 60 */
+    int16_t  Parent, Next, LinkParent, LinkChild;
+    uint8_t  SubType, Type;
+    int16_t  State;
+    uint32_t Flag;
+    int16_t  LinkSame, Object, Radius, ThingOffset;
+    int32_t  X, Y, Z;
+    int16_t  Frame, StartFrame, Timer1, StartTimer1;
+    int16_t  U_Frame, U_StartFrame, U_LightHead, U_LightDie, U_LightAnim, U_Health;
+    int16_t  Owner2;
+    uint16_t UniqueID;
+};
 #pragma pack(pop)
 
 extern struct HwrMapEl    *game_my_big_map;     /* == game_my_big_map */
@@ -141,6 +176,17 @@ extern unsigned short        next_object;        /* count of objects        */
 extern struct HwrSinglePoint *game_object_points;/* == game_object_points   */
 extern struct HwrObjFace3   *game_object_faces3; /* == game_object_faces3   */
 extern struct HwrObjFace4   *game_object_faces4; /* == game_object_faces4   */
+
+extern struct HwrFullLight  *game_full_lights;   /* == game_full_lights     */
+extern uint16_t              next_full_light;     /* active count            */
+
+extern struct HwrQuickLight *game_quick_lights;  /* == game_quick_lights    */
+extern uint16_t              next_quick_light;
+
+extern uint16_t              next_object_face3;   /* count of Face3 entries  */
+extern uint16_t              next_object_face4;   /* count of Face4 entries  */
+
+extern char                 *things;              /* == struct Thing array   */
 
 /* The palette index reserved as the composite key (set by the host glue). */
 int hwr_sw_key_index = 0;
@@ -167,6 +213,19 @@ void hwr_sw_capture(void)
     snap.ra = render_area_a; snap.rb = render_area_b;
     snap.persp = game_perspective;
     snap.valid = 1;
+}
+
+int hwr_sw_camera_snapshot(int32_t *xc, int32_t *yc, int32_t *zc,
+    int32_t *d10, int32_t *d14, int32_t *d18, int32_t *d1c,
+    int32_t *d3c, int32_t *d40, int32_t *scale, int32_t *persp)
+{
+    if (!snap.valid) return 0;
+    *xc = snap.xc; *yc = snap.yc; *zc = snap.zc;
+    *d10 = snap.D10; *d14 = snap.D14; *d18 = snap.D18; *d1c = snap.D1C;
+    *d3c = snap.D3C; *d40 = snap.D40;
+    *scale = snap.scale;
+    *persp = snap.persp;
+    return 1;
 }
 
 /* Viewport, supplied by the host at creation time. */
@@ -220,6 +279,31 @@ static int16_t corner_alt(int cx, int cz, int corner_gx, int corner_gz)
     if (game_my_big_map[HWR_MAP_TILE_WIDTH * cgz + cgx].Texture == 0)
         return tile_alt(cx, cz);
     return game_my_big_map[HWR_MAP_TILE_WIDTH * cgz + cgx].Alt;
+}
+
+/* Geometric ambient occlusion for a floor corner. The grid corner (cgx,cgz) is
+ * shared by up to 4 cells; each one that is a building/column footprint
+ * (Texture==0) is a vertical occluder. Returns an "openness" byte (255 = fully
+ * open, lower = more occluded) baked into the vertex so the shader darkens the
+ * ambient fill at the base of walls and in corners. */
+static uint8_t corner_ao(int cgx, int cgz)
+{
+    int dx, dz, occ = 0;
+    for (dz = -1; dz <= 0; dz++) {
+        for (dx = -1; dx <= 0; dx++) {
+            int nx = clampi(cgx + dx, 0, HWR_MAP_TILE_WIDTH - 1);
+            int nz = clampi(cgz + dz, 0, HWR_MAP_TILE_WIDTH - 1);
+            if (game_my_big_map[HWR_MAP_TILE_WIDTH * nz + nx].Texture == 0)
+                occ++;        /* building/column cell touching this corner */
+        }
+    }
+    /* Each occluding cell darkens this corner; clamp so a corner boxed in by
+     * buildings stays dim rather than wrapping past zero, and never fully black. */
+    {
+        int open = 255 - occ * 56;
+        if (open < 31) open = 31;
+        return (uint8_t)open;
+    }
 }
 
 /* For column/building cells (Texture==0), find the nearest valid floor tile
@@ -323,7 +407,7 @@ static int sw_get_floor(void *ctx, HwrGeometryBatch *out)
              * All 4 vertices share the same depth so tiles sort as flat units,
              * matching the SW bucket sort and preventing ground tiles that are
              * closer horizontally from hiding elevated ledge tiles above them. */
-            {
+    {
                 float tdx = (float)(((gx << 8) + 128) - snap.xc);
                 float tdz = (float)(((gz << 8) + 128) - snap.zc);
                 float talt = (float)(8 * tile_alt(gx, gz));
@@ -356,15 +440,14 @@ static int sw_get_floor(void *ctx, HwrGeometryBatch *out)
             v[2].u = tx->TMapX2; v[2].v = tx->TMapY2;
             v[3].u = tx->TMapX1; v[3].v = tx->TMapY1;
             v[0].page = v[1].page = v[2].page = v[3].page = tx->Page;
-            {
-                /* ShadeR (0..127). For Texture==0 cells, inherited_shade comes
-                 * from the nearest valid neighbour (ShadeR is never set for
-                 * column cells). Scale to 0..255 for the light byte. */
-                int sh = (int)inherited_shade * 2;
-                if (sh > 255) sh = 255;
-                if (sh < 0)   sh = 0;
-                v[0].light = v[1].light = v[2].light = v[3].light = (uint8_t)sh;
-            }
+            /* Per-corner geometric AO: darkens the ambient fill where the floor
+             * meets buildings/columns. Replaces the SW per-tile ShadeR (which is
+             * near-flat on open ground and reads as no occlusion). */
+            (void)inherited_shade;
+            v[0].light = corner_ao(gx,     gz);
+            v[1].light = corner_ao(gx + 1, gz);
+            v[2].light = corner_ao(gx + 1, gz + 1);
+            v[3].light = corner_ao(gx,     gz + 1);
             floor_vert_count += 4;
 
             /* Triangle split matches SW draw_floor_tile1a: diagonal (v[3]→v[1])
@@ -580,10 +663,194 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
     return face_index_count;
 }
 
+/* Local cap matching HWR_MAX_LIGHTS in hwr_floor.c — keep in sync. */
+#define SW_LIGHTS_MAX 64
+
 static int sw_get_lights(void *ctx, HwrLight *out, int max)
 {
-    (void)ctx; (void)out; (void)max;
-    return 0;   /* Phase 5 */
+    /* Pick the nearest `max` lights to the camera (XZ plane).
+     * Keeps a fixed-size set of closest candidates: O(N*max) per frame,
+     * fine for N<=4000 and max<=SW_LIGHTS_MAX. */
+    struct { int idx; int dist2; } nearest[SW_LIGHTS_MAX];
+    int nnearest = 0;
+    int cx, cz, i, j;
+    float rmul, sstr;
+    (void)ctx;
+
+    if (game_full_lights == NULL || out == NULL || max <= 0)
+        return 0;
+    if (max > SW_LIGHTS_MAX)
+        max = SW_LIGHTS_MAX;
+
+    /* --- Debug: dump all light IDs when light_debug is enabled --- */
+    if (hwr_lights_defaults().light_debug) {
+        static int dumped = 0;
+        if (!dumped) {
+            FILE *dbg = fopen("fx3d_light_ids.txt", "w");
+            if (dbg) {
+                int nlights = (int)next_full_light - 1;
+                int hist[55] = {0};
+                fprintf(dbg, "Light intensity histogram (%d lights, bucket = 25 units)\n", nlights);
+                fprintf(dbg, "========================================================\n");
+                fprintf(dbg, "Categories from LightHead owner's Thing (Type,SubType).\n\n");
+                for (i = 1; i < (int)next_full_light; i++) {
+                    int intens = (int)game_full_lights[i].Intensity;
+                    int bucket = intens / 25;
+                    if (bucket < 0) bucket = 0;
+                    if (bucket > 54) bucket = 54;
+                    hist[bucket]++;
+                }
+                for (i = 0; i < 55; i++) {
+                    if (hist[i] > 0) {
+                        int lo = i * 25;
+                        int hi = (i + 1) * 25 - 1;
+                        int bars = hist[i] / 5;
+                        if (bars < 1 && hist[i] > 0) bars = 1;
+                        fprintf(dbg, "Int %3d-%-3d: %4d ", lo, hi, hist[i]);
+                        while (bars--) putc('#', dbg);
+                        putc('\n', dbg);
+                    }
+                }
+                fprintf(dbg, "\nSample config for [defaultlighting]:\n");
+                fprintf(dbg, "filler_brightness   = 0.2   (dim fillers)\n");
+                fprintf(dbg, "building_brightness  = 0.8   (subtle buildings)\n");
+                fprintf(dbg, "street_brightness    = 1.5   (vivid streetlamps)\n");
+                fclose(dbg);
+            }
+            dumped = 1;
+        }
+    }
+
+    /* --- Per-(Type,SubType) category cache for all lights ----------------- */
+    #define HWR_THING_CACHE_LEN 4096
+    static int cached_type[HWR_THING_CACHE_LEN];
+    static int cached_sub[HWR_THING_CACHE_LEN];
+    static int cached_valid = 0;
+    {
+        int nfl = (int)next_full_light;
+        if (nfl > HWR_THING_CACHE_LEN) nfl = HWR_THING_CACHE_LEN;
+        memset(cached_type, 0, sizeof(cached_type));
+        memset(cached_sub, 0, sizeof(cached_sub));
+        /* Only LightHead ownership determines a light's type for category
+         * purposes.  We DO NOT traverse faces here: a face references a
+         * light for illumination, not ownership.  Unconnected lights (no
+         * SimpleThing LightHead chain) fall back to intensity-based
+         * category in the output loop below. */
+        /* Override with LightHead ownership: the SimpleThing that OWNS
+         * a FullLight (via LightHead→NextFull chain) determines its type,
+         * NOT the objects whose faces reference it for illumination.
+         * STHINGS_LIMIT = 1500 — do NOT go past this or garbage data can
+         * overwrite valid cached_type entries for real lights. */
+        {
+            extern char *things;
+            int max_si = 1500;
+            for (int si = 1; si < max_si; si++) {
+                struct HwrSimpleThingMini *st = (struct HwrSimpleThingMini *)((char *)things - si * 60);
+                if (st->Type == 0 || st->U_LightHead == 0) continue;
+                int fidx = st->U_LightHead;
+                int visited = 0;
+                while (fidx > 0 && fidx < (uint16_t)nfl) {
+                    if (st->Type > 0) {
+                        cached_type[fidx] = st->Type;
+                        cached_sub[fidx]  = st->SubType;
+                    }
+                    fidx = game_full_lights[fidx].NextFull;
+                    if (++visited > 100) break;
+                }
+            }
+        }
+        cached_valid = 1;
+    }
+
+    {
+        HwrLightDefaults ld = hwr_lights_defaults();
+        rmul = ld.radius;
+        sstr = ld.shadow_strength;
+    }
+    cx = snap.xc;
+    cz = snap.zc;
+
+    for (i = 1; i < (int)next_full_light; i++) {
+        struct HwrFullLight *fl = &game_full_lights[i];
+        int dx, dz, d2, worst;
+        /* Intensity is signed: negative lights are "anti-lights" the original
+         * used to subtract light and fake shadows. shadow_strength <= 0 disables
+         * them so they do not even consume light-selection slots. */
+        if (fl->Intensity == 0)
+            continue;
+        if (fl->Intensity < 0 && sstr <= 0.0f)
+            continue;
+        dx = (int)fl->X - cx;
+        dz = (int)fl->Z - cz;
+        d2 = dx*dx + dz*dz;
+
+        if (nnearest < max) {
+            nearest[nnearest].idx   = i;
+            nearest[nnearest].dist2 = d2;
+            nnearest++;
+        } else {
+            /* Replace the furthest candidate if this one is closer. */
+            worst = 0;
+            for (j = 1; j < nnearest; j++)
+                if (nearest[j].dist2 > nearest[worst].dist2)
+                    worst = j;
+            if (d2 < nearest[worst].dist2) {
+                nearest[worst].idx   = i;
+                nearest[worst].dist2 = d2;
+            }
+        }
+    }
+
+    for (i = 0; i < nnearest; i++) {
+        struct HwrFullLight *fl = &game_full_lights[nearest[i].idx];
+        HwrLightColor col = hwr_lights_lookup((int)fl->Command);
+        out[i].x = (float)fl->X + 70.0f;    /* 70 PRC east */
+        out[i].y = (float)fl->Y;
+        out[i].z = (float)fl->Z + 50.0f;    /* 50 PRC south */
+        if (fl->Intensity < 0) {
+            /* Anti-light: shader reads .r as the darkening amount and the
+             * negative radius as the flag. Scale by |Intensity| vs the ~64 the
+             * level's lamps use, times the global shadow strength. */
+            int ai = -(int)fl->Intensity;
+            out[i].r = out[i].g = out[i].b = sstr * ((float)ai / 64.0f);
+            /* Inverse-square attenuation constant: Intensity * 34019 (= 1088608/32)
+             * matching the SW super-quick-light formula. rmul/21 normalises so
+             * ini radius=21 gives exact SW behaviour. */
+            out[i].radius = -((float)ai * 34019.0f * (rmul / 21.0f) * col.intensity_scale);
+        } else {
+            /* Category from LightHead owner's Thing (Type,SubType). */
+            HwrLightDefaults ld = hwr_lights_defaults();
+            int intens = (int)fl->Intensity;
+            int lidx = nearest[i].idx;
+            int cat = 0; /* 0=auto, 1=filler, 2=building, 3=street */
+            float cat_bright = ld.filler_brightness;
+            if (cached_valid && lidx > 0 && lidx < HWR_THING_CACHE_LEN) {
+                int tt = cached_type[lidx], ts = cached_sub[lidx];
+                if (tt > 0) {
+                    int oc = hwr_thing_category_get(tt, ts);
+                    if (oc >= 1 && oc <= 3) { cat = oc; }
+                    if (oc == 1) cat_bright = ld.filler_brightness;
+                    else if (oc == 2) cat_bright = ld.building_brightness;
+                    else if (oc == 3) cat_bright = ld.street_brightness;
+                }
+            }
+            /* Per-category radius factor.
+             * cat_radius / 21 normalises to the SW standard (21 = exact original). */
+            float cat_radius = ld.filler_radius;
+            if (cat == 1) cat_radius = ld.filler_radius;
+            else if (cat == 2) cat_radius = ld.building_radius;
+            else if (cat == 3) cat_radius = ld.street_radius;
+            float radius_scale = cat_radius / 21.0f;
+            out[i].r = col.r * col.brightness * cat_bright;
+            out[i].g = col.g * col.brightness * cat_bright;
+            out[i].b = col.b * col.brightness * cat_bright;
+            out[i].radius = (float)fl->Intensity * 34019.0f * radius_scale * col.intensity_scale;
+            /* Per-light distance cull scales with the per-category radius.
+             * 4194304 = (8 tiles * 256 PRC/tile)² at default radius_scale=1. */
+            out[i].max_dist2 = 4194304.0f * radius_scale;
+        }
+    }
+    return nnearest;
 }
 
 static int sw_get_sprites(void *ctx, HwrBillboard *out, int max)
