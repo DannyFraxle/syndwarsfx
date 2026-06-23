@@ -37,7 +37,7 @@ static float sn_ambient   = 0.0f;    /* pure black shadows */
 static float sn_azimuth   = 315.0f;   /* compass degrees: NW */
 static float sn_elevation = 35.0f;    /* degrees above horizon */
 static int   sn_pcf       = 2;        /* PCF half-radius in texels */
-static float sn_bias      = 0.0005f;  /* small constant shader bias (post-offset) */
+static float sn_bias      = 0.002f;   /* constant shader bias: raised for vertical faces */
 static float sn_slope     = 2.0f;     /* glPolygonOffset factor */
 static float sn_units     = 4.0f;     /* glPolygonOffset units */
 static int   sn_debug     = 0;
@@ -353,14 +353,20 @@ void hwr_sun_shadow_pass(void)
 
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(sn_slope, sn_units);
     glUseProgram(sn_prog);
     glUniformMatrix4fv(sn_u_mvp, 1, GL_FALSE, sn_mvp);
 
-    if (have_floor)
+    if (have_floor) {
+        glPolygonOffset(sn_slope, sn_units);
         sn_draw_batch(&floor_batch);
-    if (have_faces)
+    }
+    if (have_faces) {
+        /* Vertical building faces have steep depth slopes relative to the sun
+         * direction. Use a much larger offset than the floor to prevent z-fighting
+         * (the face's own depth appearing as a shadow on itself next frame). */
+        glPolygonOffset(sn_slope * 8.0f, sn_units * 8.0f);
         sn_draw_batch(&face_batch);
+    }
 
     glDisable(GL_POLYGON_OFFSET_FILL);
 
@@ -392,3 +398,15 @@ int   hwr_sun_pcf(void)      { return sn_pcf;     }
 float hwr_sun_bias(void)     { return sn_bias;    }
 int   hwr_sun_debug(void)    { return sn_debug;   }
 float hwr_sun_haze(void)     { return sn_haze;    }
+
+void hwr_sun_get_direction(float *dx, float *dy, float *dz)
+{
+    const float deg2rad = 3.14159265f / 180.0f;
+    float az  = sn_azimuth  * deg2rad;
+    float el  = sn_elevation * deg2rad;
+    float cosE = (float)cos((double)el);
+    float sinE = (float)sin((double)el);
+    *dx = cosE * (float)sin((double)az);
+    *dy = sinE;
+    *dz = cosE * (float)cos((double)az);
+}

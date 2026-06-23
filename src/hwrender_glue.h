@@ -2,13 +2,12 @@
 // Syndicate Wars Fan Expansion, source port of the classic game from Bullfrog.
 /******************************************************************************/
 /** @file hwrender_glue.h
- *     Host-side glue to the optional FX3D OpenGL hardware renderer.
+ *     Host-side glue to the FX3D OpenGL hardware renderer.
  * @par Purpose:
  *     Thin shim the game calls to drive libhwrender: read the command-line
  *     toggle, request a GL-capable window, initialise on the SDL window, and
- *     render+present each frame. The whole implementation is compiled out
- *     unless configured with --enable-hwrender, so the default software build
- *     is unaffected.
+ *     render+present each frame. The hardware renderer is always built and
+ *     enabled by default in this build.
  * @par  Copying and copyrights:
  *     This program is free software; you can redistribute it and/or modify
  *     it under the terms of the GNU General Public License as published by
@@ -48,8 +47,8 @@ extern int fx3d_cli_filter_sprites;
  *  (and before the video mode / GL window is set up). */
 void fx3d_config_finalize(void);
 
-/** True when --hwrender was requested on the command line AND the build
- *  includes the hardware renderer. Always false in a software-only build. */
+/** True when the hardware renderer is active (always true by default in
+ *  this build, unless explicitly disabled via rules.ini). */
 TbBool hwrender_requested(void);
 
 /** Record that the user asked for the hardware renderer (CLI parse). */
@@ -67,7 +66,7 @@ TbBool hwrender_active(void);
  *  active and drawing the engine view, this fills the engine framebuffer with
  *  the composite key (so the 3D floor shows through) and returns true, meaning
  *  the caller must skip the software floor. Returns false otherwise (caller
- *  draws the software floor as normal). Inert in a software-only build. */
+ *  draws the software floor as normal). */
 TbBool hwrender_floor_gate(void);
 
 /** Initialise the GL backend on the current SDL window. Call after the video

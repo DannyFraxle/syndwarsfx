@@ -1,9 +1,9 @@
-bin_PROGRAMS = syndwarsfx
+bin_PROGRAMS = syndwarsfx3d
 bindir = $(prefix)/$(PACKAGE)
 
 MKW = $(PYTHON) $(top_srcdir)/util/mkwrappers
 
-syndwarsfx_SOURCES = \
+syndwarsfx3d_SOURCES = \
 	bflib_snd_mss_s.sx \
 	bflib_vidraw.c \
 	bflib_vidraw.h \
@@ -218,42 +218,37 @@ syndwarsfx_SOURCES = \
 	wrcities.c \
 	wrcities.h
 
-if USE_HWRENDER
 HWRENDER_CPPFLAGS = -I"$(top_srcdir)/hwrendersoft/include"
 HWRENDER_PROJECT_LIB = ../lib/libhwrender.a
-else
-HWRENDER_CPPFLAGS =
-HWRENDER_PROJECT_LIB =
-endif
 
-syndwarsfx_CPPFLAGS = \
+syndwarsfx3d_CPPFLAGS = \
   -I"$(top_srcdir)/bfsmacklib/include" \
   -I"$(top_srcdir)/swrendersoft/include" \
   $(HWRENDER_CPPFLAGS) \
   -I"$(top_srcdir)/bfariadne/include"
 
-syndwarsfx_WRAPPERS = wrappers_dos.o wrappers_game.o wrappers_libc.o wrappers_util.o
+syndwarsfx3d_WRAPPERS = wrappers_dos.o wrappers_game.o wrappers_libc.o wrappers_util.o
 
-syndwarsfx_RCFLAGS = \
+syndwarsfx3d_RCFLAGS = \
   -I"$(top_srcdir)/src" -I"$(builddir)" \
   $(RCFLAGS)
 
 if HAS_WINDRES
-syndwarsfx_RESRCS = syndwarsfx_stdres.res
+syndwarsfx3d_RESRCS = syndwarsfx_stdres.res
 else
-syndwarsfx_RESRCS =
+syndwarsfx3d_RESRCS =
 endif
 
 # Pretending to contain c++ source so that Automake select c++ linker
-nodist_EXTRA_syndwarsfx_SOURCES = dummy.cxx
+nodist_EXTRA_syndwarsfx3d_SOURCES = dummy.cxx
 
 # Libraries included with the project
-syndwarsfx_PROJECT_LIBS = ../lib/libbullfrog.a ../lib/libbfsound.a ../lib/libswrender.a $(HWRENDER_PROJECT_LIB)
+syndwarsfx3d_PROJECT_LIBS = ../lib/libbullfrog.a ../lib/libbfsound.a ../lib/libswrender.a $(HWRENDER_PROJECT_LIB)
 
-$(syndwarsfx_OBJECTS) $(bin_PROGRAMS): $(syndwarsfx_PROJECT_LIBS)
+$(syndwarsfx3d_OBJECTS) $(bin_PROGRAMS): $(syndwarsfx3d_PROJECT_LIBS)
 
-syndwarsfx_LDADD = \
-  $(syndwarsfx_WRAPPERS) $(syndwarsfx_RESRCS)
+syndwarsfx3d_LDADD = \
+  $(syndwarsfx3d_WRAPPERS) $(syndwarsfx3d_RESRCS)
 
 ../lib/libbullfrog.a: ../bflibrary/libbullfrog.a
 	$(MAKE) -C $(<D) DESTDIR="../" prefix="" install
@@ -264,12 +259,10 @@ syndwarsfx_LDADD = \
 ../lib/libswrender.a: ../swrendersoft/libswrender.a
 	$(MAKE) -C $(<D) DESTDIR="../" prefix="" install
 
-if USE_HWRENDER
 ../lib/libhwrender.a: ../hwrendersoft/libhwrender.a
 	$(MAKE) -C $(<D) DESTDIR="../" prefix="" install
-endif
 
-$(syndwarsfx_WRAPPERS:.o=.sx): %.sx: $(top_srcdir)/conf/%.conf
+$(syndwarsfx3d_WRAPPERS:.o=.sx): %.sx: $(top_srcdir)/conf/%.conf
 	$(AM_V_GEN)$(MKW) $(MKWFLAGS) -o $@ $<
 
 .sx.o:
@@ -278,7 +271,7 @@ $(syndwarsfx_WRAPPERS:.o=.sx): %.sx: $(top_srcdir)/conf/%.conf
 
 if HAS_WINDRES
 %.res: $(top_srcdir)/res/%.rc
-	$(WINDRES) $(syndwarsfx_RCFLAGS) -i $< -J rc -o $@ -O coff
+	$(WINDRES) $(syndwarsfx3d_RCFLAGS) -i $< -J rc -o $@ -O coff
 endif
 
 # Include dynamic libraries in the package
@@ -286,7 +279,7 @@ if TARGET_WINDOWS
 install-exec-hook:
 	mkdir -p "$(DESTDIR)${prefix}/$(PACKAGE)"
 	## Find main executable dependencies
-	$(eval lib_SHARED_INSTALL := $(shell objdump -p syndwarsfx$(EXEEXT) | \
+	$(eval lib_SHARED_INSTALL := $(shell objdump -p syndwarsfx3d$(EXEEXT) | \
 		sed -n 's/\s*\(DLL Name:\|NEEDED\)\s*\(.*\)$$/\2/p' | \
 		xargs -I {} find $(shell dirname $(shell which ${CXX})) -name '{}'))
 	## Find sub-dependencies for the previous dependencies

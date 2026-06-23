@@ -1,10 +1,6 @@
 ACLOCAL_AMFLAGS = --install -I m4
 
-if USE_HWRENDER
-HWRENDER_SUBDIR = hwrendersoft
-endif
-
-SUBDIRS = bflibrary bfsoundlib swrendersoft $(HWRENDER_SUBDIR) conf lang src util
+SUBDIRS = bflibrary bfsoundlib swrendersoft hwrendersoft conf lang src util
 
 # Do not install static libraries.
 install installdirs: SUBDIRS = conf lang src util

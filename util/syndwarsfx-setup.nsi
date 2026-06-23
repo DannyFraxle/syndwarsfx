@@ -4,7 +4,7 @@
 ; - Simple CD-DA Audio Track ripper by j00ru//vx (rip.exe+akrip32.dll)
 ; - OGG Encoder from Vorbis-tools (oggenc.exe+accompanying DLLs)
 ; - GoG ISO Ripper by Moburma (Gogisoripper.exe)
-; - SyndWarsFX executable, shared libs, lang files and config files (syndwarsfx.exe+*.dll+conf/*+lang/*)
+; - SyndWarsFX executable, shared libs, lang files and config files (syndwarsfx3d.exe+*.dll+conf/*+lang/*)
 ; If you don't have any of these, you may extract them using 7Zip on any existing SyndWarsFX Installer.
 
 
@@ -51,11 +51,11 @@ Var sfx_md5
 InstallDir "$PROGRAMFILES\SyndWarsFX\"
 
 ; Search for built files where `make install` puts them during automatic builds
-!if /FileExists "..\pkg\syndwarsfx\syndwarsfx.exe"
+!if /FileExists "..\pkg\syndwarsfx\syndwarsfx3d.exe"
   !define BUILDENV_PKG_DIR "..\pkg\syndwarsfx"
-!else if /FileExists "..\pkg\mingw64\syndwarsfx\syndwarsfx.exe"
+!else if /FileExists "..\pkg\mingw64\syndwarsfx\syndwarsfx3d.exe"
   !define BUILDENV_PKG_DIR "..\pkg\mingw64\syndwarsfx"
-!else if /FileExists "..\pkg\mingw32\syndwarsfx\syndwarsfx.exe"
+!else if /FileExists "..\pkg\mingw32\syndwarsfx\syndwarsfx3d.exe"
   !define BUILDENV_PKG_DIR "..\pkg\mingw32\syndwarsfx"
 !else
   !define BUILDENV_PKG_DIR ".\syndwarsfx"
@@ -126,7 +126,7 @@ Section "Syndicate Wars Game" Section_0
    Call InstallRegistry
   ${EndIf}
   IfErrors inst_game_fail
-  File "${BUILDENV_PKG_DIR}\syndwarsfx.exe"
+  File "${BUILDENV_PKG_DIR}\syndwarsfx3d.exe"
   File "${BUILDENV_PKG_DIR}\libgcc_s_dw2-1.dll"
   File "${BUILDENV_PKG_DIR}\libstdc++-6.dll"
   File "${BUILDENV_PKG_DIR}\libwinpthread-1.dll"
@@ -153,11 +153,11 @@ Section "Syndicate Wars Game" Section_0
   StrCmp $selected_menu_shortcut 1 0 inst_game_menu_end
   SetOutPath $INSTDIR
   CreateDirectory "$SMPROGRAMS\Vexillium"
-  CreateShortCut "$SMPROGRAMS\Vexillium\Syndicate Wars Fan Expansion.lnk" "$INSTDIR\syndwarsfx.exe" "" "$INSTDIR\syndwarsfx.exe" "" SW_SHOWNORMAL
+  CreateShortCut "$SMPROGRAMS\Vexillium\Syndicate Wars Fan Expansion.lnk" "$INSTDIR\syndwarsfx3d.exe" "" "$INSTDIR\syndwarsfx3d.exe" "" SW_SHOWNORMAL
   CreateShortCut "$SMPROGRAMS\Vexillium\Uninstall.lnk" "$INSTDIR\uninstall.exe" "" "$INSTDIR\uninstall.exe" "" SW_SHOWNORMAL
 inst_game_menu_end:
   StrCmp $selected_desk_shortcut 1 0 inst_game_done
-  CreateShortCut "$DESKTOP\Syndicate Wars Fan Expansion.lnk" $INSTDIR\syndwarsfx.exe "" $INSTDIR\syndwarsfx.exe "" SW_SHOWNORMAL
+  CreateShortCut "$DESKTOP\Syndicate Wars Fan Expansion.lnk" $INSTDIR\syndwarsfx3d.exe "" $INSTDIR\syndwarsfx3d.exe "" SW_SHOWNORMAL
   Goto inst_game_done
 inst_game_fail:
   DetailPrint "An unexpected error has occured during the installation process"
@@ -776,7 +776,7 @@ Delete '$INSTDIR\libWildMidi.dll'
 Delete '$INSTDIR\libwinpthread-1.dll'
 Delete '$INSTDIR\SDL.dll'
 Delete '$INSTDIR\SDL2.dll'
-Delete '$INSTDIR\syndwarsfx.exe'
+Delete '$INSTDIR\syndwarsfx3d.exe'
 Delete '$INSTDIR\Uninstall.exe'
 Delete '$INSTDIR\zlib1.dll'
 

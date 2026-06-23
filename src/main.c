@@ -347,9 +347,8 @@ static TbBool process_options(int *argc, char ***argv)
             cmdln_lores_stretch = false;
             break;
 
-        case 0x100: /* --hwrender : use the FX3D OpenGL renderer if built in */
-            hwrender_set_requested(true);
-            LOGDBG("FX3D hardware renderer requested");
+        case 0x100: /* --hwrender : redundant in syndwarsfx3d (always on) */
+            LOGDBG("FX3D hardware renderer explicitly requested");
             break;
 
         case 0x101: /* --hwrender-aa=N : MSAA sample count (0=off) */
@@ -597,6 +596,9 @@ main (int argc, char **argv)
 
     if (!process_options(&argc, &argv))
         return 1;
+
+    /* Hardware renderer is always active in this build (syndwarsfx3d). */
+    hwrender_set_requested(true);
 
     fixup_options();
     adjust_memory_use();

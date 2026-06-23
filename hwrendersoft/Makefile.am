@@ -10,6 +10,7 @@ libhwrender_a_headers_src = \
   include/hwr_lights.h \
   include/hwr_scene_source.h \
   include/hwr_source_sw.h \
+  include/hwr_sprite.h \
   include/hwr_tuning.h \
   include/hwr_thingbrowse.h
 
@@ -26,10 +27,12 @@ libhwrender_a_SOURCES = \
   src/hwr_lights.c \
   src/hwr_ssao.c \
   src/hwr_sun.c \
+  src/hwr_sprite.c \
    src/hwr_debug.c \
    src/hwr_tuning.c \
    src/hwr_thingbrowse.c \
-   src/source_sw.c
+   src/source_sw.c \
+    src/xbr.c
 
 libhwrender_a_CPPFLAGS = \
   -I"$(top_srcdir)/include" -I"$(builddir)/include"

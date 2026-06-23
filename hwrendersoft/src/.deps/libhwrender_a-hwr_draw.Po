@@ -1,0 +1,27 @@
+src/libhwrender_a-hwr_draw.o: src/hwr_draw.c include/hwrenderconf.h \
+ include/hwr_api.h include/hwr_scene_source.h \
+ C:/msys64/mingw32/lib/gcc/i686-w64-mingw32/16.1.0/include/stdint.h \
+ C:/msys64/mingw32/include/stdint.h C:/msys64/mingw32/include/crtdefs.h \
+ C:/msys64/mingw32/include/corecrt.h C:/msys64/mingw32/include/_mingw.h \
+ C:/msys64/mingw32/include/_mingw_mac.h \
+ C:/msys64/mingw32/include/_mingw_secapi.h \
+ C:/msys64/mingw32/include/vadefs.h \
+ C:/msys64/mingw32/lib/gcc/i686-w64-mingw32/16.1.0/include/stddef.h \
+ C:/msys64/mingw32/include/stddef.h include/hwr_gl.h \
+ include/hwr_gl_funcs.inc include/hwr_internal.h
+include/hwrenderconf.h:
+include/hwr_api.h:
+include/hwr_scene_source.h:
+C:/msys64/mingw32/lib/gcc/i686-w64-mingw32/16.1.0/include/stdint.h:
+C:/msys64/mingw32/include/stdint.h:
+C:/msys64/mingw32/include/crtdefs.h:
+C:/msys64/mingw32/include/corecrt.h:
+C:/msys64/mingw32/include/_mingw.h:
+C:/msys64/mingw32/include/_mingw_mac.h:
+C:/msys64/mingw32/include/_mingw_secapi.h:
+C:/msys64/mingw32/include/vadefs.h:
+C:/msys64/mingw32/lib/gcc/i686-w64-mingw32/16.1.0/include/stddef.h:
+C:/msys64/mingw32/include/stddef.h:
+include/hwr_gl.h:
+include/hwr_gl_funcs.inc:
+include/hwr_internal.h:

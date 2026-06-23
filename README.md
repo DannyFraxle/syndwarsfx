@@ -1,12 +1,12 @@
 # syndwarsfx
 
-**Syndicate Wars Fan Expansion**, Open Source remake of the classic Bullfrog game.
+**Syndicate Wars 3D Expansion**, Open Source OpenGL remake of the classic Bullfrog game.
 
 This is continuation of a port project created by Unavowed and Gynvael Coldwind.
 
 ## About
 
-**Syndicate Wars Fan Expansion** is a port of the 1996 DOS game
+**Syndicate Wars 3D Expansion** is a port of the 1996 DOS game
 [Syndicate Wars](https://en.wikipedia.org/wiki/Syndicate_Wars)
 to modern operating systems. In particular, it runs on GNU, Mac OS and Windows,
 but it should also work on any system supported by the SDL library on the i386
@@ -19,19 +19,19 @@ for input and video display, [Vorbis](https://xiph.org/vorbis/) for music and
 
 An executable and some, but not all, neccessary data files are provided with this
 port. This means that some of game data are not included. To install the
-**SyndWarsFX**, you will need to have the original data from either
+**SyndWarsFX3D**, you will need to have the original data from either
 *Syndicate Wars CD*, or digital distribution.
 
 ## Community
 
-If you wish to discuss the **SyndWarsFX** or if you have any problems,
+If you wish to discuss the original **SyndWarsFX** or if you have any problems,
 you may post to [discussion page of the project repo](https://github.com/swfans/syndwarsfx/discussions)
 or join [Syndicate discord channel](https://discord.gg/cnHmWqe49t).
 There is also a Google group [syndicate-wars-port](http://groups.google.com/group/syndicate-wars-port).
 
 ## Installation
 
-To install **SyndWarsFX**, you will need either the original *Syndicate
+To install **SyndWarsFX3D**, you will need either the original *Syndicate
 Wars CD*, or a *SW CD image* from digital distribution of the game. There were
 several physical versions released. The multi-lingual european release, as well
 as american release, were tested and will definitely work; other version were
@@ -48,7 +48,7 @@ installation.
 
 After installing, you can change the language manually by editing `config.ini`.
 Some fanmade translations can be actually only enabled this way. However,
-several media files which are not packaged with **SyndWarsFX** will stay
+several media files which are not packaged with **SyndWarsFX3D** will stay
 at the language version chosen during installation, so it still matters.
 
 The steps you need to take for installation vary depending on your operating system.
@@ -127,7 +127,7 @@ When all is done, you can [start the game](#starting-the-game).
 
 ### Installing on Windows
 
-There are two ways to install **SyndWarsFX** on Windows - either download
+There are two ways to install **SyndWarsFX3D** on Windows - either download
 the installer, or download the source code and compile it by hand.
 It is recommended to use the installer!
 
@@ -180,7 +180,7 @@ Route "b" - using the prebuilt *patch* release.
 7. b. Extract the downloaded patch file.
 8. b. Move all extracted files and folders to the selected installation folder.
      Place them all in one folder, so that sub-olders `conf`, `data`, `levels`
-     and the executable file `syndwarsfx.exe` are all next to each other.
+     and the executable file `syndwarsfx3d.exe` are all next to each other.
 
 You can now [start the game](#starting-the-game).
 
@@ -197,7 +197,7 @@ new hardware.
 The typical command line for running SyndWarsFX on bash-like shell is:
 
 ```
-./syndwarsfx -g
+./syndwarsfx3d -g
 ```
 
 If running on Windows, the command line above should work as well. Though more
@@ -205,7 +205,7 @@ Windows-centric way of doing that is:
 
 
 ```
-syndwarsfx.exe /g
+syndwarsfx3d.exe /g
 ```
 
 The game will start with intro animation, and then present you with a menu where

@@ -2,11 +2,10 @@
 // Syndicate Wars Fan Expansion, source port of the classic game from Bullfrog.
 /******************************************************************************/
 /** @file hwrender_glue.c
- *     Host-side glue to the optional FX3D OpenGL hardware renderer.
+ *     Host-side glue to the FX3D OpenGL hardware renderer.
  * @par Purpose:
- *     See hwrender_glue.h. When the build is configured without
- *     --enable-hwrender, every entry point here is a cheap stub so the rest of
- *     the game links and behaves exactly as before.
+ *     See hwrender_glue.h. The hardware renderer is always built and enabled
+ *     by default in this build, so all entry points are fully functional.
  * @par  Copying and copyrights:
  *     This program is free software; you can redistribute it and/or modify
  *     it under the terms of the GNU General Public License as published by
@@ -16,9 +15,9 @@
 /******************************************************************************/
 #include "hwrender_glue.h"
 
-/* The CLI request is tracked regardless of build so option parsing is uniform;
- * it simply never activates anything in a software-only build. */
-static TbBool hwr_glue_requested = false;
+/* The hardware renderer is enabled by default. The --hwrender CLI flag is
+ * retained for backward compatibility but is no longer required. */
+static TbBool hwr_glue_requested = true;
 
 /* FX3D config, with defaults (overridden by rules.ini [fx3d] then CLI). */
 int fx3d_aa_samples = 0;
@@ -52,6 +51,7 @@ void fx3d_config_finalize(void)
 
 #include "hwr_api.h"
 #include "hwr_lights.h"
+#include "hwr_sprite.h"
 #include "hwr_tuning.h"
 #include "hwr_thingbrowse.h"
 #include "hwr_source_sw.h"
@@ -124,13 +124,17 @@ static void glue_present(void)
             hwr_ssao_config(d.ssao_enable, d.ssao_radius, d.ssao_world,
                 d.ssao_strength, d.ssao_bias, d.ssao_debug);
             hwr_thingno_debug(d.thingno_debug);
+            hwr_sprites_debug(d.sprite_debug);
             hwr_scene_begin();
             hwr_sun_shadow_pass();           /* depth from sun -> shadow map */
             hwr_ssao_begin(dw, dh);          /* binds the G-buffer (or back buffer) */
             hwr_floor_render(pal, fx3d_filter_ground);
+            hwr_shadows_render();
             hwr_faces_render(pal, fx3d_filter_objects);
+            hwr_sprites_render(pal, fx3d_filter_sprites);
             hwr_ssao_resolve();              /* composites colour*AO to back buffer */
             hwr_thingno_render();            /* overlay ThingNo debug labels */
+            hwr_sprites_debug_render();      /* overlay sprite debug labels */
             hwr_thingbrowse_render();        /* thing category browser (F5) */
             hwr_tuning_render();             /* lighting tuning panel (F7) */
         }
@@ -145,9 +149,14 @@ static void glue_present(void)
     hwr_floor_gated_frame = 0;
 }
 
+/* Declarations from libswrender for the sprite-suppression gate. */
+extern int engine_hwr_suppress_sprites;
+
 TbBool hwrender_floor_gate(void)
 {
     int w, h;
+    /* Reset the sprite-suppression gate; only set it below if we collect. */
+    engine_hwr_suppress_sprites = 0;
     if (!hwr_glue_active)
         return false;
     w = lbDisplay.GraphicsScreenWidth;
@@ -160,6 +169,10 @@ TbBool hwrender_floor_gate(void)
          * over it, the 3D floor shows through it at present time. */
         memset(lbDisplay.WScreen, HWR_KEY_INDEX, (size_t)w * h);
     }
+    /* Collect Thing-based sprites for HW billboard rendering, set the
+     * suppress-sprites gate so the SW drawlist exec skips them. */
+    hwr_sw_collect_sprites();
+    engine_hwr_suppress_sprites = 1;
     hwr_floor_gated_frame = 1;
     return true;
 }
@@ -242,14 +255,4 @@ void hwrender_shutdown(void)
     }
 }
 
-#else /* !HAVE_HWRENDER : software-only build, everything is inert */
-
-void   hwrender_set_requested(TbBool on)   { hwr_glue_requested = on; }
-TbBool hwrender_requested(void)            { return false; }
-TbBool hwrender_active(void)               { return false; }
-TbBool hwrender_floor_gate(void)           { return false; }
-TbBool hwrender_startup(int w, int h)      { (void)w; (void)h; return false; }
-TbBool hwrender_present_frame(void)        { return false; }
-void   hwrender_shutdown(void)             { }
-
-#endif
+#endif /* HAVE_HWRENDER */

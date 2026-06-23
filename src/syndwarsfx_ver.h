@@ -32,7 +32,7 @@
 #define PROGRAM_FULL_NAME "Open-source reimplementation of Syndicate Wars game"
 #define PROGRAM_AUTHORS   "see AUTHORS file"
 #define COMPANY_NAME      "Community based"
-#define INTERNAL_NAME     "syndwarsfx"
+#define INTERNAL_NAME     "syndwarsfx3d"
 #define LEGAL_COPYRIGHT   "GNU General Public License"
 #define LEGAL_TRADEMARKS  ""
 #define FILE_VERSION      VERSION

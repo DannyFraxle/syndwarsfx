@@ -81,6 +81,8 @@ typedef ptrdiff_t      GLsizeiptr;
 #define GL_RGB                            0x1907
 #define GL_RGB8                           0x8051
 #define GL_R8                             0x8229
+#define GL_RG                             0x8227
+#define GL_RG8                            0x822B
 #define GL_UNPACK_ALIGNMENT               0x0CF5
 #define GL_ARRAY_BUFFER                   0x8892
 #define GL_ELEMENT_ARRAY_BUFFER           0x8893
@@ -111,6 +113,7 @@ typedef ptrdiff_t      GLsizeiptr;
 #define GL_DEPTH_COMPONENT24              0x81A6
 #define GL_DEPTH_COMPONENT                0x1902
 #define GL_TEXTURE3                       0x84C3
+#define GL_TEXTURE4                       0x84C4
 #define GL_POLYGON_OFFSET_FILL            0x8037
 
 /* GL entry points use the platform's GL calling convention. On Windows that is
@@ -130,6 +133,7 @@ typedef void   (HWR_APIENTRY *PFN_glEnable)(GLenum);
 typedef void   (HWR_APIENTRY *PFN_glDisable)(GLenum);
 typedef void   (HWR_APIENTRY *PFN_glBlendFunc)(GLenum, GLenum);
 typedef void   (HWR_APIENTRY *PFN_glDepthFunc)(GLenum);
+typedef void   (HWR_APIENTRY *PFN_glDepthMask)(GLboolean);
 typedef void   (HWR_APIENTRY *PFN_glCullFace)(GLenum);
 typedef void   (HWR_APIENTRY *PFN_glFrontFace)(GLenum);
 typedef GLenum (HWR_APIENTRY *PFN_glGetError)(void);
@@ -157,6 +161,7 @@ typedef void   (HWR_APIENTRY *PFN_glDeleteTextures)(GLsizei, const GLuint *);
 typedef void   (HWR_APIENTRY *PFN_glBindTexture)(GLenum, GLuint);
 typedef void   (HWR_APIENTRY *PFN_glActiveTexture)(GLenum);
 typedef void   (HWR_APIENTRY *PFN_glTexImage2D)(GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const void *);
+typedef void   (HWR_APIENTRY *PFN_glTexSubImage2D)(GLenum, GLint, GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, const void *);
 typedef void   (HWR_APIENTRY *PFN_glTexImage3D)(GLenum, GLint, GLint, GLsizei, GLsizei, GLsizei, GLint, GLenum, GLenum, const void *);
 typedef void   (HWR_APIENTRY *PFN_glTexParameteri)(GLenum, GLenum, GLint);
 

@@ -1,0 +1,1415 @@
+#include "hwr_api.h"
+#include "hwr_gl.h"
+#include "hwr_internal.h"
+#include "hwr_lights.h"
+#include "hwr_scene_source.h"
+#include "hwr_sprite.h"
+
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+
+/* =========================================================================
+ * RLE decoder — game-agnostic TbSprite RLE → 8-bit indexed buffer
+ * =========================================================================
+ * RLE format (row-major):
+ *   signed byte count:
+ *     >0 : literal run of `count` opaque palette indices follow
+ *     <0 : transparent run of `-count` pixels (write index 0)
+ *     =0 : end of row
+ * ========================================================================*/
+
+/* Consume remaining RLE data for this row up to and including the 0x00 EOL marker.
+ * Must be called after EVERY row regardless of how many pixels were output, because
+ * the BF RLE format always ends each row with 0x00, and if the run-length sum
+ * exactly equals w then cnt==0 hasn't been consumed yet. */
+static void skip_to_eol(const uint8_t **rle)
+{
+    int8_t cnt;
+    do {
+        cnt = (int8_t)*(*rle)++;
+        if (cnt > 0)
+            (*rle) += cnt;
+    } while (cnt != 0);
+}
+
+int hwr_rle_decode(const uint8_t *rle, uint8_t *out, int w, int h)
+{
+    int row;
+    if (rle == NULL || out == NULL || w <= 0 || h <= 0)
+        return -1;
+    for (row = 0; row < h; row++) {
+        uint8_t *row_out = out + row * w;
+        int col = 0;
+        while (col < w) {
+            int8_t cnt = (int8_t)*rle++;
+            if (cnt == 0)
+                break;
+            if (cnt > 0) {
+                int copy = cnt;
+                if (col + copy > w) copy = w - col;
+                memcpy(row_out + col, rle, (size_t)copy);
+                rle += cnt;
+                col += copy;
+            } else {
+                int skip = -cnt;
+                if (col + skip > w) skip = w - col;
+                memset(row_out + col, 0, (size_t)skip);
+                col += skip;
+            }
+        }
+        /* Fill remaining columns with transparent if row was short */
+        if (col < w) {
+            memset(row_out + col, 0, (size_t)(w - col));
+        } else {
+            /* Row was fully consumed (or overflowed) — 0x00 EOL marker hasn't
+             * been read yet. Skip remaining RLE data up to and including it. */
+            skip_to_eol(&rle);
+        }
+    }
+    return 0;
+}
+
+int hwr_rle_decode_opaque(const uint8_t *rle, uint8_t *out, uint8_t *opq, int w, int h)
+{
+    int row;
+    if (rle == NULL || out == NULL || w <= 0 || h <= 0)
+        return -1;
+    for (row = 0; row < h; row++) {
+        uint8_t *row_out = out + row * w;
+        uint8_t *row_opq = opq + row * w;
+        int col = 0;
+        while (col < w) {
+            int8_t cnt = (int8_t)*rle++;
+            if (cnt == 0)
+                break;
+            if (cnt > 0) {
+                int copy = cnt;
+                if (col + copy > w) copy = w - col;
+                memcpy(row_out + col, rle, (size_t)copy);
+                memset(row_opq + col, 255, (size_t)copy);
+                rle += cnt;
+                col += copy;
+            } else {
+                int skip = -cnt;
+                if (col + skip > w) skip = w - col;
+                memset(row_out + col, 0, (size_t)skip);
+                memset(row_opq + col, 0, (size_t)skip);
+                col += skip;
+            }
+        }
+        /* Mark remaining as transparent */
+        if (col < w) {
+            memset(row_out + col, 0, (size_t)(w - col));
+            memset(row_opq + col, 0, (size_t)(w - col));
+        } else {
+            /* Row was fully consumed (or overflowed) — 0x00 EOL marker hasn't
+             * been read yet. Skip remaining RLE data up to and including it. */
+            skip_to_eol(&rle);
+        }
+    }
+    return 0;
+}
+
+/* =========================================================================
+ * Atlas — lazy 2048×2048 GL_RG8 shelf packer + hash table
+ * =========================================================================
+ * The atlas packs decoded sprite pixel data as RGBA into a GL_RGBA8 texture.
+ * xBR-upscaled full-colour sprite composites are stored here.
+ * The key is a 32-bit hash of (frame, frv_pack, angle) set by the source.
+ * ========================================================================*/
+
+/* Hash table entry */
+typedef struct {
+    uint32_t key;
+    int      slot;       /* -1 = empty */
+} AtlasEntry;
+
+/* Shelf: horizontal strip where sprites are placed left-to-right */
+typedef struct Shelf {
+    int x, y, w, h;          /* remaining rect in the shelf */
+    struct Shelf *next;
+} Shelf;
+
+static struct {
+    GLuint    tex;             /* GL_RGBA8 2048x2048 texture */
+    int       ready;           /* GL texture created by renderer thread */
+    int       hash_ready;      /* hash table initialized (safe from main thread) */
+    Shelf     *shelves;        /* linked list of shelves */
+    int       next_shelf_y;    /* y for the next new shelf */
+
+    AtlasEntry hash[HWR_ATLAS_MAX_SLOTS];
+    int       slot_count;      /* total unique sprites registered */
+    int       slot_w[HWR_ATLAS_MAX_SLOTS];
+    int       slot_h[HWR_ATLAS_MAX_SLOTS];
+    float     slot_u0[HWR_ATLAS_MAX_SLOTS];
+    float     slot_v0[HWR_ATLAS_MAX_SLOTS];
+    float     slot_u1[HWR_ATLAS_MAX_SLOTS];
+    float     slot_v1[HWR_ATLAS_MAX_SLOTS];
+
+    /* Deferred GL upload: pixels stored here by the main thread, uploaded by the
+     * renderer thread via hwr_atlas_upload_pending(). NULL = no pending upload. */
+    uint8_t   *pending[HWR_ATLAS_MAX_SLOTS];
+
+    /* Blacklist: keys that failed to register (atlas full). Entries are hashed
+     * with linear probing and a sentinel key of 0xFFFFFFFF = empty. */
+#define HWR_ATLAS_BL_SIZE  512
+    uint32_t  blacklist[HWR_ATLAS_BL_SIZE];
+} at;
+
+/* FNV-1a hash for the 32-bit key */
+static uint32_t atlas_hash(uint32_t key)
+{
+    uint32_t h = 2166136261u;
+    h = (h ^ (uint8_t)(key >> 0))  * 16777619u;
+    h = (h ^ (uint8_t)(key >> 8))  * 16777619u;
+    h = (h ^ (uint8_t)(key >> 16)) * 16777619u;
+    h = (h ^ (uint8_t)(key >> 24)) * 16777619u;
+    return h;
+}
+
+/* Initialise the hash table to all-empty (-1). Safe to call from any thread
+ * because it does NO GL work — only memset. */
+static void atlas_init_hash(void)
+{
+    if (at.hash_ready)
+        return;
+    memset(at.hash, 0xFF, sizeof(at.hash));
+    memset(at.pending, 0, sizeof(at.pending));
+    memset(at.blacklist, 0xFF, sizeof(at.blacklist));
+    at.slot_count = 0;
+    at.hash_ready = 1;
+}
+
+/* Blacklist helpers: 512-slot linear probe with sentinel 0xFFFFFFFF = empty. */
+static int atlas_blacklisted(uint32_t key)
+{
+    uint32_t idx = key % HWR_ATLAS_BL_SIZE;
+    for (uint32_t probe = 0; probe < HWR_ATLAS_BL_SIZE; probe++) {
+        uint32_t k = at.blacklist[idx];
+        if (k == key) return 1;
+        if (k == 0xFFFFFFFF) return 0;
+        idx = (idx + 1) % HWR_ATLAS_BL_SIZE;
+    }
+    return 0;
+}
+static void atlas_blacklist_add(uint32_t key)
+{
+    uint32_t idx = key % HWR_ATLAS_BL_SIZE;
+    for (uint32_t probe = 0; probe < HWR_ATLAS_BL_SIZE; probe++) {
+        if (at.blacklist[idx] == 0xFFFFFFFF) {
+            at.blacklist[idx] = key;
+            return;
+        }
+        idx = (idx + 1) % HWR_ATLAS_BL_SIZE;
+    }
+}
+
+/* Create the GL texture for the atlas. Must be called from the renderer thread
+ * (GL context must be current). */
+static void atlas_init_gl(void)
+{
+    if (at.ready)
+        return;
+    atlas_init_hash();  /* ensure hash is ready too */
+
+    glGenTextures(1, &at.tex);
+    glBindTexture(GL_TEXTURE_2D, at.tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    {
+        /* RGBA8: full-colour sprite pixels */
+        size_t sz = (size_t)HWR_ATLAS_W * HWR_ATLAS_H * 4;
+        uint8_t *zeros = (uint8_t *)calloc(1, sz);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, HWR_ATLAS_W, HWR_ATLAS_H, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, zeros);
+        free(zeros);
+    }
+    at.ready = 1;
+}
+
+static void atlas_drop_shelves(void)
+{
+    int i;
+    Shelf *s = at.shelves;
+    while (s) {
+        Shelf *next = s->next;
+        free(s);
+        s = next;
+    }
+    at.shelves = NULL;
+    at.next_shelf_y = 0;
+    for (i = 0; i < HWR_ATLAS_MAX_SLOTS; i++) {
+        free(at.pending[i]);
+        at.pending[i] = NULL;
+    }
+}
+
+/* Pure lookup — returns slot if key exists, -1 if not found,
+ * -2 if the key was blacklisted (atlas full, don't retry). */
+int hwr_atlas_find(uint32_t key)
+{
+    uint32_t idx;
+    atlas_init_hash();
+    if (atlas_blacklisted(key))
+        return -2;
+    idx = atlas_hash(key) % HWR_ATLAS_MAX_SLOTS;
+    {
+        uint32_t probe = 0;
+        while (at.hash[idx].slot >= 0) {
+            if (at.hash[idx].key == key)
+                return at.hash[idx].slot;
+            probe++;
+            idx = (idx + 1) % HWR_ATLAS_MAX_SLOTS;
+            if (probe >= HWR_ATLAS_MAX_SLOTS)
+                return -1;
+        }
+    }
+    return -1;
+}
+
+int hwr_atlas_register(uint32_t key, const uint8_t *pixels, int w, int h)
+{
+    uint32_t idx;
+    int slot;
+    Shelf *s, *best;
+
+    if (w <= 0 || h <= 0 || w > HWR_ATLAS_W || h > HWR_ATLAS_H) {
+        atlas_blacklist_add(key);
+        return -1;
+    }
+
+    /* Ensure hash table is initialised (safe, no GL calls) */
+    atlas_init_hash();
+
+    /* Check hash table for existing entry */
+    idx = atlas_hash(key) % HWR_ATLAS_MAX_SLOTS;
+    {
+        uint32_t probe = 0;
+        while (at.hash[idx].slot >= 0) {
+            if (at.hash[idx].key == key)
+                return at.hash[idx].slot;
+            probe++;
+            idx = (idx + 1) % HWR_ATLAS_MAX_SLOTS;
+            if (probe >= HWR_ATLAS_MAX_SLOTS) {
+                atlas_blacklist_add(key);
+                return -1;
+            }
+        }
+    }
+
+    if (at.slot_count >= HWR_ATLAS_MAX_SLOTS) {
+        atlas_blacklist_add(key);
+        return -1;
+    }
+
+    /* Find best-fit shelf (first-fit with smallest remainder) */
+    best = NULL;
+    for (s = at.shelves; s; s = s->next) {
+        if (s->h >= h && s->w >= w) {
+            if (!best || s->h < best->h || (s->h == best->h && s->w < best->w))
+                best = s;
+        }
+    }
+
+    if (best) {
+        slot = at.slot_count;
+        at.slot_u0[slot] = (float)best->x / (float)HWR_ATLAS_W;
+        at.slot_v0[slot] = (float)best->y / (float)HWR_ATLAS_H;
+        at.slot_u1[slot] = (float)(best->x + w) / (float)HWR_ATLAS_W;
+        at.slot_v1[slot] = (float)(best->y + h) / (float)HWR_ATLAS_H;
+        at.slot_w[slot] = w;
+        at.slot_h[slot] = h;
+
+        /* Stash RG pixels for deferred GL upload by the renderer thread */
+        if (pixels != NULL) {
+            free(at.pending[slot]);
+            at.pending[slot] = (uint8_t *)malloc((size_t)w * h * 4);
+            if (at.pending[slot])
+                memcpy(at.pending[slot], pixels, (size_t)w * h * 4);
+        }
+
+        /* Shrink the shelf */
+        best->x += w;
+        best->w -= w;
+
+        at.hash[idx].key = key;
+        at.hash[idx].slot = slot;
+        at.slot_count++;
+        return slot;
+    }
+
+    /* No shelf fits: start a new shelf at next_shelf_y */
+    if (at.next_shelf_y + h > HWR_ATLAS_H) {
+        atlas_blacklist_add(key);
+        return -1;
+    }
+
+    s = (Shelf *)malloc(sizeof(Shelf));
+    s->x = w;
+    s->y = at.next_shelf_y;
+    s->w = HWR_ATLAS_W - w;
+    s->h = h;
+    s->next = at.shelves;
+    at.shelves = s;
+
+    slot = at.slot_count;
+    at.slot_u0[slot] = 0.0f;
+    at.slot_v0[slot] = (float)s->y / (float)HWR_ATLAS_H;
+    at.slot_u1[slot] = (float)w / (float)HWR_ATLAS_W;
+    at.slot_v1[slot] = (float)(s->y + h) / (float)HWR_ATLAS_H;
+    at.slot_w[slot] = w;
+    at.slot_h[slot] = h;
+
+    /* Stash RG pixels for deferred GL upload by the renderer thread */
+        if (pixels != NULL) {
+            free(at.pending[slot]);
+            at.pending[slot] = (uint8_t *)malloc((size_t)w * h * 4);
+            if (at.pending[slot])
+                memcpy(at.pending[slot], pixels, (size_t)w * h * 4);
+        }
+
+        at.next_shelf_y += h;
+
+    at.hash[idx].key = key;
+    at.hash[idx].slot = slot;
+    at.slot_count++;
+    return slot;
+}
+
+void hwr_atlas_uv(int slot, float *u0, float *v0, float *u1, float *v1)
+{
+    if (slot < 0 || slot >= at.slot_count) {
+        *u0 = *v0 = 0.0f; *u1 = *v1 = 1.0f;
+        return;
+    }
+    *u0 = at.slot_u0[slot]; *v0 = at.slot_v0[slot];
+    *u1 = at.slot_u1[slot]; *v1 = at.slot_v1[slot];
+}
+
+void hwr_atlas_size(int slot, int *w, int *h)
+{
+    if (slot < 0 || slot >= at.slot_count) {
+        *w = *h = 0;
+        return;
+    }
+    *w = at.slot_w[slot];
+    *h = at.slot_h[slot];
+}
+
+void hwr_atlas_upload_pending(void)
+{
+    int i;
+    if (!at.ready)
+        atlas_init_gl();
+    glBindTexture(GL_TEXTURE_2D, at.tex);
+    for (i = 0; i < at.slot_count; i++) {
+        if (at.pending[i] != NULL) {
+            /* Reconstruct the atlas x,y from slot UV to call glTexSubImage2D.
+             * Slot was placed either in a shelf (exact x,y known from UV) or as
+             * a new shelf at (0, s->y). We reconstruct by inverting the UV math:
+             *   u0 = x / W  =>  x = (int)(u0 * W + 0.5f)
+             *   v0 = y / H  =>  y = (int)(v0 * H + 0.5f)
+             */
+            int sx = (int)(at.slot_u0[i] * HWR_ATLAS_W + 0.5f);
+            int sy = (int)(at.slot_v0[i] * HWR_ATLAS_H + 0.5f);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, sx, sy,
+                            at.slot_w[i], at.slot_h[i],
+                            GL_RGBA, GL_UNSIGNED_BYTE, at.pending[i]);
+            free(at.pending[i]);
+            at.pending[i] = NULL;
+        }
+    }
+}
+
+void hwr_atlas_bind(int unit)
+{
+    if (!at.ready)
+        atlas_init_gl();
+    glActiveTexture((GLenum)((int)GL_TEXTURE0 + unit));
+    glBindTexture(GL_TEXTURE_2D, at.tex);
+}
+
+void hwr_atlas_reset(void)
+{
+    atlas_drop_shelves();
+    memset(at.hash, 0xFF, sizeof(at.hash));
+    at.slot_count = 0;
+    at.hash_ready = 1;   /* hash table is valid (memset above) */
+    if (at.tex)
+        glDeleteTextures(1, &at.tex);
+    at.tex = 0;
+    at.ready = 0;
+}
+
+/* =========================================================================
+ * Billboard shaders
+ * =========================================================================
+ * Vertex shader reproduces transform_shpoint() exactly (same as floor_vert_src)
+ * on pre-computed world-space corner positions. Fragment shader samples the
+ * atlas, alpha-tests index 0, depalettises, and evaluates point lights + sun
+ * shadow (same lighting code as floor_frag_src).
+ * ========================================================================*/
+
+static const char *spr_vert_src =
+    "#version 330 core\n"
+    "layout(location=0) in vec3 aPos;\n"        /* world corner */
+    "layout(location=1) in vec2 aUV;\n"          /* atlas UV */
+    "layout(location=2) in float aShade;\n"      /* brightness 0..1 */
+    "layout(location=3) in float aDepth;\n"      /* centre scrd (uniform across quad) */
+    "uniform float uD10, uD14, uD18, uD1C;\n"
+    "uniform float uScale;\n"
+    "uniform vec2 uCentre;\n"
+    "uniform vec3 uCtr;\n"
+    "uniform int  uPersp;\n"
+    "out vec2 vUV;\n"
+    "out vec3 vWorldPos;\n"
+    "out float vShade;\n"
+    "out float vScrd;\n"
+    "void main(){\n"
+    "    float dx = aPos.x - uCtr.x;\n"
+    "    float dy = aPos.y - uCtr.y;\n"
+    "    float dz = aPos.z - uCtr.z;\n"
+    "    float fa = (uD14*dx - uD10*dz) / 65536.0;\n"
+    "    float fb = (uD10*dx + uD14*dz) / 65536.0;\n"
+    "    float fc = (uD1C*dy - uD18*fb) / 65536.0;\n"
+    "    float scrd = (uD18*dy + uD1C*fb) / 65536.0;\n"
+    "    if (uPersp == 5 && scrd > 1024.0)\n"
+    "        scrd = 16384.0*scrd/(scrd + 16384.0);\n"
+    "    float shx = uScale*fa / 2048.0;\n"
+    "    float shy = uScale*fc / 2048.0;\n"
+    "    if (uPersp == 5) {\n"
+    "        shx = shx*(16384.0 - scrd) / 16384.0;\n"
+    "        shy = shy*(16384.0 - scrd) / 16384.0;\n"
+    "    }\n"
+    "    float sx = uCentre.x + shx;\n"
+    "    float sy = uCentre.y - shy;\n"
+    "    vUV = aUV;\n"
+    "    vWorldPos = aPos;\n"
+    "    vShade = aShade;\n"
+    "    vScrd = scrd;\n"
+    "    /* Depth uses centre scrd (aDepth, uniform across quad) to prevent\n"
+    "     * floor from clipping one half of the sprite.  Push sprite depth\n"
+    "     * forward with a generous epsilon to always win z-fights. */\n"
+    "    float ndc_z = clamp((aDepth - 64.0) / 16384.0, -1.0, 1.0);\n"
+    "    gl_Position = vec4(sx/uCentre.x - 1.0, 1.0 - sy/uCentre.y, ndc_z, 1.0);\n"
+    "}\n";
+
+static const char *spr_frag_src =
+    "#version 330 core\n"
+    "in vec2 vUV;\n"
+    "in vec3 vWorldPos;\n"
+    "in float vShade;\n"
+    "in float vScrd;\n"
+    "layout(location=0) out vec4 frag;\n"
+    "layout(location=1) out vec4 fragPos;\n"
+    "uniform sampler2D uAtlas;\n"       /* RGBA8 sprite pixels (unit 4) */
+    "uniform sampler2D uShadowMap;\n"   /* depth from sun (unit 3) */
+    "uniform vec3  uLightPos[64];\n"
+    "uniform vec3  uLightRgb[64];\n"
+    "uniform float uLightRadius[64];\n"
+    "uniform int   uNumLights;\n"
+    "uniform float uAmbient;\n"
+    "uniform float uGain;\n"
+    "uniform vec3  uTint;\n"
+    "uniform float uAO;\n"
+    "uniform float uLightMaxDist2[64];\n"
+    "uniform mat4  uSunMVP;\n"
+    "uniform float uSunBright;\n"
+    "uniform float uSunAmbient;\n"
+    "uniform float uSunBias;\n"
+    "uniform int   uSunEnable;\n"
+    "uniform int   uSunPCF;\n"
+    "uniform int   uSunDebug;\n"
+    "uniform float uSunHaze;\n"
+    "void main(){\n"
+    "    fragPos = vec4(vWorldPos, vScrd);\n"
+    "    vec4 atex = texture(uAtlas, vUV);\n"
+    "    if (atex.a < 0.5) discard;\n"
+    "    vec3 c = atex.rgb;\n"
+    "    vec3 light_col = vec3(0.0);\n"
+    "    float shadow = 0.0;\n"
+    "    for (int i = 0; i < uNumLights; i++) {\n"
+    "        float r = uLightRadius[i];\n"
+    "        if (r == 0.0) continue;\n"
+    "        vec3 delta = vWorldPos - uLightPos[i];\n"
+    "        float dist2 = delta.x*delta.x + delta.z*delta.z + delta.y*delta.y;\n"
+    "        float nd = dist2 / uLightMaxDist2[i];\n"
+    "        if (nd >= 1.0) continue;\n"
+    "        float brightness = 1.0 - sqrt(nd);\n"
+    "        if (r > 0.0)\n"
+    "            light_col += uLightRgb[i] * brightness;\n"
+    "        else\n"
+    "            shadow += uLightRgb[i].x * brightness;\n"
+    "    }\n"
+    "    float base = uAmbient;\n"
+    "    if (uSunEnable == 1) {\n"
+    "        vec4 sc = uSunMVP * vec4(vWorldPos, 1.0);\n"
+    "        vec3 p = sc.xyz / sc.w * 0.5 + 0.5;\n"
+    "        float lit = 1.0;\n"
+    "        if (p.x >= 0.0 && p.x <= 1.0 && p.y >= 0.0 && p.y <= 1.0 && p.z >= 0.0 && p.z <= 1.0) {\n"
+    "            float texel = 1.0 / 2048.0;\n"
+    "            float halfK = float(uSunPCF);\n"
+    "            float sigma = halfK * 0.5 + 1.0;\n"
+    "            float sum_w = 0.0, sum_lit = 0.0;\n"
+    "            for (int sx = -uSunPCF; sx <= uSunPCF; sx++) {\n"
+    "                for (int sy = -uSunPCF; sy <= uSunPCF; sy++) {\n"
+    "                    float dsq = float(sx*sx + sy*sy);\n"
+    "                    float w = exp(-dsq / (2.0 * sigma * sigma));\n"
+    "                    float closest = texture(uShadowMap, p.xy + vec2(float(sx),float(sy))*texel).r;\n"
+    "                    sum_lit += w * ((p.z - uSunBias > closest) ? 0.0 : 1.0);\n"
+    "                    sum_w += w;\n"
+    "                }\n"
+    "            }\n"
+    "            lit = sum_lit / sum_w;\n"
+    "            lit = mix(lit, 1.0, uSunHaze);\n"
+    "        }\n"
+    "        if (uSunDebug == 1) { frag = vec4(vec3(lit) * vShade, 1.0); return; }\n"
+    "        base += uSunAmbient + uSunBright * lit;\n"
+    "    }\n"
+    "    light_col = light_col * uGain * uTint + base;\n"
+    "    light_col *= clamp(1.0 - shadow, 0.0, 1.0);\n"
+    "    frag = vec4(c * max(light_col, 0.0) * vShade, 1.0);\n"
+    "}\n";
+
+/* Shadow blob shader: simple radial gradient on the ground */
+static const char *shadow_vert_src =
+    "#version 330 core\n"
+    "layout(location=0) in vec3 aPos;\n"
+    "layout(location=1) in vec2 aUV;\n"
+    "uniform float uD10, uD14, uD18, uD1C;\n"
+    "uniform float uScale;\n"
+    "uniform vec2 uCentre;\n"
+    "uniform vec3 uCtr;\n"
+    "uniform int  uPersp;\n"
+    "out vec2 vUV;\n"
+    "void main(){\n"
+    "    float dx = aPos.x - uCtr.x;\n"
+    "    float dy = aPos.y - uCtr.y;\n"
+    "    float dz = aPos.z - uCtr.z;\n"
+    "    float fa = (uD14*dx - uD10*dz) / 65536.0;\n"
+    "    float fb = (uD10*dx + uD14*dz) / 65536.0;\n"
+    "    float fc = (uD1C*dy - uD18*fb) / 65536.0;\n"
+    "    float scrd = (uD18*dy + uD1C*fb) / 65536.0;\n"
+    "    if (uPersp == 5 && scrd > 1024.0)\n"
+    "        scrd = 16384.0*scrd/(scrd + 16384.0);\n"
+    "    float shx = uScale*fa / 2048.0;\n"
+    "    float shy = uScale*fc / 2048.0;\n"
+    "    if (uPersp == 5) {\n"
+    "        shx = shx*(16384.0 - scrd) / 16384.0;\n"
+    "        shy = shy*(16384.0 - scrd) / 16384.0;\n"
+    "    }\n"
+    "    gl_Position = vec4((uCentre.x + shx)/uCentre.x - 1.0, 1.0 - (uCentre.y - shy)/uCentre.y, 0.0, 1.0);\n"
+    "    vUV = aUV;\n"
+    "}\n";
+
+static const char *shadow_frag_src =
+    "#version 330 core\n"
+    "in vec2 vUV;\n"
+    "out vec4 frag;\n"
+    "void main(){\n"
+    "    float d = length(vUV - 0.5) * 2.0;\n"
+    "    float a = clamp(1.0 - d, 0.0, 1.0);\n"
+    "    a = a * a * 0.25;\n"
+    "    frag = vec4(0.0, 0.0, 0.0, a);\n"
+    "}\n";
+
+/* Projected shape-shadow shader: draws the sprite's silhouette on the ground
+ * offset in the light direction. Opacity per-quad for distance fade. */
+static const char *psh_vert_src =
+    "#version 330 core\n"
+    "layout(location=0) in vec3 aPos;\n"
+    "layout(location=1) in vec2 aUV;\n"
+    "layout(location=2) in float aOpacity;\n"
+    "uniform float uD10, uD14, uD18, uD1C;\n"
+    "uniform float uScale;\n"
+    "uniform vec2 uCentre;\n"
+    "uniform vec3 uCtr;\n"
+    "uniform int  uPersp;\n"
+    "out vec2 vUV;\n"
+    "out float vOpacity;\n"
+    "void main(){\n"
+    "    float dx = aPos.x - uCtr.x;\n"
+    "    float dy = aPos.y - uCtr.y;\n"
+    "    float dz = aPos.z - uCtr.z;\n"
+    "    float fa = (uD14*dx - uD10*dz) / 65536.0;\n"
+    "    float fb = (uD10*dx + uD14*dz) / 65536.0;\n"
+    "    float fc = (uD1C*dy - uD18*fb) / 65536.0;\n"
+    "    float scrd = (uD18*dy + uD1C*fb) / 65536.0;\n"
+    "    if (uPersp == 5 && scrd > 1024.0)\n"
+    "        scrd = 16384.0*scrd/(scrd + 16384.0);\n"
+    "    float shx = uScale*fa / 2048.0;\n"
+    "    float shy = uScale*fc / 2048.0;\n"
+    "    if (uPersp == 5) {\n"
+    "        shx = shx*(16384.0 - scrd) / 16384.0;\n"
+    "        shy = shy*(16384.0 - scrd) / 16384.0;\n"
+    "    }\n"
+    "    gl_Position = vec4((uCentre.x + shx)/uCentre.x - 1.0, 1.0 - (uCentre.y - shy)/uCentre.y, 0.0, 1.0);\n"
+    "    vUV = aUV;\n"
+    "    vOpacity = aOpacity;\n"
+    "}\n";
+
+static const char *psh_frag_src =
+    "#version 330 core\n"
+    "in vec2 vUV;\n"
+    "in float vOpacity;\n"
+    "out vec4 frag;\n"
+    "uniform sampler2D uAtlas;\n"
+    "void main(){\n"
+    "    vec4 t = texture(uAtlas, vUV);\n"
+    "    float a = t.a > 0.3 ? vOpacity : 0.0;\n"
+    "    frag = vec4(0.0, 0.0, 0.0, a);\n"
+    "}\n";
+
+/* =========================================================================
+ *  Shader compilation / program creation
+ * ========================================================================= */
+
+static GLuint spr_prog = 0, spr_vao = 0, spr_vbo = 0, spr_ebo = 0;
+static GLint spr_loc_atlas = -1, spr_loc_shadowmap = -1;
+static GLint spr_loc_d10 = -1, spr_loc_d14 = -1, spr_loc_d18 = -1, spr_loc_d1c = -1;
+static GLint spr_loc_scale = -1, spr_loc_centre = -1, spr_loc_ctr = -1, spr_loc_persp = -1;
+static GLint spr_loc_lpos_base = -1, spr_loc_lrgb_base = -1, spr_loc_lrad_base = -1;
+static GLint spr_loc_nlights = -1, spr_loc_ambient = -1, spr_loc_gain = -1;
+static GLint spr_loc_tint = -1, spr_loc_ao = -1, spr_loc_maxdist2 = -1;
+static GLint spr_loc_sun_mvp = -1, spr_loc_sun_bright = -1, spr_loc_sun_ambient = -1;
+static GLint spr_loc_sun_bias = -1, spr_loc_sun_enable = -1, spr_loc_sun_pcf = -1;
+static GLint spr_loc_sun_debug = -1, spr_loc_sun_haze = -1;
+static int   spr_ready = 0;
+
+static GLuint shd_prog = 0, shd_vao = 0, shd_vbo = 0, shd_ebo = 0;
+static GLint shd_loc_d10 = -1, shd_loc_d14 = -1, shd_loc_d18 = -1, shd_loc_d1c = -1;
+static GLint shd_loc_scale = -1, shd_loc_centre = -1, shd_loc_ctr = -1, shd_loc_persp = -1;
+static int   shd_ready = 0;
+
+/* Projected shape-shadow program (atlas-textured shadows on the ground). */
+static GLuint psh_prog = 0, psh_vao = 0, psh_vbo = 0, psh_ebo = 0;
+static GLint psh_loc_d10 = -1, psh_loc_d14 = -1, psh_loc_d18 = -1, psh_loc_d1c = -1;
+static GLint psh_loc_scale = -1, psh_loc_centre = -1, psh_loc_ctr = -1, psh_loc_persp = -1;
+static GLint psh_loc_atlas = -1;
+static int   psh_ready = 0;
+
+static GLuint spr_compile(GLenum type, const char *src)
+{
+    GLuint sh = glCreateShader(type);
+    GLint ok = 0;
+    glShaderSource(sh, 1, &src, NULL);
+    glCompileShader(sh);
+    glGetShaderiv(sh, GL_COMPILE_STATUS, &ok);
+    if (!ok) {
+        char log[512];
+        glGetShaderInfoLog(sh, sizeof(log), NULL, log);
+        hwr_set_error("sprite shader compile failed: %s", log);
+        glDeleteShader(sh);
+        return 0;
+    }
+    return sh;
+}
+
+static int spr_init(void)
+{
+    GLuint vs, fs;
+    GLint ok = 0;
+
+    vs = spr_compile(GL_VERTEX_SHADER, spr_vert_src);
+    if (!vs) return HWR_ERROR;
+    fs = spr_compile(GL_FRAGMENT_SHADER, spr_frag_src);
+    if (!fs) { glDeleteShader(vs); return HWR_ERROR; }
+    spr_prog = glCreateProgram();
+    glAttachShader(spr_prog, vs);
+    glAttachShader(spr_prog, fs);
+    glLinkProgram(spr_prog);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    glGetProgramiv(spr_prog, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        char log[512];
+        glGetProgramInfoLog(spr_prog, sizeof(log), NULL, log);
+        hwr_set_error("sprite program link failed: %s", log);
+        return HWR_ERROR;
+    }
+
+    spr_loc_atlas      = glGetUniformLocation(spr_prog, "uAtlas");
+    spr_loc_shadowmap  = glGetUniformLocation(spr_prog, "uShadowMap");
+    spr_loc_d10        = glGetUniformLocation(spr_prog, "uD10");
+    spr_loc_d14        = glGetUniformLocation(spr_prog, "uD14");
+    spr_loc_d18        = glGetUniformLocation(spr_prog, "uD18");
+    spr_loc_d1c        = glGetUniformLocation(spr_prog, "uD1C");
+    spr_loc_scale      = glGetUniformLocation(spr_prog, "uScale");
+    spr_loc_centre     = glGetUniformLocation(spr_prog, "uCentre");
+    spr_loc_ctr        = glGetUniformLocation(spr_prog, "uCtr");
+    spr_loc_persp      = glGetUniformLocation(spr_prog, "uPersp");
+    spr_loc_lpos_base  = glGetUniformLocation(spr_prog, "uLightPos");
+    spr_loc_lrgb_base  = glGetUniformLocation(spr_prog, "uLightRgb");
+    spr_loc_lrad_base  = glGetUniformLocation(spr_prog, "uLightRadius");
+    spr_loc_nlights    = glGetUniformLocation(spr_prog, "uNumLights");
+    spr_loc_ambient    = glGetUniformLocation(spr_prog, "uAmbient");
+    spr_loc_gain       = glGetUniformLocation(spr_prog, "uGain");
+    spr_loc_tint       = glGetUniformLocation(spr_prog, "uTint");
+    spr_loc_ao         = glGetUniformLocation(spr_prog, "uAO");
+    spr_loc_maxdist2   = glGetUniformLocation(spr_prog, "uLightMaxDist2");
+    spr_loc_sun_mvp    = glGetUniformLocation(spr_prog, "uSunMVP");
+    spr_loc_sun_bright = glGetUniformLocation(spr_prog, "uSunBright");
+    spr_loc_sun_ambient= glGetUniformLocation(spr_prog, "uSunAmbient");
+    spr_loc_sun_bias   = glGetUniformLocation(spr_prog, "uSunBias");
+    spr_loc_sun_enable = glGetUniformLocation(spr_prog, "uSunEnable");
+    spr_loc_sun_pcf    = glGetUniformLocation(spr_prog, "uSunPCF");
+    spr_loc_sun_debug  = glGetUniformLocation(spr_prog, "uSunDebug");
+    spr_loc_sun_haze   = glGetUniformLocation(spr_prog, "uSunHaze");
+
+    glGenVertexArrays(1, &spr_vao);
+    glBindVertexArray(spr_vao);
+    glGenBuffers(1, &spr_vbo);
+    glGenBuffers(1, &spr_ebo);
+    glBindBuffer(GL_ARRAY_BUFFER, spr_vbo);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, spr_ebo);
+    {
+        GLsizei stride = 28;  /* 3 floats pos + 2 floats UV + 1 float shade + 1 float depth */
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void *)0);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, stride, (void *)12);
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, stride, (void *)20);
+        glEnableVertexAttribArray(3);
+        glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, stride, (void *)24);
+    }
+    glBindVertexArray(0);
+
+    /* Shadow shader */
+    vs = spr_compile(GL_VERTEX_SHADER, shadow_vert_src);
+    if (!vs) return HWR_ERROR;
+    fs = spr_compile(GL_FRAGMENT_SHADER, shadow_frag_src);
+    if (!fs) { glDeleteShader(vs); return HWR_ERROR; }
+    shd_prog = glCreateProgram();
+    glAttachShader(shd_prog, vs);
+    glAttachShader(shd_prog, fs);
+    glLinkProgram(shd_prog);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    glGetProgramiv(shd_prog, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        char log[512];
+        glGetProgramInfoLog(shd_prog, sizeof(log), NULL, log);
+        hwr_set_error("shadow shader link failed: %s", log);
+        return HWR_ERROR;
+    }
+    shd_loc_d10   = glGetUniformLocation(shd_prog, "uD10");
+    shd_loc_d14   = glGetUniformLocation(shd_prog, "uD14");
+    shd_loc_d18   = glGetUniformLocation(shd_prog, "uD18");
+    shd_loc_d1c   = glGetUniformLocation(shd_prog, "uD1C");
+    shd_loc_scale = glGetUniformLocation(shd_prog, "uScale");
+    shd_loc_centre= glGetUniformLocation(shd_prog, "uCentre");
+    shd_loc_ctr   = glGetUniformLocation(shd_prog, "uCtr");
+    shd_loc_persp = glGetUniformLocation(shd_prog, "uPersp");
+    glGenVertexArrays(1, &shd_vao);
+    glBindVertexArray(shd_vao);
+    glGenBuffers(1, &shd_vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, shd_vbo);
+    glGenBuffers(1, &shd_ebo);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, shd_ebo);
+    {
+        GLsizei stride = 20;
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void *)0);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, stride, (void *)12);
+    }
+    glBindVertexArray(0);
+
+    /* ---- Projected shape-shadow program ---- */
+    vs = spr_compile(GL_VERTEX_SHADER, psh_vert_src);
+    if (!vs) return HWR_ERROR;
+    fs = spr_compile(GL_FRAGMENT_SHADER, psh_frag_src);
+    if (!fs) { glDeleteShader(vs); return HWR_ERROR; }
+    psh_prog = glCreateProgram();
+    glAttachShader(psh_prog, vs);
+    glAttachShader(psh_prog, fs);
+    glLinkProgram(psh_prog);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    glGetProgramiv(psh_prog, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        char log[512];
+        glGetProgramInfoLog(psh_prog, sizeof(log), NULL, log);
+        hwr_set_error("psh program link failed: %s", log);
+        return HWR_ERROR;
+    }
+    psh_loc_d10   = glGetUniformLocation(psh_prog, "uD10");
+    psh_loc_d14   = glGetUniformLocation(psh_prog, "uD14");
+    psh_loc_d18   = glGetUniformLocation(psh_prog, "uD18");
+    psh_loc_d1c   = glGetUniformLocation(psh_prog, "uD1C");
+    psh_loc_scale = glGetUniformLocation(psh_prog, "uScale");
+    psh_loc_centre= glGetUniformLocation(psh_prog, "uCentre");
+    psh_loc_ctr   = glGetUniformLocation(psh_prog, "uCtr");
+    psh_loc_persp = glGetUniformLocation(psh_prog, "uPersp");
+    psh_loc_atlas = glGetUniformLocation(psh_prog, "uAtlas");
+    glGenVertexArrays(1, &psh_vao);
+    glBindVertexArray(psh_vao);
+    glGenBuffers(1, &psh_vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, psh_vbo);
+    glGenBuffers(1, &psh_ebo);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, psh_ebo);
+    {
+        GLsizei stride = 24;
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void *)0);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, stride, (void *)12);
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, stride, (void *)20);
+    }
+    glBindVertexArray(0);
+    psh_ready = 1;
+
+    if (hwr_gl_check("spr_init"))
+        return HWR_ERROR;
+    spr_ready = 1;
+    shd_ready = 1;
+    return HWR_OK;
+}
+
+/* =========================================================================
+ * Per-frame rendering
+ * =========================================================================
+ * Vertex format: 3 floats pos + 2 floats UV + 1 float shade + 1 float depth = 28 bytes.
+ * Per billboard: 4 vertices + 6 indices (two triangles).
+ * ========================================================================*/
+
+#define SPR_VERT_STRIDE 28
+#define SPR_MAX_BILLBOARDS 2048
+#define SPR_MAX_VERTS (SPR_MAX_BILLBOARDS * 4)
+#define SPR_MAX_INDEX (SPR_MAX_BILLBOARDS * 6)
+
+static float   spr_vbuf[SPR_MAX_VERTS * (SPR_VERT_STRIDE / 4)];
+static uint32_t spr_ibuf[SPR_MAX_INDEX];
+static int      spr_vcount, spr_icount;
+
+/* Emit a ground shadow quad — inline in hwr_sprites_render, not this helper */
+
+/* Upload lights (same as fl_upload_lights) */
+static void spr_upload_lights(const HwrLight *lights, int n)
+{
+    float pos_buf[64 * 3], rgb_buf[64 * 3], rad_buf[64], maxd2_buf[64];
+    int i;
+    if (n > 64) n = 64;
+    {
+        HwrLightDefaults d = hwr_lights_defaults();
+        for (i = 0; i < n; i++) {
+            pos_buf[i*3+0] = lights[i].x;
+            pos_buf[i*3+1] = lights[i].y;
+            pos_buf[i*3+2] = lights[i].z;
+            rgb_buf[i*3+0] = lights[i].r;
+            rgb_buf[i*3+1] = lights[i].g;
+            rgb_buf[i*3+2] = lights[i].b;
+            rad_buf[i]     = lights[i].radius;
+            if (lights[i].max_dist2 > 0.0f)
+                maxd2_buf[i] = lights[i].max_dist2;
+            else {
+                float yabs = (lights[i].y < 0.0f) ? -lights[i].y : lights[i].y;
+                maxd2_buf[i] = d.max_light_dist2 + yabs * yabs;
+            }
+        }
+        glUniform1f(spr_loc_ambient, d.ambient);
+        glUniform1f(spr_loc_gain, d.intensity);
+        glUniform3f(spr_loc_tint, d.tint_r, d.tint_g, d.tint_b);
+        glUniform1f(spr_loc_ao, d.ao);
+    }
+    if (n > 0) {
+        glUniform3fv(spr_loc_lpos_base, n, pos_buf);
+        glUniform3fv(spr_loc_lrgb_base, n, rgb_buf);
+        glUniform1fv(spr_loc_lrad_base, n, rad_buf);
+        glUniform1fv(spr_loc_maxdist2, n, maxd2_buf);
+    }
+    glUniform1i(spr_loc_nlights, n);
+}
+
+/* Set the sprite program camera/lighting uniforms.
+ * cam and source are from the current frame. */
+static void spr_setup_program(const HwrCamera *cam,
+    const HwrSceneSource *source)
+{
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(0x0203); /* GL_LEQUAL */
+    glDisable(GL_BLEND);
+
+    glUseProgram(spr_prog);
+    glUniform1f(spr_loc_d10, cam->d10);
+    glUniform1f(spr_loc_d14, cam->d14);
+    glUniform1f(spr_loc_d18, cam->d18);
+    glUniform1f(spr_loc_d1c, cam->d1c);
+    glUniform1f(spr_loc_scale, cam->scale);
+    glUniform2f(spr_loc_centre, cam->centre_x, cam->centre_y);
+    glUniform3f(spr_loc_ctr, cam->cx, cam->cy8, cam->cz);
+    glUniform1i(spr_loc_persp, cam->perspective);
+
+    /* Atlas on unit 4 */
+    hwr_atlas_bind(4);
+    glUniform1i(spr_loc_atlas, 4);
+
+    /* Shadow map on unit 3 */
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)hwr_sun_texture());
+    glActiveTexture(GL_TEXTURE0);
+    glUniform1i(spr_loc_shadowmap, 3);
+
+    /* Sun uniforms */
+    {
+        int sun_on = hwr_sun_enabled();
+        glUniform1i(spr_loc_sun_enable, sun_on);
+        if (sun_on) {
+            glUniformMatrix4fv(spr_loc_sun_mvp, 1, GL_FALSE, hwr_sun_mvp());
+            glUniform1f(spr_loc_sun_bright,  hwr_sun_bright());
+            glUniform1f(spr_loc_sun_ambient, hwr_sun_ambient());
+            glUniform1f(spr_loc_sun_bias,    hwr_sun_bias());
+            glUniform1i(spr_loc_sun_pcf,     hwr_sun_pcf());
+            glUniform1i(spr_loc_sun_debug,   hwr_sun_debug());
+            glUniform1f(spr_loc_sun_haze,    hwr_sun_haze());
+        }
+    }
+
+    /* Lights */
+    {
+        HwrLight lights[64];
+        int nlight = (source && source->get_lights)
+            ? source->get_lights(source->ctx, lights, 64) : 0;
+        spr_upload_lights(lights, nlight < 0 ? 0 : nlight);
+    }
+
+    hwr_gl_check("spr_setup_program");
+}
+
+/* =========================================================================
+ * Public entry points
+ * ========================================================================= */
+
+int hwr_sprites_render(const unsigned char *pal8, int filter_linear)
+{
+    HwrCamera cam;
+    HwrBillboard billboards[SPR_MAX_BILLBOARDS];
+    const HwrSceneSource *s = hwr_source;
+    int nbill, i;
+
+    if (!hwr_is_ready() || s == NULL)
+        return 0;
+    if (!spr_ready && spr_init() != HWR_OK)
+        return 0;
+
+    /* Upload any pending sprite pixel data to the GL atlas texture.
+     * Pixel data is stashed by the main thread in hwr_atlas_register(). */
+    hwr_atlas_upload_pending();
+
+    if (s->get_camera == NULL || s->get_camera(s->ctx, &cam) != 0)
+        return 0;
+    if (s->get_sprites == NULL)
+        return 0;
+
+    nbill = s->get_sprites(s->ctx, billboards, SPR_MAX_BILLBOARDS);
+    if (nbill <= 0) {
+        /* Silently return — sprites may already be SW-suppressed. */
+        return 0;
+    }
+
+    /* Build vertex/index buffer */
+    spr_vcount = 0;
+    spr_icount = 0;
+    for (i = 0; i < nbill && spr_vcount + 4 <= SPR_MAX_VERTS; i++) {
+        HwrBillboard *bb = &billboards[i];
+        float u0, v0, u1, v1;
+        int sw, sh;
+        float hw, hh;
+        float shade;
+
+        hwr_atlas_uv(bb->sprite, &u0, &v0, &u1, &v1);
+        hwr_atlas_size(bb->sprite, &sw, &sh);
+        if (sw <= 0 || sh <= 0)
+            continue;
+
+        /* Use pre-computed half extents from the source */
+        hw = bb->half_size_x;
+        hh = bb->half_size_y;
+        if (hw <= 0.0f) hw = 8.0f;
+        if (hh <= 0.0f) hh = 8.0f;
+
+        shade = (float)bb->shade / 48.0f;
+        if (shade > 1.0f) shade = 1.0f;
+        if (shade < 0.15f) shade = 0.15f;
+
+        /* Compute camera-facing corner positions on CPU.
+         * Camera right direction in XZ from projection factors.
+         * The captured camera was already set before drawlist execution. */
+        {
+            float right_norm = sqrtf(cam.d14 * cam.d14 + cam.d10 * cam.d10);
+            float rx, rz;
+            if (right_norm > 0.0001f) {
+                rx = cam.d14 / right_norm;
+                rz = -cam.d10 / right_norm;
+            } else {
+                rx = 1.0f; rz = 0.0f;
+            }
+            /* Quad corners: center ± (rx*hw, ±hh, rz*hw) */
+            float cx = bb->x, cy = bb->y, cz = bb->z;
+            float verts[4][3] = {
+                {cx - rx * hw, cy - hh, cz - rz * hw},
+                {cx + rx * hw, cy - hh, cz + rz * hw},
+                {cx + rx * hw, cy + hh, cz + rz * hw},
+                {cx - rx * hw, cy + hh, cz - rz * hw},
+            };
+            float uvs[4][2] = {{u0,v1}, {u1,v1}, {u1,v0}, {u0,v0}};
+            /* Compute centre depth (scrd) — same for all four corners */
+            float cdx = cx - cam.cx;
+            float cdy = cy - cam.cy8;
+            float cdz = cz - cam.cz;
+            float cfb = (cam.d10 * cdx + cam.d14 * cdz) / 65536.0f;
+            float centre_scrd = (cam.d18 * cdy + cam.d1c * cfb) / 65536.0f;
+            if (cam.perspective == 5 && centre_scrd > 1024.0f)
+                centre_scrd = 16384.0f * centre_scrd / (centre_scrd + 16384.0f);
+            /* ONTOP billboards (dropped items) get a small depth bias toward the
+             * camera so they win the depth test against the body at the same
+             * spot, without poking through walls at other depths. */
+            if (bb->flags & HWR_BILLBOARD_ONTOP)
+                centre_scrd -= 768.0f;
+            int base = spr_vcount;
+            int k;
+            for (k = 0; k < 4; k++) {
+                float *v = &spr_vbuf[(spr_vcount + k) * (SPR_VERT_STRIDE / 4)];
+                v[0] = verts[k][0]; v[1] = verts[k][1]; v[2] = verts[k][2];
+                v[3] = uvs[k][0];   v[4] = uvs[k][1];
+                v[5] = shade;
+                v[6] = centre_scrd;
+            }
+            spr_ibuf[spr_icount++] = base + 0;
+            spr_ibuf[spr_icount++] = base + 1;
+            spr_ibuf[spr_icount++] = base + 2;
+            spr_ibuf[spr_icount++] = base + 0;
+            spr_ibuf[spr_icount++] = base + 2;
+            spr_ibuf[spr_icount++] = base + 3;
+            spr_vcount += 4;
+        }
+    }
+
+    if (spr_vcount <= 0)
+        return 0;
+
+    /* Upload VBO/EBO */
+    glBindVertexArray(spr_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, spr_vbo);
+    glBufferData(GL_ARRAY_BUFFER,
+        (GLsizeiptr)spr_vcount * SPR_VERT_STRIDE, spr_vbuf, GL_STREAM_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, spr_ebo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+        (GLsizeiptr)spr_icount * sizeof(uint32_t), spr_ibuf, GL_STREAM_DRAW);
+
+    /* Setup program and draw */
+    spr_setup_program(&cam, s);
+    glDrawElements(GL_TRIANGLES, spr_icount, GL_UNSIGNED_INT, (void *)0);
+    glBindVertexArray(0);
+
+    hwr_gl_check("hwr_sprites_render");
+    return 1;
+}
+
+/* =========================================================================
+ * Shadow passes (blob + projected) — rendered AFTER floor but BEFORE faces
+ * so that buildings correctly occlude shadows.
+ * ========================================================================= */
+int hwr_shadows_render(void)
+{
+    HwrCamera cam;
+    HwrBillboard billboards[SPR_MAX_BILLBOARDS];
+    const HwrSceneSource *s = hwr_source;
+    int nbill, i;
+
+    if (!hwr_is_ready() || s == NULL)
+        return 0;
+    /* Ensure shaders are initialised (spr_init sets both shd_prog & psh_prog). */
+    if (!spr_ready && spr_init() != HWR_OK)
+        return 0;
+
+    if (s->get_camera == NULL || s->get_camera(s->ctx, &cam) != 0)
+        return 0;
+    if (s->get_sprites == NULL)
+        return 0;
+
+    nbill = s->get_sprites(s->ctx, billboards, SPR_MAX_BILLBOARDS);
+    if (nbill <= 0)
+        return 0;
+
+    /* Sun direction for shadow offset */
+    float sun_dir_x = 0.0f, sun_dir_y = 1.0f, sun_dir_z = 0.0f;
+    int    sun_active = hwr_sun_enabled();
+    if (sun_active)
+        hwr_sun_get_direction(&sun_dir_x, &sun_dir_y, &sun_dir_z);
+
+    /* ---- Pass 1: radial-gradient blob shadows ---- */
+    {
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDepthFunc(0x0207); /* GL_ALWAYS — draws on floor, occluded by buildings */
+        glDepthMask(GL_FALSE);
+        glUseProgram(shd_prog);
+        glUniform1f(shd_loc_d10, cam.d10);
+        glUniform1f(shd_loc_d14, cam.d14);
+        glUniform1f(shd_loc_d18, cam.d18);
+        glUniform1f(shd_loc_d1c, cam.d1c);
+        glUniform1f(shd_loc_scale, cam.scale);
+        glUniform2f(shd_loc_centre, cam.centre_x, cam.centre_y);
+        glUniform3f(shd_loc_ctr, cam.cx, cam.cy8, cam.cz);
+        glUniform1i(shd_loc_persp, cam.perspective);
+
+        float shd_vbuf[SPR_MAX_BILLBOARDS * 4 * 5];
+        uint32_t shd_ibuf[SPR_MAX_BILLBOARDS * 6];
+        int shd_vc = 0, shd_ic = 0;
+
+        for (i = 0; i < nbill; i++) {
+            HwrBillboard *bb = &billboards[i];
+            if (bb->flags & HWR_BILLBOARD_NOSHADOW) continue;
+            float sx = bb->x, sy = bb->y, sz = bb->z;
+            float hh = bb->half_size_y;
+            float ground_y = sy - hh;
+
+            /* Stable height basis (≈ old half_size_x*3) so the blob doesn't pop with
+             * per-frame sprite width. */
+            float sr = bb->half_size_y * 1.15f;
+            float sd = bb->half_size_y * 1.15f;
+            if (sr < 16.0f) sr = 16.0f;
+            if (sd < 16.0f) sd = 16.0f;
+
+            if (shd_vc + 4 > SPR_MAX_BILLBOARDS * 4) break;
+            float verts[4][3] = {
+                {sx - sr, ground_y, sz - sd},
+                {sx + sr, ground_y, sz - sd},
+                {sx + sr, ground_y, sz + sd},
+                {sx - sr, ground_y, sz + sd},
+            };
+            float uvs[4][2] = {{0,1},{1,1},{1,0},{0,0}};
+            int base = shd_vc;
+            int k;
+            for (k = 0; k < 4; k++) {
+                float *v = &shd_vbuf[shd_vc * 5];
+                v[0] = verts[k][0]; v[1] = verts[k][1]; v[2] = verts[k][2];
+                v[3] = uvs[k][0];   v[4] = uvs[k][1];
+                shd_vc++;
+            }
+            shd_ibuf[shd_ic++] = base + 0;
+            shd_ibuf[shd_ic++] = base + 1;
+            shd_ibuf[shd_ic++] = base + 2;
+            shd_ibuf[shd_ic++] = base + 0;
+            shd_ibuf[shd_ic++] = base + 2;
+            shd_ibuf[shd_ic++] = base + 3;
+        }
+
+        if (shd_vc > 0) {
+            glBindVertexArray(shd_vao);
+            glBindBuffer(GL_ARRAY_BUFFER, shd_vbo);
+            glBufferData(GL_ARRAY_BUFFER,
+                (GLsizeiptr)shd_vc * 5 * sizeof(float), shd_vbuf, GL_STREAM_DRAW);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, shd_ebo);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                (GLsizeiptr)shd_ic * sizeof(uint32_t), shd_ibuf, GL_STREAM_DRAW);
+            glDrawElements(GL_TRIANGLES, shd_ic, GL_UNSIGNED_INT, (void *)0);
+            glBindVertexArray(0);
+        }
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+    }
+
+    /* ---- Pass 2: projected shape shadows (sprite silhouettes on ground) ---- */
+    if (psh_ready) {
+#define PSH_MAX_QUADS 8192
+#define PSH_MAX_VC (PSH_MAX_QUADS * 4)
+#define PSH_MAX_IC (PSH_MAX_QUADS * 6)
+        float    psh_vbuf[PSH_MAX_VC * 6];
+        uint32_t psh_ibuf[PSH_MAX_IC];
+        int      psh_vc = 0, psh_ic = 0;
+
+        HwrLight psh_lights[64];
+        int npsh_lights = (s && s->get_lights)
+            ? s->get_lights(s->ctx, psh_lights, 64) : 0;
+        if (npsh_lights < 0) npsh_lights = 0;
+
+        for (i = 0; i < nbill && psh_vc + 4 <= PSH_MAX_VC; i++) {
+            HwrBillboard *bb = &billboards[i];
+            if (bb->flags & HWR_BILLBOARD_NOSHADOW) continue;
+            float u0, v0, u1, v1;
+            int sw, sh;
+            hwr_atlas_uv(bb->sprite, &u0, &v0, &u1, &v1);
+            hwr_atlas_size(bb->sprite, &sw, &sh);
+            if (sw <= 0 || sh <= 0) continue;
+
+            /* Size the shadow footprint from the STABLE character height, not the
+             * per-frame sprite width (bb->half_size_x ∝ fw).  fw spikes when limbs
+             * extend — mostly in profile views — which made the shadow "pop" bigger
+             * for one frame then snap back.  half_size_y (∝ fh) is stable across the
+             * walk cycle and direction-independent.  0.38 ≈ a typical person's
+             * hw/hh ratio, so footprint magnitude is preserved (tunable). */
+            float hh = bb->half_size_y;
+            if (hh <= 0.0f) hh = 8.0f;
+            float hw = hh * 0.38f;
+            if (hw <= 0.0f) hw = 8.0f;
+
+            float sx = bb->x, sy = bb->y, sz = bb->z;
+            float ground_y = sy - hh;
+
+            /* ---- Sun projected shadow ---- */
+            if (sun_active && sun_dir_y > 0.001f && psh_vc + 4 <= PSH_MAX_VC) {
+                float off_x = -hh * 0.4f * sun_dir_x / sun_dir_y;
+                float off_z = -hh * 0.4f * sun_dir_z / sun_dir_y;
+                {
+                    float max_o = 4096.0f;
+                    if (off_x > max_o) off_x = max_o;
+                    if (off_x < -max_o) off_x = -max_o;
+                    if (off_z > max_o) off_z = max_o;
+                    if (off_z < -max_o) off_z = -max_o;
+                }
+
+                float shw = hw * 0.8f;
+                float shz = hw * 0.8f;
+                float opacity = 0.15f;
+                float verts[4][3] = {
+                    {sx + off_x - shw, ground_y, sz + off_z - shz},
+                    {sx + off_x + shw, ground_y, sz + off_z - shz},
+                    {sx + off_x + shw, ground_y, sz + off_z + shz},
+                    {sx + off_x - shw, ground_y, sz + off_z + shz},
+                };
+                float uvs[4][2] = {{u0,v1},{u1,v1},{u1,v0},{u0,v0}};
+                int base = psh_vc;
+                int k;
+                for (k = 0; k < 4; k++) {
+                    float *v = &psh_vbuf[psh_vc * 6];
+                    v[0] = verts[k][0]; v[1] = verts[k][1]; v[2] = verts[k][2];
+                    v[3] = uvs[k][0];   v[4] = uvs[k][1];
+                    v[5] = opacity;
+                    psh_vc++;
+                }
+                psh_ibuf[psh_ic++] = base + 0;
+                psh_ibuf[psh_ic++] = base + 1;
+                psh_ibuf[psh_ic++] = base + 2;
+                psh_ibuf[psh_ic++] = base + 0;
+                psh_ibuf[psh_ic++] = base + 2;
+                psh_ibuf[psh_ic++] = base + 3;
+            }
+
+            /* ---- Point-light projected shadows (up to 4 per sprite) ---- */
+            if (npsh_lights > 0) {
+                int li, n_this = 0;
+
+                for (li = 0; li < npsh_lights && n_this < 4 && psh_vc + 4 <= PSH_MAX_VC; li++) {
+                    HwrLight *lt = &psh_lights[li];
+                    float lx = lt->x, ly = lt->y, lz = lt->z;
+                    float dx = sx - lx, dy = sy - ly, dz = sz - lz;
+                    float dist2 = dx*dx + dy*dy + dz*dz;
+                    if (dist2 <= 0.0f) continue;
+
+                    float maxd2 = lt->max_dist2;
+                    if (maxd2 <= 0.0f) maxd2 = 4194304.0f;
+                    if (dist2 > maxd2 * 1.5f) continue;
+
+                    float ldy = sy - ly;
+                    if (fabsf(ldy) < 0.001f) ldy = 0.001f;
+                    float t = (ground_y - ly) / ldy;
+                    if (t <= 1.0f) continue;
+                    if (t > 5.0f) continue;
+                    /* Light too close vertically — skip projected shadow */
+                    if (fabsf(sy - ly) < hh * 0.5f) continue;
+
+                    /* Project sprite centre through light onto ground */
+                    float sh_x = lx + t * (sx - lx);
+                    float sh_z = lz + t * (sz - lz);
+
+                    /* Raw direction from sprite to projected shadow (unclamped) */
+                    float ndx = sh_x - sx, ndz = sh_z - sz;
+                    float raw_ndl = sqrtf(ndx*ndx + ndz*ndz);
+                    if (raw_ndl < hw * 0.125f) continue;
+                    float nx = ndx / raw_ndl, nz = ndz / raw_ndl;
+                    float px = -nz, pz = nx;
+
+                    /* Clamp distance only (not direction) to prevent breathing */
+                    float ndl = (raw_ndl > hw * 3.0f) ? hw * 3.0f : raw_ndl;
+
+                    float nd = dist2 / maxd2;
+                    float opacity = (1.0f - nd) * 0.20f;
+                    if (opacity < 0.01f) continue;
+
+                    /* Stretch — trapezoid: bottom at sprite feet, top projected away */
+                    float stretch = 1.0f + (t - 1.0f) * 0.6f;
+                    float bottom_w = hw * 0.7f;
+                    float top_w   = bottom_w * stretch;
+                    float length  = ndl * stretch;  /* project from feet to shadow × stretch */
+                    float verts[4][3] = {
+                        {sx - px*bottom_w, ground_y, sz - pz*bottom_w},
+                        {sx + px*bottom_w, ground_y, sz + pz*bottom_w},
+                        {sx + nx*length + px*top_w, ground_y, sz + nz*length + pz*top_w},
+                        {sx + nx*length - px*top_w, ground_y, sz + nz*length - pz*top_w},
+                    };
+                    float uvs[4][2] = {{u0,v1},{u1,v1},{u1,v0},{u0,v0}};
+                    int base = psh_vc;
+                    int k;
+                    for (k = 0; k < 4; k++) {
+                        float *v = &psh_vbuf[psh_vc * 6];
+                        v[0] = verts[k][0]; v[1] = verts[k][1]; v[2] = verts[k][2];
+                        v[3] = uvs[k][0];   v[4] = uvs[k][1];
+                        v[5] = opacity;
+                        psh_vc++;
+                    }
+                    psh_ibuf[psh_ic++] = base + 0;
+                    psh_ibuf[psh_ic++] = base + 1;
+                    psh_ibuf[psh_ic++] = base + 2;
+                    psh_ibuf[psh_ic++] = base + 0;
+                    psh_ibuf[psh_ic++] = base + 2;
+                    psh_ibuf[psh_ic++] = base + 3;
+                    n_this++;
+                }
+            }
+        }
+
+        if (psh_vc > 0) {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glDepthFunc(0x0207); /* GL_ALWAYS */
+            glDepthMask(GL_FALSE);
+            glUseProgram(psh_prog);
+            glUniform1f(psh_loc_d10, cam.d10);
+            glUniform1f(psh_loc_d14, cam.d14);
+            glUniform1f(psh_loc_d18, cam.d18);
+            glUniform1f(psh_loc_d1c, cam.d1c);
+            glUniform1f(psh_loc_scale, cam.scale);
+            glUniform2f(psh_loc_centre, cam.centre_x, cam.centre_y);
+            glUniform3f(psh_loc_ctr, cam.cx, cam.cy8, cam.cz);
+            glUniform1i(psh_loc_persp, cam.perspective);
+            hwr_atlas_bind(4);
+            glUniform1i(psh_loc_atlas, 4);
+
+            glBindVertexArray(psh_vao);
+            glBindBuffer(GL_ARRAY_BUFFER, psh_vbo);
+            glBufferData(GL_ARRAY_BUFFER,
+                (GLsizeiptr)psh_vc * 6 * sizeof(float), psh_vbuf, GL_STREAM_DRAW);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, psh_ebo);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                (GLsizeiptr)psh_ic * sizeof(uint32_t), psh_ibuf, GL_STREAM_DRAW);
+            glDrawElements(GL_TRIANGLES, psh_ic, GL_UNSIGNED_INT, (void *)0);
+            glBindVertexArray(0);
+            glDepthMask(GL_TRUE);
+            glDisable(GL_BLEND);
+        }
+    }
+
+    glDepthFunc(0x0203); /* GL_LEQUAL — restore for subsequent passes */
+    hwr_gl_check("hwr_shadows_render");
+    return 1;
+}
+
+void hwr_sprites_reset(void)
+{
+    hwr_atlas_reset();
+    if (psh_prog) { glDeleteProgram(psh_prog); psh_prog = 0; }
+    if (psh_vao)  { glDeleteVertexArrays(1, &psh_vao); psh_vao = 0; }
+    if (psh_vbo)  { glDeleteBuffers(1, &psh_vbo); psh_vbo = 0; }
+    if (psh_ebo)  { glDeleteBuffers(1, &psh_ebo); psh_ebo = 0; }
+    psh_ready = 0;
+}

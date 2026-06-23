@@ -29,8 +29,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include <stdlib.h>
+#include <SDL.h>
 
 #include "hwr_api.h"
+#include "xbr.h"
 
 /* --- Game globals (resolved at the executable's link step) --- */
 /* Camera centre, from engincam.h (s32). */
@@ -45,8 +48,12 @@ extern int32_t        dword_176D3C, dword_176D40;   /* screen centre x, y      *
 extern unsigned short render_area_a, render_area_b;
 /* Projection mode (5 = the game's default fake-perspective). */
 extern int32_t        game_perspective;
+/* Sprite-suppression gate, set by hwrender_glue.c. */
+extern int            engine_hwr_suppress_sprites;
 /* Current 6-bit-per-channel palette (256 RGB triplets). */
 extern unsigned char  display_palette[768];
+/* 8-bit-per-channel palette (SDL_Color equivalent) for xBR RGBA conversion. */
+extern struct { unsigned char r, g, b, a; } lbPaletteColors[256];
 
 /* Map grid and floor textures. Layouts mirror src/bigmap.h and
  * swrendersoft/include/enginsngtxtr.h exactly (sizeof 18 each, packed). */
@@ -187,9 +194,13 @@ extern uint16_t              next_object_face3;   /* count of Face3 entries  */
 extern uint16_t              next_object_face4;   /* count of Face4 entries  */
 
 extern char                 *things;              /* == struct Thing array   */
+extern short                 current_level;        /* level token for cache invalidation */
+extern unsigned short        current_map;
 
 /* The palette index reserved as the composite key (set by the host glue). */
 int hwr_sw_key_index = 0;
+
+/* --- Sprite billboard collection (Phase 6) --- */
 
 /* Camera snapshot, captured at floor-draw time (when the projection globals hold
  * the engine-view values). Reading the live globals at present time is unsafe -
@@ -202,6 +213,401 @@ static struct {
     int     persp;
     int     valid;
 } snap;
+
+/* Manual struct definitions matching the game's SortSprite / DrawItem / Frame /
+ * Element / TbSprite layouts (packed 1-byte, matching the game's headers).
+ * We can't include the game headers directly because libhwrender is meant to
+ * be buildable standalone. The tags match the extern declarations below. */
+#pragma pack(push, 1)
+struct DrawItem {
+    uint8_t  Type;
+    uint16_t Offset;
+    uint16_t Child;
+};
+struct SortSprite {
+    int16_t  X, Y, Z;
+    uint16_t Frame;
+    intptr_t SrcItem;
+    uint8_t  Brightness;
+    uint8_t  Angle;
+    int16_t  Scale;
+};
+struct Frame {
+    uint16_t FirstElement;
+    uint8_t  SWidth, SHeight;
+    uint8_t  FX, Flags;
+    uint16_t Next;
+};
+struct Element {
+    uint16_t ToSprite;
+    int16_t  X, Y;
+    uint16_t Flags;
+    uint16_t Next;
+};
+struct TbSprite {
+    uint8_t *Data;
+    uint8_t  SWidth, SHeight;
+};
+#pragma pack(pop)
+
+#include "hwr_sprite.h"
+
+/* Draw item types from enginbckt.h (raw hex values to avoid cross-library include). */
+#define HWR_DI_SFrmStatc  0x03
+#define HWR_DI_SFrmPersV  0x0D
+#define HWR_DI_Unkn15     0x0F
+#define HWR_DI_SFrmPersB  0x1C
+#define HWR_DI_SFrmEfctV  0x1D
+#define HWR_SMTT_DROPPED_ITEM 0x19   /* SimpleThing Type for a dropped (collectable) item */
+
+/* The SW sort-sprite, draw-list and frame/sprite arrays. */
+extern struct SortSprite *game_sort_sprites;
+extern unsigned short     next_sort_sprite;
+extern struct DrawItem   *game_draw_list;
+extern unsigned short     next_draw_item;
+
+extern struct Frame      *frame, *frame_end;
+extern struct Element    *melement_ani, *mele_ani_end;
+extern struct TbSprite   *m_sprites, *m_sprites_end;
+
+/* Pre-collected billboard storage (filled by hwr_sw_collect_sprites,
+ * consumed by sw_get_sprites). */
+#define HWR_MAX_COLLECTED 2048
+static HwrBillboard hwr_collected_billboards[HWR_MAX_COLLECTED];
+static int          hwr_collected_count = 0;
+static int          hwr_xbr_count = 0;
+
+/* Viewport, supplied by the host at creation time. */
+static int sw_view_w = 0;
+static int sw_view_h = 0;
+
+/* The skip mask the drawlist executor checks — storage defined in
+ * engindrwlstx.c (libswrender), linked at the final executable. */
+extern unsigned char hwr_sprite_skip_mask[256];
+
+/* render_ghost is a ghosting lookup table used by SW sprite drawing functions.
+ * It must be set before ANY sprite drawing; normally it's set inside
+ * draw_frame_scaled_alpha(), but the first sprite draw can be a frame that goes
+ * through draw_frame_scaled_alpha_frv() which does NOT set it. We initialise it
+ * here so all code paths have a valid table. */
+extern unsigned char *render_ghost;
+extern struct {
+    unsigned char fade_table[64 * 256];
+    unsigned char ghost_table[256 * 256];
+} pixmap;
+
+void hwr_sw_collect_sprites(void)
+{
+    unsigned short i;
+    hwr_collected_count = 0;
+    hwr_xbr_count = 0;
+    int hwr_eligible_count = 0;
+    int hwr_passed_count = 0;
+    memset(hwr_sprite_skip_mask, 0, sizeof(hwr_sprite_skip_mask));
+    render_ghost = &pixmap.ghost_table[0];
+
+    if (!snap.valid || game_draw_list == NULL || game_sort_sprites == NULL)
+        return;
+    if (frame == NULL || m_sprites == NULL || melement_ani == NULL)
+        return;
+
+    for (i = 1; i < next_draw_item && hwr_collected_count < HWR_MAX_COLLECTED; i++) {
+        struct DrawItem *itm = &game_draw_list[i];
+        int eligible = 0;
+
+        switch (itm->Type) {
+        case HWR_DI_SFrmStatc:
+        case HWR_DI_SFrmPersV:
+        case HWR_DI_Unkn15:
+        case HWR_DI_SFrmPersB:
+        case HWR_DI_SFrmEfctV:
+            eligible = 1;
+            break;
+        default:
+            break;
+        }
+        if (!eligible) continue;
+        hwr_eligible_count++;
+
+        unsigned short ss_idx = itm->Offset;
+        if (ss_idx >= next_sort_sprite) continue;
+
+        struct SortSprite *ss = &game_sort_sprites[ss_idx];
+        if (ss->SrcItem == 0) continue;
+
+        struct HwrSimpleThingMini *thing;
+        thing = (struct HwrSimpleThingMini *)ss->SrcItem;
+        if (thing->Type == 0) continue;
+        hwr_passed_count++;
+
+        {
+            unsigned short frm_idx = ss->Frame;
+            if (frm_idx >= (unsigned short)(frame_end - frame))
+                continue;
+            struct Frame *frm = &frame[frm_idx];
+
+            /* Atlas key: (frame_index, frv_pack, xbr_scale).
+             * NEITHER Angle NOR per-sprite brightness is in the key.  The
+             * composited pixels depend only on the frame, the frv version bits
+             * (packed in Scale) and the xBR scale; element selection is driven by
+             * the frv bits, not Angle.  Brightness (and the angle-gated +15 bonus)
+             * is applied at DRAW time via bb->shade, not baked, so identical
+             * sprites at different brightness share one slot instead of colliding
+             * (all showing whichever brightness baked first) or re-baking as the
+             * sprite turns — the light/dark "blink".  This also keeps the
+             * non-reclaiming atlas from exhausting (which blacklisted keys and
+             * SKIPPED sprites — the old "randomly darkening" symptom). */
+            uint16_t frv_pack = ss->Scale;
+            uint8_t angle = ss->Angle;
+            int xbr_key = hwr_lights_defaults().xbr_scale;
+            uint32_t key = ((uint32_t)frm_idx << 18)
+                         | ((uint32_t)(frv_pack & 0x3FFF) << 4)
+                         | ((uint32_t)(xbr_key & 0x03) << 2);
+
+            /* FRV version unpack helper */
+            int frv_arr[5];
+            frv_arr[0] = (frv_pack >> 0) & 0x07;
+            frv_arr[1] = (frv_pack >> 3) & 0x07;
+            frv_arr[2] = (frv_pack >> 6) & 0x07;
+            frv_arr[3] = (frv_pack >> 9) & 0x07;
+            frv_arr[4] = (frv_pack >> 12) & 0x07;
+
+            /* Compute element bounding box (version check always — same as SW) */
+            unsigned short el_idx;
+            int off_x, off_y, max_x, max_y;
+            off_x = 0x7FFFFFFF; off_y = 0x7FFFFFFF;
+            max_x = -0x7FFFFFFF; max_y = -0x7FFFFFFF;
+            for (el_idx = frm->FirstElement; el_idx > 0; ) {
+                struct Element *el;
+                if (el_idx >= (unsigned short)(mele_ani_end - melement_ani))
+                    break;
+                el = &melement_ani[el_idx];
+                if (el->ToSprite > 0) {
+                    struct TbSprite *spr;
+                    spr = (struct TbSprite *)((uint8_t *)m_sprites + el->ToSprite);
+                    if (spr > m_sprites && spr < m_sprites_end) {
+                        int frv_idx = (el->Flags >> 4) & 0x1F;
+                        if (frv_idx >= 5) { el_idx = el->Next; continue; }
+                        int frv_ver = (el->Flags >> 9) & 0x07;
+                        if (frv_arr[frv_idx] != frv_ver) { el_idx = el->Next; continue; }
+                        int ex = (int)(el->X) >> 1;
+                        int ey = (int)(el->Y) >> 1;
+                        int sw = spr->SWidth;
+                        int sh = spr->SHeight;
+                        if (ex < off_x) off_x = ex;
+                        if (ey < off_y) off_y = ey;
+                        if (ex + sw > max_x) max_x = ex + sw;
+                        if (ey + sh > max_y) max_y = ey + sh;
+                    }
+                }
+                el_idx = el->Next;
+            }
+            if (off_x == 0x7FFFFFFF) off_x = 0;
+            if (off_y == 0x7FFFFFFF) off_y = 0;
+            int fw = max_x - off_x;
+            int fh = max_y - off_y;
+            if (fw <= 0 || fh <= 0 || fw > 256 || fh > 256)
+                continue;
+
+            /* Check atlas cache BEFORE expensive composite + xBRZ.
+             * -2 = blacklisted (atlas full, never retry). */
+            int slot = hwr_atlas_find(key);
+            if (slot == -1) {
+                /* Not cached — composite, upscale, register */
+                int row, col;
+                uint8_t comp[256 * 256 * 4];
+                memset(comp, 0, (size_t)fw * fh * 4);
+
+                for (el_idx = frm->FirstElement; el_idx > 0; ) {
+                    struct Element *el;
+                    if (el_idx >= (unsigned short)(mele_ani_end - melement_ani))
+                        break;
+                    el = &melement_ani[el_idx];
+                    if (el->ToSprite > 0) {
+                        struct TbSprite *spr;
+                        spr = (struct TbSprite *)((uint8_t *)m_sprites + el->ToSprite);
+                        if (spr > m_sprites && spr < m_sprites_end) {
+                            int frv_idx = (el->Flags >> 4) & 0x1F;
+                            if (frv_idx >= 5) { el_idx = el->Next; continue; }
+                            int frv_ver = (el->Flags >> 9) & 0x07;
+                            if (frv_arr[frv_idx] != frv_ver) { el_idx = el->Next; continue; }
+
+                            int spr_w = spr->SWidth;
+                            int spr_h = spr->SHeight;
+                            int el_x = ((int)(el->X) >> 1) - off_x;
+                            int el_y = ((int)(el->Y) >> 1) - off_y;
+                            int flip_h = (el->Flags & 0x0001) != 0;
+
+                            if (spr_w > 0 && spr_h > 0 && spr_w <= 256 && spr_h <= 256) {
+                                uint8_t temp[256 * 256];
+                                uint8_t opq[256 * 256];
+                                memset(temp, 0, sizeof(temp));
+                                memset(opq, 0, sizeof(opq));
+                                if (hwr_rle_decode_opaque(spr->Data, temp, opq, spr_w, spr_h) == 0) {
+                                    /* Bake EVERY sprite at a fixed full brightness so that all
+                                     * instances of a sprite share one atlas slot regardless of
+                                     * their per-instance Brightness.  Brightness (and the
+                                     * angle-gated +15 bonus) is applied at draw time via
+                                     * bb->shade — see the fill block below.  Baking per-instance
+                                     * brightness here made identical sprites collide on one slot
+                                     * and all show whichever brightness baked first, and the
+                                     * angle-gated bonus re-baked them as they turned: the
+                                     * light/dark blink on walking/running characters. */
+                                    int bri = 60;
+                                    int use_remap = frv_idx != 4;
+                                    for (row = 0; row < spr_h && el_y + row < fh; row++) {
+                                        for (col = 0; col < spr_w && el_x + col < fw; col++) {
+                                            int idx = row * spr_w + col;
+                                            int dst_x = flip_h ? (el_x + spr_w - 1 - col) : (el_x + col);
+                                            int dst = ((el_y + row) * fw + dst_x) * 4;
+                                            int pixel = temp[idx];
+                                            if (use_remap)
+                                                pixel = pixmap.fade_table[bri * 256 + pixel];
+                                            if (opq[idx]) {
+                                                comp[dst + 0] = lbPaletteColors[pixel].r;
+                                                comp[dst + 1] = lbPaletteColors[pixel].g;
+                                                comp[dst + 2] = lbPaletteColors[pixel].b;
+                                                comp[dst + 3] = 255;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    el_idx = el->Next;
+                }
+
+                {
+                    int sf = hwr_lights_defaults().xbr_scale;
+                    uint8_t *reg_pixels = comp;
+                    int reg_w = fw, reg_h = fh;
+                    uint8_t *scaled = NULL;
+                    if (sf >= 2 && sf <= 4
+                        && fw * sf <= 4096 && fh * sf <= 4096)
+                    {
+                        int sw = fw * sf, sh = fh * sf;
+                        scaled = (uint8_t *)malloc((size_t)sw * sh * 4);
+                        if (scaled) {
+                        if (xbr_scale(comp, scaled, fw, fh, sf) == 0) {
+                            reg_pixels = scaled;
+                            reg_w = sw; reg_h = sh;
+                            hwr_xbr_count++;
+                        } else {
+                                free(scaled);
+                                scaled = NULL;
+                            }
+                        }
+                    }
+                    slot = hwr_atlas_register(key, reg_pixels, reg_w, reg_h);
+                    if (slot < 0 && reg_pixels != comp) {
+                        fprintf(stderr, "xbr FALLBACK: key=%08x 4x(%dx%d) failed, trying 1x(%dx%d)\n",
+                            key, reg_w, reg_h, fw, fh);
+                        slot = hwr_atlas_register(key, comp, fw, fh);
+                    }
+                    if (slot < 0)
+                        fprintf(stderr, "xbr FAIL: key=%08x slot<0 after fallback\n", key);
+                    if (scaled) free(scaled);
+                }
+                if (slot < 0)
+                    continue;
+            }
+
+            /* Fill billboard */
+            {
+                HwrBillboard *bb = &hwr_collected_billboards[hwr_collected_count];
+                float wx = (float)(thing->X >> 8);
+                float wy = (float)(thing->Y >> 5);
+                float wz = (float)(thing->Z >> 8);
+                bb->x = wx;
+                bb->y = wy;
+                bb->z = wz;
+                bb->sprite = (uint16_t)slot;
+                /* U_LightHead is only valid for SimpleThing pointers (static/effect
+                 * draw items).  Person draw items (PersV/PersB) have a struct Thing
+                 * as SrcItem where offset 48 is Timer1, not LightHead — reading it
+                 * would incorrectly set NOSHADOW and suppress blob shadows. */
+                int is_person = (itm->Type == HWR_DI_SFrmPersV
+                              || itm->Type == HWR_DI_SFrmPersB);
+                int is_emitter = (!is_person && thing && thing->U_LightHead > 0);
+                /* Sprites bake at a fixed brightness (above); apply the per-instance
+                 * Brightness here as the draw-time shade, including the angle-gated
+                 * +15 bonus.  Because this is per frame (not baked), identical
+                 * sprites no longer collide on one baked brightness and turning no
+                 * longer re-bakes/blinks. */
+                {
+                    int bonus = (frv_arr[4] != 0 && angle > 1 && angle < 7) ? 15 : 0;
+                    int sh = (int)ss->Brightness + bonus;
+                    if (sh < 10) sh = 10;
+                    if (sh > 75) sh = 75;
+                    bb->shade = (uint8_t)sh;
+                }
+                /* NOSHADOW (light emitters don't cast blob shadows) is a separate
+                 * shadow-casting concern, unrelated to brightness. */
+                bb->flags = is_emitter ? HWR_BILLBOARD_NOSHADOW : 0;
+                /* Dropped items sit at the same spot as the dead body that
+                 * dropped them; bias them toward the camera so they always draw
+                 * on top and stay easy to click. */
+                if (itm->Type == HWR_DI_SFrmStatc && thing->Type == HWR_SMTT_DROPPED_ITEM)
+                    bb->flags |= HWR_BILLBOARD_ONTOP;
+                {
+                float sc = (float)snap.scale;
+                if (sc <= 0.0f) sc = 256.0f;
+                float rnorm = sqrtf((float)snap.D14 * snap.D14 + (float)snap.D10 * snap.D10);
+                float res_scale = (sw_view_h > 0) ? (float)sw_view_h / 480.0f : 1.0f;
+                if (rnorm > 0.001f && snap.D1C != 0) {
+                    bb->half_size_x = (float)fw * 100663296.0f / (sc * rnorm) * 0.85f * res_scale;
+                    bb->half_size_y = (float)fh * 100663296.0f / (sc * (float)snap.D1C) * 0.85f * res_scale;
+                } else {
+                    bb->half_size_x = (float)fw * 18.0f * 0.85f * res_scale;
+                    bb->half_size_y = (float)fh * 18.0f * 0.85f * res_scale;
+                }
+                /* Shift billboard up by half-height so feet (at comp bottom) align
+                 * with the thing's world Y (feet position), not the quad centre. */
+                bb->y += bb->half_size_y;
+            }
+            hwr_collected_count++;
+                hwr_sprite_skip_mask[ss_idx >> 3] |= (uint8_t)(1 << (ss_idx & 7));
+            }
+        }
+    }
+
+    /* ---- KP-7 one-shot debug dump (xBR/billboard stats) ---- */
+    {
+        static int prev_kp7 = 0;
+        const Uint8 *keys = SDL_GetKeyboardState(NULL);
+        int kp7 = keys ? keys[SDL_SCANCODE_KP_7] : 0;
+        if (kp7 && !prev_kp7) {
+            FILE *df = fopen("fx3d_sprites_debug.txt", "w");
+            if (df) {
+                int di;
+                int xbr_sf = hwr_lights_defaults().xbr_scale;
+                fprintf(df, "xbr_scale=%d  xbr_active=%s\n", xbr_sf, xbr_sf > 0 ? "YES" : "NO");
+                fprintf(df, "=== One-shot frame ===  xbr_done=%d\n", hwr_xbr_count);
+                fprintf(df, "cam: xc=%d yc=%d zc=%d D14=%d D1C=%d D10=%d D18=%d D3C=%d D40=%d scale=%d persp=%d\n",
+                    snap.xc, snap.yc, snap.zc, snap.D14, snap.D1C, snap.D10, snap.D18,
+                    snap.D3C, snap.D40, snap.scale, snap.persp);
+                fprintf(df, "collected: %d   eligible=%d passed=%d next_draw_item=%d next_sort_sprite=%d\n",
+                    hwr_collected_count, hwr_eligible_count, hwr_passed_count, next_draw_item, next_sort_sprite);
+                for (di = 0; di < hwr_collected_count && di < 10; di++) {
+                    fprintf(df, " [%d]: pos=(%.0f,%.0f,%.0f) hw=%.0f hh=%.0f slot=%d shade=%d\n",
+                        di, hwr_collected_billboards[di].x, hwr_collected_billboards[di].y,
+                        hwr_collected_billboards[di].z,
+                        hwr_collected_billboards[di].half_size_x,
+                        hwr_collected_billboards[di].half_size_y,
+                        (int)hwr_collected_billboards[di].sprite,
+                        (int)hwr_collected_billboards[di].shade);
+                }
+                fprintf(df, "skip_mask[0..7]:");
+                for (di = 0; di < 8 && di < (int)((next_sort_sprite + 7) / 8); di++)
+                    fprintf(df, " %02x", hwr_sprite_skip_mask[di]);
+                fprintf(df, "\n  suppress=%d\n", (int)engine_hwr_suppress_sprites);
+                fclose(df);
+            }
+        }
+        prev_kp7 = kp7;
+    }
+}
 
 void hwr_sw_capture(void)
 {
@@ -227,10 +633,6 @@ int hwr_sw_camera_snapshot(int32_t *xc, int32_t *yc, int32_t *zc,
     *persp = snap.persp;
     return 1;
 }
-
-/* Viewport, supplied by the host at creation time. */
-static int sw_view_w = 0;
-static int sw_view_h = 0;
 
 /* --- Floor geometry buffers (rebuilt each frame) --- */
 #define HWR_FLOOR_MAX_TILES 16384       /* up to 127x127 visible tiles (full map) */
@@ -258,6 +660,10 @@ static int clampi(int v, int lo, int hi)
 {
     return v < lo ? lo : (v > hi ? hi : v);
 }
+
+/* Linear (monotonic) screen depth for a world point; defined below, used by the
+ * floor builder so floor corners share the faces' z-buffer scale. */
+static float face_scrd(float wx, float wy, float wz);
 
 static int16_t tile_alt(int gx, int gz)
 {
@@ -403,25 +809,6 @@ static int sw_get_floor(void *ctx, HwrGeometryBatch *out)
             }
             tx = &game_textures[texidx];
 
-            /* Per-tile depth: scrd at the tile centre, with perspective mod.
-             * All 4 vertices share the same depth so tiles sort as flat units,
-             * matching the SW bucket sort and preventing ground tiles that are
-             * closer horizontally from hiding elevated ledge tiles above them. */
-    {
-                float tdx = (float)(((gx << 8) + 128) - snap.xc);
-                float tdz = (float)(((gz << 8) + 128) - snap.zc);
-                float talt = (float)(8 * tile_alt(gx, gz));
-                float tdy = talt - (float)(8 * snap.yc);
-                float tfb = ((float)snap.D10 * tdx + (float)snap.D14 * tdz) / 65536.0f;
-                /* Linear depth (no perspective clamp) so floor and faces share a
-                 * monotonic z-buffer scale; see face_scrd(). */
-                float td  = ((float)snap.D18 * tdy + (float)snap.D1C * tfb) / 65536.0f;
-                floor_verts[floor_vert_count + 0].tile_depth =
-                floor_verts[floor_vert_count + 1].tile_depth =
-                floor_verts[floor_vert_count + 2].tile_depth =
-                floor_verts[floor_vert_count + 3].tile_depth = td;
-            }
-
             base = floor_vert_count;
             v = &floor_verts[base];
             /* Corner positions: v[0]=(gx,gz), v[1]=(gx+1,gz),
@@ -430,6 +817,14 @@ static int sw_get_floor(void *ctx, HwrGeometryBatch *out)
             v[1].x = (float)((gx+1) << 8); v[1].z = (float)(gz << 8);     v[1].y = (float)(8 * corner_alt(gx, gz, gx+1, gz));
             v[2].x = (float)((gx+1) << 8); v[2].z = (float)((gz+1) << 8); v[2].y = (float)(8 * corner_alt(gx, gz, gx+1, gz+1));
             v[3].x = (float)(gx << 8);     v[3].z = (float)((gz+1) << 8); v[3].y = (float)(8 * corner_alt(gx, gz, gx,   gz+1));
+            /* Per-vertex linear depth (no perspective clamp), matching the face
+             * pass so floor and buildings share one monotonic z-buffer scale.
+             * Per-corner (not per-tile-centre) so a tile's far edge reports its
+             * true depth and no longer pokes through walls standing on it. */
+            v[0].tile_depth = face_scrd(v[0].x, v[0].y, v[0].z);
+            v[1].tile_depth = face_scrd(v[1].x, v[1].y, v[1].z);
+            v[2].tile_depth = face_scrd(v[2].x, v[2].y, v[2].z);
+            v[3].tile_depth = face_scrd(v[3].x, v[3].y, v[3].z);
             /* UV mapping derived from draw_floor_tile1a / set_floor_texture_uv:
              *   v[0](gx,gz)     → TMap4
              *   v[1](gx+1,gz)   → TMap3
@@ -726,33 +1121,66 @@ static int sw_get_lights(void *ctx, HwrLight *out, int max)
     static int cached_type[HWR_THING_CACHE_LEN];
     static int cached_sub[HWR_THING_CACHE_LEN];
     static int cached_valid = 0;
+    static short cached_level = -1;
+    static unsigned short cached_map = 0xFFFF;
     {
         int nfl = (int)next_full_light;
         if (nfl > HWR_THING_CACHE_LEN) nfl = HWR_THING_CACHE_LEN;
-        memset(cached_type, 0, sizeof(cached_type));
-        memset(cached_sub, 0, sizeof(cached_sub));
+        /* The cache is keyed by light array index, which is NOT stable within a
+         * frame's worth of work: process_temp_light() appends randomized flicker
+         * lights every tick, growing/shrinking next_full_light and mutating the
+         * NextFull chains, so the SimpleThing→light traversal resolves a given
+         * static lamp's index only INTERMITTENTLY.  If we cleared and rebuilt the
+         * cache every frame, a streetlamp would flip between its owner-derived
+         * category (when the traversal happened to reach it) and the intensity
+         * fallback (when it didn't) — visible as cyclic brightness flashing.
+         *
+         * Fix: PERSIST the cache across frames.  Clear it only on level change;
+         * otherwise just overwrite the entries the traversal positively resolves
+         * this frame and leave previously-resolved entries intact.  Once a lamp
+         * is classified by ownership it stays classified, killing the flicker. */
+        if (cached_level != current_level || cached_map != current_map) {
+            memset(cached_type, 0, sizeof(cached_type));
+            memset(cached_sub, 0, sizeof(cached_sub));
+            cached_level = current_level;
+            cached_map   = current_map;
+        }
         /* Only LightHead ownership determines a light's type for category
          * purposes.  We DO NOT traverse faces here: a face references a
          * light for illumination, not ownership.  Unconnected lights (no
          * SimpleThing LightHead chain) fall back to intensity-based
-         * category in the output loop below. */
-        /* Override with LightHead ownership: the SimpleThing that OWNS
-         * a FullLight (via LightHead→NextFull chain) determines its type,
-         * NOT the objects whose faces reference it for illumination.
-         * STHINGS_LIMIT = 1500 — do NOT go past this or garbage data can
-         * overwrite valid cached_type entries for real lights. */
+         * category in the output loop below.
+         * The SimpleThing that OWNS a FullLight (via LightHead→NextFull chain)
+         * determines its type.  STHINGS_LIMIT = 1500 — do NOT go past this or
+         * garbage data can overwrite valid cached_type entries for real lights. */
         {
             extern char *things;
             int max_si = 1500;
             for (int si = 1; si < max_si; si++) {
                 struct HwrSimpleThingMini *st = (struct HwrSimpleThingMini *)((char *)things - si * 60);
                 if (st->Type == 0 || st->U_LightHead == 0) continue;
+                int new_has_cat = (hwr_thing_category_get(st->Type, st->SubType) >= 1);
                 int fidx = st->U_LightHead;
                 int visited = 0;
                 while (fidx > 0 && fidx < (uint16_t)nfl) {
                     if (st->Type > 0) {
-                        cached_type[fidx] = st->Type;
-                        cached_sub[fidx]  = st->SubType;
+                        /* Multiple SimpleThings can chain to the same light index
+                         * (a real lamp Thing AND e.g. a passing unit whose
+                         * U_LightHead garbage-chains into it).  If we let the last
+                         * writer win every frame, the resolved category oscillates
+                         * → visible cyclic flashing.  Resolution priority, applied
+                         * stably so a given light locks to one owner:
+                         *   1. an owner whose (Type,SubType) has a CONFIGURED
+                         *      category ([thing_categories]) always wins and sticks;
+                         *   2. otherwise first writer wins (never overwritten). */
+                        int cur = cached_type[fidx];
+                        int cur_has_cat = cur
+                            ? (hwr_thing_category_get(cur, cached_sub[fidx]) >= 1)
+                            : 0;
+                        if (cur == 0 || (new_has_cat && !cur_has_cat)) {
+                            cached_type[fidx] = st->Type;
+                            cached_sub[fidx]  = st->SubType;
+                        }
                     }
                     fidx = game_full_lights[fidx].NextFull;
                     if (++visited > 100) break;
@@ -773,12 +1201,13 @@ static int sw_get_lights(void *ctx, HwrLight *out, int max)
     for (i = 1; i < (int)next_full_light; i++) {
         struct HwrFullLight *fl = &game_full_lights[i];
         int dx, dz, d2, worst;
-        /* Intensity is signed: negative lights are "anti-lights" the original
-         * used to subtract light and fake shadows. shadow_strength <= 0 disables
-         * them so they do not even consume light-selection slots. */
-        if (fl->Intensity == 0)
+        /* Use TrueIntensity (stable, pre-animation) for selection so lights
+         * don't pop in/out of the 64-slot uniform when ASM_unkn_update_lights
+         * oscillates their animated Intensity.  The output loop below sets
+         * radius=0 when Intensity==0 so the shader silently skips dimmed lights. */
+        if (fl->TrueIntensity == 0)
             continue;
-        if (fl->Intensity < 0 && sstr <= 0.0f)
+        if (fl->TrueIntensity < 0 && sstr <= 0.0f)
             continue;
         dx = (int)fl->X - cx;
         dz = (int)fl->Z - cz;
@@ -807,33 +1236,56 @@ static int sw_get_lights(void *ctx, HwrLight *out, int max)
         out[i].x = (float)fl->X + 70.0f;    /* 70 PRC east */
         out[i].y = (float)fl->Y;
         out[i].z = (float)fl->Z + 50.0f;    /* 50 PRC south */
-        if (fl->Intensity < 0) {
+        if (fl->TrueIntensity < 0) {
             /* Anti-light: shader reads .r as the darkening amount and the
-             * negative radius as the flag. Scale by |Intensity| vs the ~64 the
-             * level's lamps use, times the global shadow strength. */
-            int ai = -(int)fl->Intensity;
+             * negative radius as the flag. Use TrueIntensity (stable,
+             * pre-animation value) to avoid flickering from ASM_unkn_update_lights.
+             * Check TrueIntensity (not Intensity) so animated oscillation can't
+             * flip a positive light into anti-light mode mid-cycle. */
+            int ai = -(int)fl->TrueIntensity;
             out[i].r = out[i].g = out[i].b = sstr * ((float)ai / 64.0f);
-            /* Inverse-square attenuation constant: Intensity * 34019 (= 1088608/32)
+            /* Inverse-square attenuation constant: TrueIntensity * 34019
              * matching the SW super-quick-light formula. rmul/21 normalises so
              * ini radius=21 gives exact SW behaviour. */
             out[i].radius = -((float)ai * 34019.0f * (rmul / 21.0f) * col.intensity_scale);
+            out[i].max_dist2 = 4194304.0f * (rmul / 21.0f);
         } else {
-            /* Category from LightHead owner's Thing (Type,SubType). */
+            /* Category from LightHead owner's Thing (Type,SubType).
+             * When ownership cannot be determined (no SimpleThing traces to
+             * this light), fall back to intensity-based classification matching
+             * the SW engine: filler/intensity ≤ 50, building ≤ 200, street > 200. */
             HwrLightDefaults ld = hwr_lights_defaults();
-            int intens = (int)fl->Intensity;
             int lidx = nearest[i].idx;
-            int cat = 0; /* 0=auto, 1=filler, 2=building, 3=street */
-            float cat_bright = ld.filler_brightness;
-            if (cached_valid && lidx > 0 && lidx < HWR_THING_CACHE_LEN) {
-                int tt = cached_type[lidx], ts = cached_sub[lidx];
+            int cat = 0; /* 1=filler, 2=building, 3=street */
+            /* Intensity-based classification is the DETERMINISTIC default,
+             * matching the SW engine. We must NOT depend on whether the
+             * per-frame SimpleThing→LightHead traversal happened to tag this
+             * light index this frame: process_temp_light() appends randomized
+             * flicker lights every tick, so next_full_light and the tail of
+             * game_full_lights shuffle, making cached_type[lidx] unstable.
+             * Keying brightness off it caused lights (e.g. streetlamps) to
+             * cycle on/off as the traversal hit or missed their index. */
+            {
+                int intens = (int)fl->TrueIntensity;
+                if (intens <= ld.filler_maxint)        cat = 1;
+                else if (intens <= ld.building_maxint)  cat = 2;
+                else                                    cat = 3;
+            }
+            /* An explicit (Type,SubType) category override REPLACES the
+             * intensity default, but only when one is actually set (oc>=1).
+             * oc==0 means "no override" and must leave the intensity result
+             * intact — never force the light to filler/0.0. */
+            {
+                int tt = (cached_valid && lidx > 0 && lidx < HWR_THING_CACHE_LEN)
+                         ? cached_type[lidx] : 0;
                 if (tt > 0) {
-                    int oc = hwr_thing_category_get(tt, ts);
-                    if (oc >= 1 && oc <= 3) { cat = oc; }
-                    if (oc == 1) cat_bright = ld.filler_brightness;
-                    else if (oc == 2) cat_bright = ld.building_brightness;
-                    else if (oc == 3) cat_bright = ld.street_brightness;
+                    int oc = hwr_thing_category_get(tt, cached_sub[lidx]);
+                    if (oc >= 1 && oc <= 3) cat = oc;
                 }
             }
+            float cat_bright = (cat == 1) ? ld.filler_brightness
+                             : (cat == 2) ? ld.building_brightness
+                                          : ld.street_brightness;
             /* Per-category radius factor.
              * cat_radius / 21 normalises to the SW standard (21 = exact original). */
             float cat_radius = ld.filler_radius;
@@ -844,19 +1296,25 @@ static int sw_get_lights(void *ctx, HwrLight *out, int max)
             out[i].r = col.r * col.brightness * cat_bright;
             out[i].g = col.g * col.brightness * cat_bright;
             out[i].b = col.b * col.brightness * cat_bright;
-            out[i].radius = (float)fl->Intensity * 34019.0f * radius_scale * col.intensity_scale;
+            /* Use TrueIntensity (stable, pre-animation) for the radius so the
+             * light pool size doesn't oscillate with ASM_unkn_update_lights(). */
+            out[i].radius = (float)fl->TrueIntensity * 34019.0f * radius_scale * col.intensity_scale;
             /* Per-light distance cull scales with the per-category radius.
              * 4194304 = (8 tiles * 256 PRC/tile)² at default radius_scale=1. */
             out[i].max_dist2 = 4194304.0f * radius_scale;
         }
     }
+
     return nnearest;
 }
 
 static int sw_get_sprites(void *ctx, HwrBillboard *out, int max)
 {
-    (void)ctx; (void)out; (void)max;
-    return 0;   /* Phase 6 */
+    int n = hwr_collected_count;
+    if (n > max) n = max;
+    if (n > 0 && out != NULL)
+        memcpy(out, hwr_collected_billboards, (size_t)n * sizeof(HwrBillboard));
+    return n;
 }
 
 static const uint8_t *sw_get_palette(void *ctx)

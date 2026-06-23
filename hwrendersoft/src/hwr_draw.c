@@ -53,3 +53,5 @@ void hwr_draw_frame(void)
 
     hwr_gl_check("hwr_draw_frame");
 }
+
+/* hwr_sprites_render / hwr_sprites_reset live in hwr_sprite.c */

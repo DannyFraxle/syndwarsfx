@@ -62,7 +62,8 @@ static HwrLightDefaults hwr_defaults = {
     0,              /* sun_debug */
     0.0f,           /* sun_haze (crisp shadow edges) */
     0,              /* light_debug */
-    0,              /* thingno_debug */
+     0,              /* thingno_debug */
+     0,              /* sprite_debug */
     /* Per-category brightness: fillers off, buildings moderate, streetlamps vivid */
     0.0f,           /* filler_brightness (0% — fillers off entirely) */
     0.3f,           /* building_brightness (30% — dim building pools) */
@@ -70,6 +71,9 @@ static HwrLightDefaults hwr_defaults = {
     21.0f,          /* filler_radius (21 = SW default) */
     21.0f,          /* building_radius (21 = SW default) */
     21.0f,          /* street_radius (21 = SW default) */
+    50,             /* filler_maxint — Intensity ≤ 50 = filler */
+    200,            /* building_maxint — Intensity ≤ 200 = building, > 200 = street */
+    0,              /* xbr_scale — off by default */
 };
 
 static void table_defaults(void)
@@ -95,7 +99,7 @@ void hwr_lights_clear(void)
 }
 
 /* Section ids for the simple line-by-line parser. */
-enum { SEC_NONE = 0, SEC_LIGHTS, SEC_DEFAULTS, SEC_SSAO, SEC_SUN, SEC_CATEGORIES };
+enum { SEC_NONE = 0, SEC_LIGHTS, SEC_DEFAULTS, SEC_SSAO, SEC_SUN, SEC_CATEGORIES, SEC_SPRITES };
 
 static void parse_sun_line(const char *p)
 {
@@ -215,6 +219,14 @@ static void parse_default_line(const char *p)
     } else if (sscanf(p, "street_radius = %f", &fv) == 1) {
         if (fv < 1.0f) fv = 1.0f;
         hwr_defaults.street_radius = fv;
+    } else if (sscanf(p, "filler_maxint = %d", &iv) == 1) {
+        if (iv < 0) iv = 0;
+        if (iv > 1000) iv = 1000;
+        hwr_defaults.filler_maxint = iv;
+    } else if (sscanf(p, "building_maxint = %d", &iv) == 1) {
+        if (iv < 0) iv = 0;
+        if (iv > 5000) iv = 5000;
+        hwr_defaults.building_maxint = iv;
     } else if (sscanf(p, "thingno_debug = %d", &iv) == 1) {
         hwr_defaults.thingno_debug = (iv != 0) ? 1 : 0;
     }
@@ -227,6 +239,19 @@ static void parse_categories_line(const char *p)
     if (sscanf(p, "%d:%d = %d", &t, &s, &c) == 3) {
         if (t >= 0 && t < 256 && s >= 0 && s < 256 && c >= 0 && c <= 3)
             hwr_thing_cats[t][s] = (unsigned char)c;
+    }
+}
+
+static void parse_sprites_line(const char *p)
+{
+    int iv;
+    if (sscanf(p, "sprite_debug = %d", &iv) == 1) {
+        hwr_defaults.sprite_debug = (iv != 0) ? 1 : 0;
+    } else if (sscanf(p, "xbr_scale = %d", &iv) == 1) {
+        if (iv < 0) iv = 0;
+        if (iv == 1) iv = 0;
+        if (iv > 4) iv = 4;
+        hwr_defaults.xbr_scale = iv;
     }
 }
 
@@ -339,6 +364,8 @@ void hwr_lights_load(const char *path)
                 section = SEC_SUN;
             else if (strncmp(p, "[thing_categories]", 18) == 0)
                 section = SEC_CATEGORIES;
+            else if (strncmp(p, "[sprites]", 9) == 0)
+                section = SEC_SPRITES;
             else
                 section = SEC_NONE;
             continue;
@@ -365,6 +392,8 @@ void hwr_lights_load(const char *path)
             }
         } else if (section == SEC_CATEGORIES) {
             parse_categories_line(p);
+        } else if (section == SEC_SPRITES) {
+            parse_sprites_line(p);
         }
     }
     fclose(f);
@@ -399,6 +428,8 @@ static void write_defaults(FILE *out)
         "filler_radius      = %.0f\n"
         "building_radius    = %.0f\n"
         "street_radius      = %.0f\n"
+        "filler_maxint      = %d\n"
+        "building_maxint    = %d\n"
         "thingno_debug      = %d\n",
         hwr_defaults.intensity * 100.0f,
         hwr_defaults.radius,
@@ -415,6 +446,8 @@ static void write_defaults(FILE *out)
         hwr_defaults.filler_radius,
         hwr_defaults.building_radius,
         hwr_defaults.street_radius,
+        hwr_defaults.filler_maxint,
+        hwr_defaults.building_maxint,
         hwr_defaults.thingno_debug);
 }
 

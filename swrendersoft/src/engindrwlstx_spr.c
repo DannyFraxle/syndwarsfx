@@ -18,6 +18,7 @@
  */
 /******************************************************************************/
 #include "engindrwlstx.h"
+#include "enginbckt.h"
 
 #include <assert.h>
 
@@ -616,6 +617,55 @@ void draw_sort_sprite_frame_pers_b(int sspr)
     draw_sorted_sprite1a(p_sspr->Frame, p_sspr->X, p_sspr->Y, p_sspr->Brightness);
 
     screen_sorted_sprite_persn_render_cb(sspr);
+}
+
+/* FX3D: run a sprite's mouse-pick callback WITHOUT drawing it.
+ * The pick tests (check_mouse_overlap*) are normally a side effect of the SW
+ * sprite draw, which the FX3D renderer suppresses (sprites become HW
+ * billboards).  Without this the cursor never registers a thing, so targeting
+ * and selection silently break.  We reproduce the bounding-box origin
+ * (word_1A5834/5836) that the draw routines compute from the frame's elements,
+ * then invoke the very same render callback the draw would have. */
+void hwr_run_sprite_pick(ushort sspr, ubyte ditype)
+{
+    struct SortSprite *p_sspr;
+    struct Frame *p_frm;
+    struct Element *p_elem;
+    ushort el;
+
+    p_sspr = &game_sort_sprites[sspr];
+    p_frm = &frame[p_sspr->Frame];
+
+    word_1A5834 = 120;
+    word_1A5836 = 120;
+    el = p_frm->FirstElement;
+    for (p_elem = &melement_ani[el]; p_elem > melement_ani; p_elem = &melement_ani[el])
+    {
+        struct TbSprite *p_spr;
+        el = p_elem->Next;
+        p_spr = (struct TbSprite *)((ubyte *)m_sprites + p_elem->ToSprite);
+        if ((p_spr <= m_sprites) || (p_spr >= m_sprites_end))
+            continue;
+        if (word_1A5834 > p_elem->X >> 1)
+            word_1A5834 = p_elem->X >> 1;
+        if (word_1A5836 > p_elem->Y >> 1)
+            word_1A5836 = p_elem->Y >> 1;
+    }
+
+    switch (ditype)
+    {
+    case DrIT_SFrmStatc:
+        if (screen_sorted_sprite_statc_render_cb != NULL)
+            screen_sorted_sprite_statc_render_cb(sspr);
+        break;
+    case DrIT_SFrmPersV:
+    case DrIT_SFrmPersB:
+        if (screen_sorted_sprite_persn_render_cb != NULL)
+            screen_sorted_sprite_persn_render_cb(sspr);
+        break;
+    default:
+        break;
+    }
 }
 
 void draw_sort_sprite_frame_efct_v(int sspr)

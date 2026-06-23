@@ -54,6 +54,7 @@ typedef struct {
     float sun_haze;         /**< 0..1: haze/atmospheric scatter; higher = softer, less defined shadows. */
     int   light_debug;      /**< 1 = write fx3d_light_ids.txt with all light IDs in current level. */
     int   thingno_debug;     /**< 1 = overlay ThingNo labels on all in-game objects. */
+    int   sprite_debug;       /**< 1 = overlay sprite debug labels on billboards. */
     /* Per-category brightness + radius ([defaultlighting]).
      * Category is determined by the Thing (Type,SubType) mapping from
      * LightHead-connected lights. Unconnected lights default to filler. */
@@ -63,6 +64,9 @@ typedef struct {
     float filler_radius;        /**< Radius multiplier for filler category */
     float building_radius;      /**< Radius multiplier for building category */
     float street_radius;        /**< Radius multiplier for street category */
+    int   filler_maxint;        /**< Intensity threshold: <= this => filler */
+    int   building_maxint;      /**< Intensity threshold: <= this => building, > => street */
+    int   xbr_scale;            /**< 0=off, 2=2x, 3=3x, 4=4x upscale via xBR */
 } HwrLightDefaults;
 
 /** Reset every entry to white (1,1,1) at scale 1.0 and defaults to sane values. */

@@ -121,12 +121,23 @@ extern ubyte engine_render_lights;
  * execution so the FX3D hardware renderer can draw them as 3D geometry. */
 extern int engine_hwr_suppress_faces;
 
+/* When nonzero, Thing-based sprite draw items (persons, statics, vehicles)
+ * are skipped during drawlist execution so the FX3D hardware renderer can
+ * draw them as camera-facing billboards. The hwr_sprite_skip_mask bitset
+ * identifies which SortSprite indices were collected. */
+extern int engine_hwr_suppress_sprites;
+extern unsigned char hwr_sprite_skip_mask[256];
+
 extern short word_1A5834;
 extern short word_1A5836;
 
 extern ScreenTriangleRenderCallback screen_position_face_render_cb;
 extern ScreenSortSpriteRenderCallback screen_sorted_sprite_statc_render_cb;
 extern ScreenSortSpriteRenderCallback screen_sorted_sprite_persn_render_cb;
+
+/** FX3D: run a sprite's mouse-pick callback without drawing it (used when the
+ * SW sprite draw is suppressed because the sprite is rendered as a HW billboard). */
+void hwr_run_sprite_pick(ushort sspr, ubyte ditype);
 /******************************************************************************/
 
 void draw_frame_scaled_alpha(int scr_x, int scr_y, ushort frm,

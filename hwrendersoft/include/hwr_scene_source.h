@@ -86,15 +86,20 @@ typedef struct {
 
 /** A camera-facing billboard sprite (a Thing). pos is the world anchor;
  *  sprite indexes into the atlas; shade is a 0..255 brightness; flags carries
- *  per-sprite hints (bit0 = translucent -> deferred to the Phase 7 pass). */
+ *  per-sprite hints (bit0 = translucent -> deferred to the Phase 7 pass).
+ *  half_size_x/y are the world-space half-extents of the billboard quad
+ *  (the quad corners are at center ± half_size in the camera-facing plane). */
 typedef struct {
     float    x, y, z;
     uint16_t sprite;
     uint8_t  shade;
     uint8_t  flags;
+    float    half_size_x, half_size_y;
 } HwrBillboard;
 
 #define HWR_BILLBOARD_TRANSLUCENT 0x01
+#define HWR_BILLBOARD_NOSHADOW   0x02   /* light sources — skip shadow casting */
+#define HWR_BILLBOARD_ONTOP      0x04   /* depth-bias toward camera (e.g. dropped items over bodies) */
 
 /** Pull interface implemented per game title. All getters return the number of
  *  items produced (>=0) or a negative value on error. The backend calls

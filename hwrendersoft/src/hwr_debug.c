@@ -576,3 +576,61 @@ void hwr_thingno_render(void)
 skip_lights:
     dbg_render(vbuf, nv, 1.0f, 0.0f, 0.0f); /* red = FullLights */
 }
+
+/* ---- Sprite billboard debug overlay ------------------------------------- */
+static int dbg_sprites_enabled = 0;
+
+void hwr_sprites_debug(int enable)
+{
+    dbg_sprites_enabled = enable;
+}
+
+void hwr_sprites_debug_render(void)
+{
+    int vw, vh;
+    HwrBillboard bb_buf[256];
+    int count, i;
+    char line[64];
+
+    if (!dbg_sprites_enabled)
+        return;
+    if (!dbg_ready && dbg_init() != HWR_OK)
+        return;
+
+    hwr_drawable_size(&vw, &vh);
+    if (vw <= 0 || vh <= 0 || hwr_source == NULL)
+        return;
+
+    count = hwr_source->get_sprites(hwr_source->ctx, bb_buf, 256);
+    if (count <= 0)
+        return;
+
+    {
+        float vbuf[DBG_MAX_VERTS * 4];
+        int nv = 0;
+
+        /* Draw labels at each billboard's projected screen position */
+        for (i = 0; i < count && i < 200; i++) {
+            float sx, sy;
+            if (!dbg_project(bb_buf[i].x, bb_buf[i].y, bb_buf[i].z, &sx, &sy))
+                continue;
+            if (sx < -100.0f || sx > (float)vw + 100.0f ||
+                sy < -100.0f || sy > (float)vh + 100.0f)
+                continue;
+            dbg_emit_label(vbuf, &nv, sx, sy, (float)vw, (float)vh, i);
+        }
+        dbg_render(vbuf, nv, 0.0f, 1.0f, 0.0f); /* green = sprite labels */
+
+        /* Draw a corner panel with summary + first 3 positions */
+        nv = 0;
+        sprintf(line, "SPRITES: %d", count);
+        dbg_emit_text(vbuf, &nv, 4.0f, 4.0f, line, (float)vw, (float)vh);
+        for (i = 0; i < count && i < 3; i++) {
+            sprintf(line, " [%d] (%.0f %.0f %.0f) hw=%.0f",
+                i, bb_buf[i].x, bb_buf[i].y, bb_buf[i].z, bb_buf[i].half_size_x);
+            dbg_emit_text(vbuf, &nv, 4.0f, 4.0f + (float)(i + 1) * 10.0f,
+                line, (float)vw, (float)vh);
+        }
+        dbg_render(vbuf, nv, 0.0f, 1.0f, 1.0f); /* cyan = panel */
+    }
+}

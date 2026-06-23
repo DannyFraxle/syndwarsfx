@@ -90,6 +90,14 @@ int hwr_floor_render(const uint8_t *pal8, int filter_linear);
  *  Returns nonzero if anything was drawn. Does not clear or swap. */
 int hwr_faces_render(const uint8_t *pal8, int filter_linear);
 
+/** Render sprite billboards for this frame (Phase 6). Pulls billboard data
+ *  from the bound scene source's get_sprites callback. Call after the floor
+ *  and face passes, before SSAO resolve. Returns nonzero if anything drew. */
+int hwr_sprites_render(const uint8_t *pal8, int filter_linear);
+
+/** Drop cached sprite atlas and state; call on level change. */
+void hwr_sprites_reset(void);
+
 /** Drop cached floor GPU art (texture pages); call on level change. */
 void hwr_floor_reset(void);
 
@@ -161,6 +169,10 @@ float hwr_sun_bias(void);
 int   hwr_sun_debug(void);
 float hwr_sun_haze(void);
 
+/** Return the world-space direction vector toward the sun (normalised).
+ *  Used by the sprite shadow system for sun-projected shadows. */
+void hwr_sun_get_direction(float *dx, float *dy, float *dz);
+
 /** Report the GL drawable size in pixels (what the scene renders into). Writes
  *  0,0 if unavailable. Used to size the SSAO G-buffer to match the viewport. */
 void hwr_drawable_size(int *w, int *h);
@@ -181,6 +193,13 @@ void hwr_thingno_debug(int enable);
 /** Render the ThingNo overlay. Call after the 3D passes (floor + faces) but
  *  before the HUD / present, so text appears on top of the scene. */
 void hwr_thingno_render(void);
+
+/* ---- Sprite debug overlay ------------------------------------------------ */
+/** Enable/disable the sprite debug overlay (0=off, 1=on). */
+void hwr_sprites_debug(int enable);
+
+/** Render the sprite debug overlay. Call after hwr_sprites_render. */
+void hwr_sprites_debug_render(void);
 
 /** Swap the GL back buffer to the screen. */
 void hwr_present(void);

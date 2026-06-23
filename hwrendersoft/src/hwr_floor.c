@@ -108,6 +108,10 @@ static const char *floor_frag_src =
     "uniform int   uSunPCF;              // PCF kernel half-radius (texels)\n"
     "uniform int   uSunDebug;            // 1 = greyscale lit factor\n"
     "uniform float uSunHaze;             // 0..1 atmospheric scatter (softens shadow edges)\n"
+    "uniform int uFilter;                // 0 = nearest, 1 = palette-correct bilinear\n"
+    "vec3 pal_lookup(int idx) {\n"
+    "    return texture(uPalette, vec2((float(idx) + 0.5) / 256.0, 0.5)).rgb;\n"
+    "}\n"
     "void main(){\n"
     "    fragPos = vec4(vWorldPos, vScrd);   // G-buffer attachment 1\n"
     "    vec3 light_col = vec3(0.0);\n"
@@ -165,11 +169,30 @@ static const char *floor_frag_src =
     "        frag = vec4(vec3(0.55) * light_col, 1.0);\n"
     "        return;\n"
     "    }\n"
+    "    // Nearest: single texel with GL_NEAREST, key check first\n"
     "    int idx = int(texture(uTex, vUV).r * 255.0 + 0.5);\n"
     "    if (uTransKey >= 0 && idx == uTransKey)\n"
-    "        discard;                     // see through windows/grates to faces behind\n"
-    "    vec3 c = texture(uPalette, vec2((float(idx) + 0.5) / 256.0, 0.5)).rgb;\n"
-    "    frag = vec4(c * light_col, 1.0);\n"
+    "        discard;\n"
+    "    if (uFilter == 1) {\n"
+    "        // Palette-correct bilinear: sample 4 nearest integer texels via\n"
+    "        // texelFetch (bypasses GL filtering), convert each to RGB through\n"
+    "        // the palette, then bilinear blend in RGB space.\n"
+    "        int page = int(vUV.z);\n"
+    "        vec2 tc = vUV.xy * 256.0 - 0.5;\n"
+    "        ivec2 uv0 = ivec2(floor(tc));\n"
+    "        vec2  f = fract(tc);\n"
+    "        ivec2 uv1 = min(uv0 + 1, ivec2(255));\n"
+    "        int i00 = int(texelFetch(uTex, ivec3(uv0.x, uv0.y, page), 0).r * 255.0 + 0.5);\n"
+    "        int i10 = int(texelFetch(uTex, ivec3(uv1.x, uv0.y, page), 0).r * 255.0 + 0.5);\n"
+    "        int i01 = int(texelFetch(uTex, ivec3(uv0.x, uv1.y, page), 0).r * 255.0 + 0.5);\n"
+    "        int i11 = int(texelFetch(uTex, ivec3(uv1.x, uv1.y, page), 0).r * 255.0 + 0.5);\n"
+    "        vec3 c = mix(mix(pal_lookup(i00), pal_lookup(i10), f.x),\n"
+    "                     mix(pal_lookup(i01), pal_lookup(i11), f.x), f.y);\n"
+    "        frag = vec4(c * light_col, 1.0);\n"
+    "    } else {\n"
+    "        vec3 c = pal_lookup(idx);\n"
+    "        frag = vec4(c * light_col, 1.0);\n"
+    "    }\n"
     "}\n";
 
 static GLuint fl_prog = 0;
@@ -196,9 +219,10 @@ static GLint  fl_loc_sun_enable = -1;
 static GLint  fl_loc_sun_pcf   = -1;
 static GLint  fl_loc_sun_debug = -1;
 static GLint  fl_loc_sun_haze  = -1;
+static GLint  fl_loc_filter   = -1;
+static int    fl_filter = -1;            /* 0 = params applied, non-zero = need update */
 static int    fl_ready = 0;
 static int    fl_pages_uploaded = 0;
-static int    fl_filter = -1;
 
 static GLuint fl_compile(GLenum type, const char *src)
 {
@@ -268,6 +292,7 @@ static int fl_init(void)
     fl_loc_sun_pcf    = glGetUniformLocation(fl_prog, "uSunPCF");
     fl_loc_sun_debug  = glGetUniformLocation(fl_prog, "uSunDebug");
     fl_loc_sun_haze   = glGetUniformLocation(fl_prog, "uSunHaze");
+    fl_loc_filter     = glGetUniformLocation(fl_prog, "uFilter");
 
     glGenVertexArrays(1, &fl_vao);
     glBindVertexArray(fl_vao);
@@ -484,6 +509,7 @@ int hwr_floor_render(const unsigned char *pal8, int filter_linear)
 
     fl_upload_pages(&pages, filter_linear);
     fl_setup_program(&cam, pal8, -1);   /* floor tiles are fully opaque */
+    glUniform1i(fl_loc_filter, filter_linear);
     {
         HwrLight lights[HWR_MAX_LIGHTS];
         int nlight = (s->get_lights != NULL)
@@ -515,11 +541,11 @@ int hwr_faces_render(const unsigned char *pal8, int filter_linear)
     if (s->get_faces(s->ctx, &batch) <= 0 || batch.index_count <= 0)
         return 0;
 
-    (void)filter_linear;   /* pages already uploaded with the chosen filter */
     /* Faces are double-sided (cull stays disabled): through a window you see the
      * building's back wall. Index 0 is the texture transparent key (windows /
      * grates), so discard it to let those back faces show through. */
     fl_setup_program(&cam, pal8, 0);
+    glUniform1i(fl_loc_filter, filter_linear);
     {
         HwrLight lights[HWR_MAX_LIGHTS];
         int nlight = (s->get_lights != NULL)

@@ -43,6 +43,11 @@ ushort tnext_screen_point = 0;
  * in software. Always 0 in a software-only build. */
 int engine_hwr_suppress_faces = 0;
 
+/* When nonzero, Thing-based sprite draw items are skipped during drawlist
+ * execution so the FX3D renderer can draw them as camera-facing billboards. */
+int engine_hwr_suppress_sprites = 0;
+unsigned char hwr_sprite_skip_mask[256] = {0};
+
 /* True for the opaque face draw-item types the FX3D renderer takes over. */
 static TbBool drawitem_is_suppressed_face(ubyte type)
 {
@@ -64,6 +69,19 @@ static TbBool drawitem_is_suppressed_face(ubyte type)
     default:
         return false;
     }
+}
+
+/* Returns true when the draw item is a Thing-based sprite that the FX3D
+ * hardware renderer has collected for billboard rendering. The check uses
+ * the hwr_sprite_skip_mask bitset indexed by the SortSprite offset. */
+static TbBool drawitem_is_suppressed_sprite(const struct DrawItem *itm)
+{
+    if (!engine_hwr_suppress_sprites)
+        return false;
+    ushort ss_idx = itm->Offset;
+    if (hwr_sprite_skip_mask[ss_idx >> 3] & (1 << (ss_idx & 7)))
+        return true;
+    return false;
 }
 
 /******************************************************************************/
@@ -139,6 +157,13 @@ void draw_drawitem_1(ushort dihead)
       itm = &game_draw_list[iidx];
       if (drawitem_is_suppressed_face(itm->Type))
           continue;
+      if (drawitem_is_suppressed_sprite(itm)) {
+          /* Sprite is drawn as a HW billboard instead of by SW, but its
+           * mouse-pick (targeting/selection) is normally a side effect of the
+           * SW draw — run it here so the cursor still registers the thing. */
+          hwr_run_sprite_pick(itm->Offset, itm->Type);
+          continue;
+      }
       switch (itm->Type)
       {
       case DrIT_ObFace3Txtr:
@@ -210,6 +235,13 @@ void draw_drawitem_2(ushort dihead)
       itm = &game_draw_list[iidx];
       if (drawitem_is_suppressed_face(itm->Type))
           continue;
+      if (drawitem_is_suppressed_sprite(itm)) {
+          /* Sprite is drawn as a HW billboard instead of by SW, but its
+           * mouse-pick (targeting/selection) is normally a side effect of the
+           * SW draw — run it here so the cursor still registers the thing. */
+          hwr_run_sprite_pick(itm->Offset, itm->Type);
+          continue;
+      }
       switch (itm->Type)
       {
       case DrIT_ObFace3Txtr:
