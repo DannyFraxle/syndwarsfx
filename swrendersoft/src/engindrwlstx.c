@@ -65,6 +65,11 @@ static TbBool drawitem_is_suppressed_face(ubyte type)
     case DrIT_ObFace3G:
     case DrIT_ObFace4G:
     case DrIT_ObFacePole:
+    /* Reflective ("chameleon" paint) faces are drawn by the FX3D chameleon pass
+     * as proper depth-tested geometry, so suppress the SW projected reflective
+     * draw to avoid double-drawing them over the 3D scene. */
+    case DrIT_ObFace3Refl:
+    case DrIT_ObFace4Refl:
         return true;
     default:
         return false;

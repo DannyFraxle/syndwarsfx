@@ -61,6 +61,7 @@ typedef ptrdiff_t      GLsizeiptr;
 #define GL_CW                             0x0900
 #define GL_CCW                            0x0901
 #define GL_BLEND                          0x0BE2
+#define GL_ONE                            0x0001
 #define GL_SRC_ALPHA                      0x0302
 #define GL_ONE_MINUS_SRC_ALPHA            0x0303
 #define GL_LEQUAL                         0x0203

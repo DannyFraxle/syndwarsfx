@@ -131,6 +131,7 @@ static void glue_present(void)
             hwr_floor_render(pal, fx3d_filter_ground);
             hwr_shadows_render();
             hwr_faces_render(pal, fx3d_filter_objects);
+            hwr_reflect_render(pal);          /* chameleon vehicle paint */
             hwr_sprites_render(pal, fx3d_filter_sprites);
             hwr_ssao_resolve();              /* composites colour*AO to back buffer */
             hwr_thingno_render();            /* overlay ThingNo debug labels */

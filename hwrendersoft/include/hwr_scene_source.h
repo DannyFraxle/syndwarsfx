@@ -73,6 +73,26 @@ typedef struct {
     int              index_count;
 } HwrGeometryBatch;
 
+/** A reflective ("chameleon"/spectraflair paint) vertex. Carries the unit
+ *  world-space normal and a base palette colour, so the chameleon shader can
+ *  compute a view-angle hue shift plus a faked fresnel sheen procedurally.
+ *  depth is the same per-vertex scrd as HwrVertex.tile_depth (shared z-buffer). */
+typedef struct {
+    float x, y, z;
+    float nx, ny, nz;
+    float depth;
+    float base;            /* ExCol palette index (0..255) as float */
+} HwrReflectVertex;
+
+/** A batch of reflective faces: indexed triangles over a shared vertex array. */
+typedef struct {
+    const HwrReflectVertex *verts;
+    int                     vert_count;
+    const uint32_t         *indices;
+    int                     index_count;
+} HwrReflectBatch;
+
+
 /** A point light. r,g,b are linear 0..1 (already 6-bit-expanded by the
  *  source). radius is the inverse-square attenuation constant; max_dist2 is the
  *  per-pixel distance-cull radius squared (PRCCOORD²), set per-light by the
@@ -82,6 +102,9 @@ typedef struct {
     float r, g, b;
     float radius;
     float max_dist2;       /* per-light distance-cull threshold, default = global_base */
+    float fdx, fdz;        /* shaped (headlight) forward dir in XZ; (0,0) = round light.
+                            * When set, the light uses a teardrop falloff: narrow/bright
+                            * near the lamp, widening and fading along the forward dir. */
 } HwrLight;
 
 /** A camera-facing billboard sprite (a Thing). pos is the world anchor;
@@ -118,6 +141,10 @@ typedef struct HwrSceneSource {
 
     /** Object/building faces (Phase 4). */
     int  (*get_faces)(void *ctx, HwrGeometryBatch *out);
+
+    /** Reflective (chameleon paint) faces, drawn by the chameleon pass with a
+     *  procedural view-angle hue shift + sheen (Phase 7). May be NULL. */
+    int  (*get_reflect_faces)(void *ctx, HwrReflectBatch *out);
 
     /** Up to max lights into out[]; returns count (Phase 5). */
     int  (*get_lights)(void *ctx, HwrLight *out, int max);

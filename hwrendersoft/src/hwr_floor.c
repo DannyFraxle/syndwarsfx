@@ -27,6 +27,7 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 
 /* Reproduces transform_shpoint() per-vertex, including the mode-5 perspective
  * foreshortening (which no single matrix can express). */
@@ -98,6 +99,7 @@ static const char *floor_frag_src =
     "uniform vec3  uTint;                 // global colour cast on all lights\n"
     "uniform float uAO;                   // ambient-occlusion strength 0..1\n"
     "uniform float uLightMaxDist2[64];    // per-light distance cull (PRCCOORD^2)\n"
+    "uniform vec2  uLightFwd[64];         // shaped-headlight forward dir (0 = round)\n"
     "// --- Sun shadow map ---\n"
     "uniform sampler2D uShadowMap;        // depth texture from the sun FBO\n"
     "uniform mat4  uSunMVP;              // sun projection matrix\n"
@@ -120,11 +122,26 @@ static const char *floor_frag_src =
     "        float r = uLightRadius[i];\n"
     "        if (r == 0.0) continue;\n"
     "        vec3 delta = vWorldPos - uLightPos[i];\n"
-    "        float dist2 = delta.x * delta.x + delta.z * delta.z\n"
-    "                 + delta.y * delta.y;                    // full 3D distance\n"
-    "        float nd   = dist2 / uLightMaxDist2[i];                // 0..1 normalized dist²\n"
-    "        if (nd >= 1.0) continue;\n"
-    "        float brightness = 1.0 - sqrt(nd);                     // linear 1..0 radial falloff\n"
+    "        vec2 fwd = uLightFwd[i];\n"
+    "        float brightness;\n"
+    "        if (fwd.x != 0.0 || fwd.y != 0.0) {\n"
+    "            // Shaped headlight: teardrop along the forward dir. Bright/narrow\n"
+    "            // near the lamp, widening and fading forward.\n"
+    "            float L = sqrt(uLightMaxDist2[i]);          // forward reach\n"
+    "            float along = delta.x*fwd.x + delta.z*fwd.y;        // forward distance\n"
+    "            float side  = delta.z*fwd.x - delta.x*fwd.y;        // perpendicular (XZ)\n"
+    "            if (along < -0.08*L) continue;              // cull behind the lamp\n"
+    "            float t = clamp(along / L, 0.0, 1.0);               // 0 at lamp .. 1 at reach\n"
+    "            float hw = L * (0.10 + 0.55*t);             // half-width grows forward\n"
+    "            float perp = sqrt(side*side + delta.y*delta.y);\n"
+    "            float radial = clamp(1.0 - perp/hw, 0.0, 1.0);\n"
+    "            brightness = (1.0 - t) * radial * radial;          // concentrate near, fade out\n"
+    "        } else {\n"
+    "            float dist2 = delta.x*delta.x + delta.z*delta.z + delta.y*delta.y;\n"
+    "            float nd = dist2 / uLightMaxDist2[i];               // 0..1 normalized dist²\n"
+    "            if (nd >= 1.0) continue;\n"
+    "            brightness = 1.0 - sqrt(nd);                        // radial falloff\n"
+    "        }\n"
     "        if (r > 0.0)\n"
     "            light_col += uLightRgb[i] * brightness;           // additive accumulation\n"
     "        else\n"
@@ -210,6 +227,7 @@ static GLint  fl_loc_gain = -1;
 static GLint  fl_loc_tint = -1;
 static GLint  fl_loc_ao        = -1;
 static GLint  fl_loc_maxdist2  = -1;  /* array base, set per-light via glUniform1fv */
+static GLint  fl_loc_lfwd      = -1;  /* shaped-headlight forward dirs (vec2[]) */
 static GLint  fl_loc_shadowmap = -1;
 static GLint  fl_loc_sun_mvp   = -1;
 static GLint  fl_loc_sun_bright = -1;
@@ -283,6 +301,7 @@ static int fl_init(void)
     fl_loc_tint      = glGetUniformLocation(fl_prog, "uTint");
     fl_loc_ao        = glGetUniformLocation(fl_prog, "uAO");
     fl_loc_maxdist2  = glGetUniformLocation(fl_prog, "uLightMaxDist2");
+    fl_loc_lfwd      = glGetUniformLocation(fl_prog, "uLightFwd");
     fl_loc_shadowmap  = glGetUniformLocation(fl_prog, "uShadowMap");
     fl_loc_sun_mvp    = glGetUniformLocation(fl_prog, "uSunMVP");
     fl_loc_sun_bright = glGetUniformLocation(fl_prog, "uSunBright");
@@ -368,6 +387,7 @@ static void fl_upload_lights(const HwrLight *lights, int n)
     float rgb_buf[HWR_MAX_LIGHTS * 3];
     float rad_buf[HWR_MAX_LIGHTS];
     float maxd2_buf[HWR_MAX_LIGHTS];
+    float fwd_buf[HWR_MAX_LIGHTS * 2];
     int i;
     if (n > HWR_MAX_LIGHTS) n = HWR_MAX_LIGHTS;
     {
@@ -381,6 +401,8 @@ static void fl_upload_lights(const HwrLight *lights, int n)
             rgb_buf[i*3+1] = lights[i].g;
             rgb_buf[i*3+2] = lights[i].b;
             rad_buf[i]     = lights[i].radius;
+            fwd_buf[i*2+0] = lights[i].fdx;
+            fwd_buf[i*2+1] = lights[i].fdz;
             /* Per-light distance cull: use per-light max_dist2 if set by source,
              * otherwise global_base + Y² (Y² so elevated lights reach the ground). */
             {
@@ -402,6 +424,7 @@ static void fl_upload_lights(const HwrLight *lights, int n)
         glUniform3fv(fl_loc_lrgb_base, n, rgb_buf);
         glUniform1fv(fl_loc_lrad_base, n, rad_buf);
         glUniform1fv(fl_loc_maxdist2, n, maxd2_buf);
+        glUniform2fv(fl_loc_lfwd, n, fwd_buf);
     }
     glUniform1i(fl_loc_nlights, n);
 }
@@ -555,6 +578,385 @@ int hwr_faces_render(const unsigned char *pal8, int filter_linear)
     fl_draw_batch(&batch);
 
     hwr_gl_check("hwr_faces_render");
+    return 1;
+}
+
+/* ===================================================================== */
+/* Reflective "chameleon" (spectraflair) paint pass.                      */
+/* Reuses the floor projection in the vertex shader, but shades the paint */
+/* procedurally: a view-angle hue shift across the base colour plus a     */
+/* faked fresnel sheen. No texture pages, no scene lighting (matches the  */
+/* SW mode-27 "textured, no shading" reflective look, modernised).        */
+/* ===================================================================== */
+
+static const char *refl_vert_src =
+    "#version 330 core\n"
+    "layout(location=0) in vec3 aPos;\n"
+    "layout(location=1) in vec3 aNormal;\n"
+    "layout(location=2) in float aDepth;\n"
+    "layout(location=3) in float aBase;\n"
+    "uniform float uD10, uD14, uD18, uD1C;\n"
+    "uniform float uScale;\n"
+    "uniform vec2 uCentre;\n"
+    "uniform vec3 uCtr;\n"
+    "uniform int  uPersp;\n"
+    "out vec3 vN;\n"
+    "out float vBase;\n"
+    "out vec3 vWorldPos;\n"
+    "void main(){\n"
+    "    float dx = aPos.x - uCtr.x;\n"
+    "    float dy = aPos.y - uCtr.y;\n"
+    "    float dz = aPos.z - uCtr.z;\n"
+    "    float fa = (uD14*dx - uD10*dz) / 65536.0;\n"
+    "    float fb = (uD10*dx + uD14*dz) / 65536.0;\n"
+    "    float fc = (uD1C*dy - uD18*fb) / 65536.0;\n"
+    "    float scrd = (uD18*dy + uD1C*fb) / 65536.0;\n"
+    "    if (uPersp == 5 && scrd > 1024.0)\n"
+    "        scrd = 16384.0*scrd/(scrd + 16384.0);\n"
+    "    float shx = uScale*fa / 2048.0;\n"
+    "    float shy = uScale*fc / 2048.0;\n"
+    "    if (uPersp == 5) {\n"
+    "        shx = shx*(16384.0 - scrd) / 16384.0;\n"
+    "        shy = shy*(16384.0 - scrd) / 16384.0;\n"
+    "    }\n"
+    "    float sx = uCentre.x + shx;\n"
+    "    float sy = uCentre.y - shy;\n"
+    "    vN = aNormal;\n"
+    "    vBase = aBase;\n"
+    "    vWorldPos = aPos;\n"
+    "    float ndc_z = clamp(aDepth / 16384.0, -1.0, 1.0);\n"
+    "    gl_Position = vec4(sx/uCentre.x - 1.0, 1.0 - sy/uCentre.y, ndc_z, 1.0);\n"
+    "}\n";
+
+static const char *refl_frag_src =
+    "#version 330 core\n"
+    "in vec3 vN;\n"
+    "in float vBase;\n"
+    "in vec3 vWorldPos;\n"
+    "layout(location=0) out vec4 frag;\n"
+    "layout(location=1) out vec4 fragPos;\n"
+    "uniform sampler2D uPalette;\n"
+    "uniform float uD10, uD14, uD18, uD1C;\n"
+    "uniform float uHueBase;     // start hue (0..1): 0=red .33=green .66=blue .8=purple\n"
+    "uniform float uHueSpan;     // hue wheel fraction swept across the surface\n"
+    "uniform float uSat;         // colour saturation (deep = high)\n"
+    "uniform float uPaintLevel;  // base paint brightness (keep < 1, it's metallic)\n"
+    "uniform float uStreakFreq;  // number of streak bands across the sweep\n"
+    "uniform float uStreakSharp; // streak thinness (higher = thinner, sharper)\n"
+    "uniform float uSheen;       // streak highlight strength\n"
+    "uniform vec3  uTintHi;      // streak highlight colour\n"
+    "// --- scene lighting (mirrors the floor/face shader) so paint darkens in\n"
+    "//     unlit/shadowed areas instead of glowing at constant brightness ---\n"
+    "uniform vec3  uLightPos[64];\n"
+    "uniform vec3  uLightRgb[64];\n"
+    "uniform float uLightRadius[64];\n"
+    "uniform float uLightMaxDist2[64];\n"
+    "uniform int   uNumLights;\n"
+    "uniform float uAmbient;\n"
+    "uniform float uGain;\n"
+    "uniform vec3  uTint;\n"
+    "uniform sampler2D uShadowMap;\n"
+    "uniform mat4  uSunMVP;\n"
+    "uniform float uSunBright;\n"
+    "uniform float uSunAmbient;\n"
+    "uniform float uSunBias;\n"
+    "uniform int   uSunEnable;\n"
+    "uniform int   uSunPCF;\n"
+    "uniform float uSunHaze;\n"
+    "vec3 pal_lookup(int idx){\n"
+    "    return texture(uPalette, vec2((float(idx)+0.5)/256.0, 0.5)).rgb;\n"
+    "}\n"
+    "vec3 rgb2hsv(vec3 c){\n"
+    "    vec4 K = vec4(0.0, -1.0/3.0, 2.0/3.0, -1.0);\n"
+    "    vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));\n"
+    "    vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));\n"
+    "    float d = q.x - min(q.w, q.y);\n"
+    "    float e = 1.0e-10;\n"
+    "    return vec3(abs(q.z + (q.w - q.y)/(6.0*d + e)), d/(q.x + e), q.x);\n"
+    "}\n"
+    "vec3 hsv2rgb(vec3 c){\n"
+    "    vec3 p = abs(fract(c.xxx + vec3(0.0,2.0/3.0,1.0/3.0))*6.0 - 3.0);\n"
+    "    return c.z * mix(vec3(1.0), clamp(p - 1.0, 0.0, 1.0), c.y);\n"
+    "}\n"
+    "void main(){\n"
+    "    fragPos = vec4(0.0);\n"
+    "    // Smoothly-interpolated per-vertex normal -> shade curves across faces.\n"
+    "    vec3 N = normalize(vN);\n"
+    "    // View-angle sweep, same axes as the SW matcap (camera sin/cos).\n"
+    "    float a  = clamp((uD14*N.x - uD10*N.z) / 65536.0, -1.0, 1.0);\n"
+    "    float fb = (uD10*N.x + uD14*N.z) / 65536.0;\n"
+    "    float b  = clamp((uD1C*N.y - uD18*fb) / 65536.0, -1.0, 1.0);\n"
+    "    // Chameleon: hue sweeps a wide band (green->blue->purple) with the view\n"
+    "    // angle, deeply saturated and independent of the base paint colour, so\n"
+    "    // the full spectraflair rainbow shows as the surface curves/camera turns.\n"
+    "    float sweep = (a*0.5 + 0.5) + 0.25*b;     // 2D-ish view-angle sweep\n"
+    "    float hue = fract(uHueBase + uHueSpan * sweep);\n"
+    "    vec3 paint = hsv2rgb(vec3(hue, uSat, uPaintLevel));\n"
+    "    // Streaks: thin anisotropic highlight bands that sweep as the angle\n"
+    "    // changes. cos() of the vertical sweep gives smooth repeating lines; the\n"
+    "    // high power thins them into streaks. The interpolated normal keeps them\n"
+    "    // continuous (curving) across adjacent polygons.\n"
+    "    float bands  = 0.5 + 0.5*cos(b*uStreakFreq*6.2831853 + a*2.5);\n"
+    "    float streak = pow(bands, uStreakSharp);\n"
+    "    float edge   = clamp(length(vec2(a, b)), 0.0, 1.0);  // brighter at grazing\n"
+    "    vec3 col = paint + streak * edge * uSheen * uTintHi;\n"
+    "    // --- scene lighting factor (point lights + sun + ambient), same as the\n"
+    "    //     floor, so painted panels go dark in shadow / unlit interiors ---\n"
+    "    vec3 light_col = vec3(0.0);\n"
+    "    float shadow = 0.0;\n"
+    "    for (int i = 0; i < uNumLights; i++) {\n"
+    "        float r = uLightRadius[i];\n"
+    "        if (r == 0.0) continue;\n"
+    "        vec3 delta = vWorldPos - uLightPos[i];\n"
+    "        float dist2 = dot(delta, delta);\n"
+    "        float nd = dist2 / uLightMaxDist2[i];\n"
+    "        if (nd >= 1.0) continue;\n"
+    "        float brightness = 1.0 - sqrt(nd);\n"
+    "        if (r > 0.0) light_col += uLightRgb[i] * brightness;\n"
+    "        else         shadow    += uLightRgb[i].x * brightness;\n"
+    "    }\n"
+    "    float lbase = uAmbient;\n"
+    "    if (uSunEnable == 1) {\n"
+    "        vec4 sc = uSunMVP * vec4(vWorldPos, 1.0);\n"
+    "        vec3 p = sc.xyz / sc.w * 0.5 + 0.5;\n"
+    "        float lit = 1.0;\n"
+    "        if (p.x>=0.0&&p.x<=1.0&&p.y>=0.0&&p.y<=1.0&&p.z>=0.0&&p.z<=1.0) {\n"
+    "            float texel = 1.0/2048.0; float sigma = float(uSunPCF)*0.5+1.0;\n"
+    "            float sw=0.0, sl=0.0;\n"
+    "            for (int sx=-uSunPCF; sx<=uSunPCF; sx++)\n"
+    "            for (int sy=-uSunPCF; sy<=uSunPCF; sy++) {\n"
+    "                float w = exp(-float(sx*sx+sy*sy)/(2.0*sigma*sigma));\n"
+    "                float closest = texture(uShadowMap, p.xy+vec2(float(sx),float(sy))*texel).r;\n"
+    "                sl += w * ((p.z-uSunBias > closest) ? 0.0 : 1.0); sw += w;\n"
+    "            }\n"
+    "            lit = mix(sl/sw, 1.0, uSunHaze);\n"
+    "        }\n"
+    "        lbase += uSunAmbient + uSunBright * lit;\n"
+    "    }\n"
+    "    light_col = light_col * uGain * uTint + lbase;\n"
+    "    light_col *= clamp(1.0 - shadow, 0.0, 1.0);\n"
+    "    light_col = max(light_col, 0.0);\n"
+    "    frag = vec4(col * light_col, 1.0);\n"
+    "}\n";
+
+static GLuint rf_prog = 0, rf_vao = 0, rf_vbo = 0, rf_ebo = 0;
+static GLint  rf_l_d10=-1, rf_l_d14=-1, rf_l_d18=-1, rf_l_d1c=-1;
+static GLint  rf_l_scale=-1, rf_l_centre=-1, rf_l_ctr=-1, rf_l_persp=-1;
+static GLint  rf_l_pal=-1, rf_l_huebase=-1, rf_l_huespan=-1, rf_l_sat=-1, rf_l_paintlevel=-1;
+static GLint  rf_l_streakfreq=-1, rf_l_streaksharp=-1, rf_l_sheen=-1, rf_l_tinthi=-1;
+/* Lighting uniforms (mirror the floor program). */
+static GLint  rf_l_lpos=-1, rf_l_lrgb=-1, rf_l_lrad=-1, rf_l_lmaxd2=-1, rf_l_nlights=-1;
+static GLint  rf_l_ambient=-1, rf_l_gain=-1, rf_l_tint=-1;
+static GLint  rf_l_shadowmap=-1, rf_l_sunmvp=-1, rf_l_sunbright=-1, rf_l_sunambient=-1;
+static GLint  rf_l_sunbias=-1, rf_l_sunenable=-1, rf_l_sunpcf=-1, rf_l_sunhaze=-1;
+static int    rf_ready = 0;
+
+static int rf_init(void)
+{
+    GLuint vs, fs;
+    GLint ok = 0;
+    vs = fl_compile(GL_VERTEX_SHADER, refl_vert_src);
+    if (!vs) return HWR_ERROR;
+    fs = fl_compile(GL_FRAGMENT_SHADER, refl_frag_src);
+    if (!fs) { glDeleteShader(vs); return HWR_ERROR; }
+    rf_prog = glCreateProgram();
+    glAttachShader(rf_prog, vs);
+    glAttachShader(rf_prog, fs);
+    glLinkProgram(rf_prog);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    glGetProgramiv(rf_prog, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        char log[512];
+        glGetProgramInfoLog(rf_prog, sizeof(log), NULL, log);
+        hwr_set_error("reflect program link failed: %s", log);
+        return HWR_ERROR;
+    }
+    rf_l_d10=glGetUniformLocation(rf_prog,"uD10");
+    rf_l_d14=glGetUniformLocation(rf_prog,"uD14");
+    rf_l_d18=glGetUniformLocation(rf_prog,"uD18");
+    rf_l_d1c=glGetUniformLocation(rf_prog,"uD1C");
+    rf_l_scale=glGetUniformLocation(rf_prog,"uScale");
+    rf_l_centre=glGetUniformLocation(rf_prog,"uCentre");
+    rf_l_ctr=glGetUniformLocation(rf_prog,"uCtr");
+    rf_l_persp=glGetUniformLocation(rf_prog,"uPersp");
+    rf_l_pal=glGetUniformLocation(rf_prog,"uPalette");
+    rf_l_huebase=glGetUniformLocation(rf_prog,"uHueBase");
+    rf_l_huespan=glGetUniformLocation(rf_prog,"uHueSpan");
+    rf_l_sat=glGetUniformLocation(rf_prog,"uSat");
+    rf_l_paintlevel=glGetUniformLocation(rf_prog,"uPaintLevel");
+    rf_l_streakfreq=glGetUniformLocation(rf_prog,"uStreakFreq");
+    rf_l_streaksharp=glGetUniformLocation(rf_prog,"uStreakSharp");
+    rf_l_sheen=glGetUniformLocation(rf_prog,"uSheen");
+    rf_l_tinthi=glGetUniformLocation(rf_prog,"uTintHi");
+    rf_l_lpos=glGetUniformLocation(rf_prog,"uLightPos");
+    rf_l_lrgb=glGetUniformLocation(rf_prog,"uLightRgb");
+    rf_l_lrad=glGetUniformLocation(rf_prog,"uLightRadius");
+    rf_l_lmaxd2=glGetUniformLocation(rf_prog,"uLightMaxDist2");
+    rf_l_nlights=glGetUniformLocation(rf_prog,"uNumLights");
+    rf_l_ambient=glGetUniformLocation(rf_prog,"uAmbient");
+    rf_l_gain=glGetUniformLocation(rf_prog,"uGain");
+    rf_l_tint=glGetUniformLocation(rf_prog,"uTint");
+    rf_l_shadowmap=glGetUniformLocation(rf_prog,"uShadowMap");
+    rf_l_sunmvp=glGetUniformLocation(rf_prog,"uSunMVP");
+    rf_l_sunbright=glGetUniformLocation(rf_prog,"uSunBright");
+    rf_l_sunambient=glGetUniformLocation(rf_prog,"uSunAmbient");
+    rf_l_sunbias=glGetUniformLocation(rf_prog,"uSunBias");
+    rf_l_sunenable=glGetUniformLocation(rf_prog,"uSunEnable");
+    rf_l_sunpcf=glGetUniformLocation(rf_prog,"uSunPCF");
+    rf_l_sunhaze=glGetUniformLocation(rf_prog,"uSunHaze");
+
+    glGenVertexArrays(1, &rf_vao);
+    glBindVertexArray(rf_vao);
+    glGenBuffers(1, &rf_vbo);
+    glGenBuffers(1, &rf_ebo);
+    glBindBuffer(GL_ARRAY_BUFFER, rf_vbo);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, rf_ebo);
+    {
+        GLsizei stride = (GLsizei)sizeof(HwrReflectVertex);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride,
+            (void *)offsetof(HwrReflectVertex, x));
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride,
+            (void *)offsetof(HwrReflectVertex, nx));
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, stride,
+            (void *)offsetof(HwrReflectVertex, depth));
+        glEnableVertexAttribArray(3);
+        glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, stride,
+            (void *)offsetof(HwrReflectVertex, base));
+    }
+    glBindVertexArray(0);
+    if (hwr_gl_check("rf_init"))
+        return HWR_ERROR;
+    rf_ready = 1;
+    return HWR_OK;
+}
+
+int hwr_reflect_render(const unsigned char *pal8)
+{
+    HwrCamera cam;
+    HwrReflectBatch batch;
+    const HwrSceneSource *s = hwr_source;
+
+    if (!hwr_is_ready() || s == NULL || s->get_reflect_faces == NULL)
+        return 0;
+    if (s->get_camera == NULL)
+        return 0;
+    if (!rf_ready && rf_init() != HWR_OK)
+        return 0;
+    if (s->get_camera(s->ctx, &cam) != 0)
+        return 0;
+    if (s->get_reflect_faces(s->ctx, &batch) <= 0 || batch.index_count <= 0)
+        return 0;
+
+    /* Palette on unit 1 (reuse the floor palette texture, refreshed here so the
+     * pass is independent of floor/face draw order). */
+    if (pal8 != NULL) {
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, fl_pal);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, 256, 1, 0, GL_RGB,
+            GL_UNSIGNED_BYTE, pal8);
+    }
+    glActiveTexture(GL_TEXTURE0);
+
+    glEnable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glUseProgram(rf_prog);
+    glUniform1f(rf_l_d10, cam.d10);
+    glUniform1f(rf_l_d14, cam.d14);
+    glUniform1f(rf_l_d18, cam.d18);
+    glUniform1f(rf_l_d1c, cam.d1c);
+    glUniform1f(rf_l_scale, cam.scale);
+    glUniform2f(rf_l_centre, cam.centre_x, cam.centre_y);
+    glUniform3f(rf_l_ctr, cam.cx, cam.cy8, cam.cz);
+    glUniform1i(rf_l_persp, cam.perspective);
+    glUniform1i(rf_l_pal, 1);
+    /* Tunable look — deep saturated spectraflair rainbow + thin sweeping streaks.
+     * Hue sweeps from green (.33) through blue (.66) to purple (~.85). */
+    glUniform1f(rf_l_huebase, 0.33f);      /* start at green */
+    glUniform1f(rf_l_huespan, 0.55f);      /* sweep ~green->blue->purple */
+    glUniform1f(rf_l_sat, 0.9f);           /* deep, saturated colours */
+    glUniform1f(rf_l_paintlevel, 0.5f);    /* metallic, not washed out */
+    glUniform1f(rf_l_streakfreq, 3.0f);    /* number of streak bands */
+    glUniform1f(rf_l_streaksharp, 8.0f);   /* thin, sharp streaks */
+    glUniform1f(rf_l_sheen, 0.5f);         /* streak highlight strength */
+    glUniform3f(rf_l_tinthi, 0.85f, 0.90f, 1.0f);
+
+    /* Scene lighting so painted panels darken in shadow / unlit interiors,
+     * mirroring fl_upload_lights + the floor's sun setup. */
+    {
+        /* Vehicle lamps are appended at the end of the light list; exclude them
+         * here so a car's own headlights/tails don't self-illuminate its paint.
+         * The paint is still lit by map lights (streetlamps, etc.). */
+        extern int hwr_sw_vehicle_lights;
+        HwrLight lights[HWR_MAX_LIGHTS];
+        int n = (s->get_lights != NULL)
+            ? s->get_lights(s->ctx, lights, HWR_MAX_LIGHTS) : 0;
+        float pos_buf[HWR_MAX_LIGHTS*3], rgb_buf[HWR_MAX_LIGHTS*3];
+        float rad_buf[HWR_MAX_LIGHTS], maxd2_buf[HWR_MAX_LIGHTS];
+        HwrLightDefaults d = hwr_lights_defaults();
+        float global_base = d.max_light_dist2;
+        int i;
+        if (n < 0) n = 0;
+        if (n > HWR_MAX_LIGHTS) n = HWR_MAX_LIGHTS;
+        n -= hwr_sw_vehicle_lights;     /* drop the trailing vehicle lamps */
+        if (n < 0) n = 0;
+        for (i = 0; i < n; i++) {
+            pos_buf[i*3+0]=lights[i].x; pos_buf[i*3+1]=lights[i].y; pos_buf[i*3+2]=lights[i].z;
+            rgb_buf[i*3+0]=lights[i].r; rgb_buf[i*3+1]=lights[i].g; rgb_buf[i*3+2]=lights[i].b;
+            rad_buf[i]=lights[i].radius;
+            if (lights[i].max_dist2 > 0.0f) {
+                maxd2_buf[i]=lights[i].max_dist2;
+            } else {
+                float yabs = (lights[i].y < 0.0f) ? -lights[i].y : lights[i].y;
+                maxd2_buf[i]=global_base + yabs*yabs;
+            }
+        }
+        glUniform1f(rf_l_ambient, d.ambient);
+        glUniform1f(rf_l_gain, d.intensity);
+        glUniform3f(rf_l_tint, d.tint_r, d.tint_g, d.tint_b);
+        if (n > 0) {
+            glUniform3fv(rf_l_lpos, n, pos_buf);
+            glUniform3fv(rf_l_lrgb, n, rgb_buf);
+            glUniform1fv(rf_l_lrad, n, rad_buf);
+            glUniform1fv(rf_l_lmaxd2, n, maxd2_buf);
+        }
+        glUniform1i(rf_l_nlights, n);
+    }
+    /* Sun shadow map on texture unit 3 (same as the floor pass). */
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)hwr_sun_texture());
+    glActiveTexture(GL_TEXTURE0);
+    glUniform1i(rf_l_shadowmap, 3);
+    {
+        int sun_on = hwr_sun_enabled();
+        glUniform1i(rf_l_sunenable, sun_on);
+        if (sun_on) {
+            glUniformMatrix4fv(rf_l_sunmvp, 1, GL_FALSE, hwr_sun_mvp());
+            glUniform1f(rf_l_sunbright,  hwr_sun_bright());
+            glUniform1f(rf_l_sunambient, hwr_sun_ambient());
+            glUniform1f(rf_l_sunbias,    hwr_sun_bias());
+            glUniform1i(rf_l_sunpcf,     hwr_sun_pcf());
+            glUniform1f(rf_l_sunhaze,    hwr_sun_haze());
+        }
+    }
+
+    glBindVertexArray(rf_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, rf_vbo);
+    glBufferData(GL_ARRAY_BUFFER,
+        (GLsizeiptr)batch.vert_count * sizeof(HwrReflectVertex), batch.verts,
+        GL_STREAM_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, rf_ebo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+        (GLsizeiptr)batch.index_count * sizeof(uint32_t), batch.indices,
+        GL_STREAM_DRAW);
+    glDrawElements(GL_TRIANGLES, batch.index_count, GL_UNSIGNED_INT, (void *)0);
+    glBindVertexArray(0);
+
+    hwr_gl_check("hwr_reflect_render");
     return 1;
 }
 

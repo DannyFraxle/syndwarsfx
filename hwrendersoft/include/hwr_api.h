@@ -90,6 +90,12 @@ int hwr_floor_render(const uint8_t *pal8, int filter_linear);
  *  Returns nonzero if anything was drawn. Does not clear or swap. */
 int hwr_faces_render(const uint8_t *pal8, int filter_linear);
 
+/** Render reflective "chameleon" paint faces (Phase 7). Pulls the reflective
+ *  batch from the bound source's get_reflect_faces and shades it procedurally
+ *  (view-angle hue shift + faked sheen). Call after hwr_faces_render so the
+ *  depth buffer holds the opaque scene. Returns nonzero if anything drew. */
+int hwr_reflect_render(const uint8_t *pal8);
+
 /** Render sprite billboards for this frame (Phase 6). Pulls billboard data
  *  from the bound scene source's get_sprites callback. Call after the floor
  *  and face passes, before SSAO resolve. Returns nonzero if anything drew. */

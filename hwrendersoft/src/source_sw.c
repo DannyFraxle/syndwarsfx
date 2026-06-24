@@ -149,6 +149,9 @@ struct HwrFullLight {       /* == struct FullLight, sizeof 32 */
 struct HwrQuickLight {      /* == struct QuickLight, sizeof 6 */
     uint16_t Ratio, Light, NextQuick;
 };
+struct HwrNormal {          /* == struct Normal, sizeof 16 (object-space normal) */
+    int32_t NX, NY, NZ, LightRatio;
+};
 struct HwrThingMini {       /* first bytes of struct Thing, sizeof 168 */
     int16_t  Parent, Next, LinkParent, LinkChild;
     uint8_t  SubType, Type;
@@ -183,6 +186,8 @@ extern unsigned short        next_object;        /* count of objects        */
 extern struct HwrSinglePoint *game_object_points;/* == game_object_points   */
 extern struct HwrObjFace3   *game_object_faces3; /* == game_object_faces3   */
 extern struct HwrObjFace4   *game_object_faces4; /* == game_object_faces4   */
+extern struct HwrNormal     *game_normals;       /* == game_normals         */
+extern uint16_t              next_normal;        /* count of normals        */
 
 extern struct HwrFullLight  *game_full_lights;   /* == game_full_lights     */
 extern uint16_t              next_full_light;     /* active count            */
@@ -197,8 +202,23 @@ extern char                 *things;              /* == struct Thing array   */
 extern short                 current_level;        /* level token for cache invalidation */
 extern unsigned short        current_map;
 
+/* Vehicle rotation matrices. HwrM33 mirrors struct M33 (3x3 int32, sizeof=36).
+ * local_mats[] and next_local_mat are resolved at the final executable link.  */
+typedef struct { int32_t R[3][3]; } HwrM33;
+extern HwrM33    local_mats[100];
+extern uint16_t  next_local_mat;
+/* Byte-offset constants derived from struct Thing (sizeof=168, #pragma pack(1)).
+ * Union U starts at byte 76; MatrixIndex (int16) is at union+8 = byte 84.   */
+#define HWR_THING_SIZEOF  168
+#define HWR_THING_MATX    84
+
 /* The palette index reserved as the composite key (set by the host glue). */
 int hwr_sw_key_index = 0;
+
+/* Number of vehicle (headlight/tail) lights appended at the END of the array
+ * returned by sw_get_lights this frame. The reflective-paint pass reads this to
+ * exclude vehicle lights so a car's own lamps don't self-illuminate its paint. */
+int hwr_sw_vehicle_lights = 0;
 
 /* --- Sprite billboard collection (Phase 6) --- */
 
@@ -213,6 +233,31 @@ static struct {
     int     persp;
     int     valid;
 } snap;
+
+/* Per-object snapshot of moving-Thing state (position + rotation matrix index),
+ * captured at floor-draw time together with the camera so that vehicle faces
+ * render on the SAME sim-turn time base as the camera and the sprites.
+ *
+ * Vehicle face geometry is built in sw_get_faces() at PRESENT time, which is one
+ * process_things() tick ahead of the camera snapshot the present uses. Reading
+ * live things[]/local_mats[] there drew the body one turn ahead of the camera
+ * frame, so it swam against the (static, camera-consistent) road as the camera
+ * moved. Sprites never had this because they are collected here at gate time.
+ * Indexed by object index (matches face_obj_seen). */
+#define HWR_MAX_SNAP_OBJS 65536
+#define HWR_TT_VEHICLE          0x2    /* enum ThingType TT_VEHICLE  */
+#define HWR_TT_BUILDING         0x9    /* enum ThingType TT_BUILDING */
+#define HWR_SubTT_BLD_MGUN      0x20   /* stationary turret (mounted gun) */
+#define HWR_SubTT_BLD_MOVN_ROTOR 0x36  /* rotating machinery part         */
+static struct {
+    int32_t  tx, ty, tz;   /* world position (X>>8, Y>>5 or >>8, Z>>8) at capture */
+    int16_t  matx;         /* MatrixIndex, or <=0 for none                        */
+    uint8_t  is_dynamic;   /* 1 = position from Thing + matrix (vehicle/turret/rotor) */
+    uint8_t  is_vehicle;   /* 1 = TT_VEHICLE — also skip SW-drawn reflective faces    */
+} obj_snap[HWR_MAX_SNAP_OBJS];
+static unsigned obj_snap_count = 0;   /* objects captured this frame */
+static int      obj_snap_valid = 0;
+static HwrM33   snap_local_mats[100]; /* local_mats copy at capture time */
 
 /* Manual struct definitions matching the game's SortSprite / DrawItem / Frame /
  * Element / TbSprite layouts (packed 1-byte, matching the game's headers).
@@ -619,6 +664,58 @@ void hwr_sw_capture(void)
     snap.ra = render_area_a; snap.rb = render_area_b;
     snap.persp = game_perspective;
     snap.valid = 1;
+
+    /* Snapshot moving-Thing object state on the same tick as the camera, so the
+     * vehicle faces built later (at present time) match this camera frame. */
+    obj_snap_valid = 0;
+    obj_snap_count = 0;
+    if (game_objects != NULL && things != NULL) {
+        unsigned o;
+        memcpy(snap_local_mats, local_mats, sizeof(snap_local_mats));
+        for (o = 1; o < next_object && o < HWR_MAX_SNAP_OBJS; o++) {
+            struct HwrObject *obj = &game_objects[o];
+            const struct HwrThingMini *th = NULL;
+            int dynamic = 0, y_mul8 = 1, is_veh = 0;
+
+            if (obj->ThingNo > 0) {
+                th = (const struct HwrThingMini *)(things +
+                    (int)(uint16_t)obj->ThingNo * HWR_THING_SIZEOF);
+            }
+            /* Decide which objects are positioned dynamically (Thing pos +
+             * rotation matrix) vs the cached MapX/OffsetY/MapZ path. The engine
+             * draws these via draw_rot_object/2 from the live Thing position:
+             *   - TT_VEHICLE                         (Y>>5)
+             *   - TT_BUILDING / SubTT_BLD_MGUN       stationary turret (Y>>5)
+             *   - TT_BUILDING / SubTT_BLD_MOVN_ROTOR rotating part     (Y>>8)
+             * matching thing_position_uses_y_mul_8(). Everything else (regular
+             * buildings, gates, statics) keeps the cached path. */
+            if (th != NULL) {
+                if (th->Type == HWR_TT_VEHICLE) {
+                    dynamic = 1; y_mul8 = 1; is_veh = 1;
+                } else if (th->Type == HWR_TT_BUILDING &&
+                           th->SubType == HWR_SubTT_BLD_MGUN) {
+                    dynamic = 1; y_mul8 = 1;
+                } else if (th->Type == HWR_TT_BUILDING &&
+                           th->SubType == HWR_SubTT_BLD_MOVN_ROTOR) {
+                    dynamic = 1; y_mul8 = 0;
+                }
+            }
+            if (dynamic) {
+                obj_snap[o].tx = (int32_t)th->X >> 8;   /* PRCCOORD_TO_MAPCOORD */
+                obj_snap[o].ty = y_mul8 ? ((int32_t)th->Y >> 5)   /* PRCCOORD_TO_YCOORD */
+                                        : ((int32_t)th->Y >> 8);  /* PRCCOORD_TO_MAPCOORD */
+                obj_snap[o].tz = (int32_t)th->Z >> 8;
+                obj_snap[o].matx = *(const int16_t *)((const char *)th + HWR_THING_MATX);
+                obj_snap[o].is_dynamic = 1;
+                obj_snap[o].is_vehicle = (uint8_t)is_veh;
+            } else {
+                obj_snap[o].is_dynamic = 0;
+                obj_snap[o].is_vehicle = 0;
+            }
+        }
+        obj_snap_count = o;
+        obj_snap_valid = 1;
+    }
 }
 
 int hwr_sw_camera_snapshot(int32_t *xc, int32_t *yc, int32_t *zc,
@@ -651,6 +748,15 @@ static int       face_index_count = 0;
 /* One bit per object: marks objects already emitted this frame (an object can be
  * referenced by several map columns). */
 static uint8_t   face_obj_seen[65536 / 8];
+
+/* --- Reflective (chameleon paint) face buffers, filled alongside sw_get_faces.
+ * GFlags&0x80 faces are diverted here instead of into the opaque face batch. */
+#define HWR_REFL_MAX_VERTS  (64 * 1024)
+#define HWR_REFL_MAX_INDEX  (96 * 1024)
+static HwrReflectVertex refl_verts[HWR_REFL_MAX_VERTS];
+static uint32_t         refl_index[HWR_REFL_MAX_INDEX];
+static int              refl_vert_count = 0;
+static int              refl_index_count = 0;
 
 /* Texture pages packed contiguously (18 * 256 * 256) for the GL texture array. */
 static uint8_t   floor_pages[HWR_TMAP_PAGES * HWR_TMAP_DIM * HWR_TMAP_DIM];
@@ -890,12 +996,98 @@ static void face_emit_vert(int wx, int wy, int wz, uint8_t u, uint8_t v,
     o->tile_depth = depth;
 }
 
-/* Build the world position of an object point. The object is placed at its
- * Thing position, cached at load: MapX/OffsetX = thing.X>>8, MapZ/OffsetZ =
- * thing.Z>>8 (world units, tile<<8) so they add directly; OffsetY = thing.Y>>8,
+/* Rotate an object-space normal by the object matrix (or identity) and return a
+ * unit world-space vector. Mirrors compute_normals_light_ratio's matrix_transform
+ * step; the chameleon shader then projects this against the camera factors. */
+static void hwr_world_normal(const HwrM33 *m, int nx, int ny, int nz, float out[3])
+{
+    double wx, wy, wz, len;
+    if (m != NULL) {
+        wx = (double)m->R[0][0]*nx + (double)m->R[0][1]*ny + (double)m->R[0][2]*nz;
+        wy = (double)m->R[1][0]*nx + (double)m->R[1][1]*ny + (double)m->R[1][2]*nz;
+        wz = (double)m->R[2][0]*nx + (double)m->R[2][1]*ny + (double)m->R[2][2]*nz;
+    } else {
+        wx = nx; wy = ny; wz = nz;
+    }
+    len = wx*wx + wy*wy + wz*wz;
+    if (len > 1e-9) {
+        len = 1.0 / sqrt(len);
+        out[0] = (float)(wx*len); out[1] = (float)(wy*len); out[2] = (float)(wz*len);
+    } else {
+        out[0] = 0.0f; out[1] = 1.0f; out[2] = 0.0f;
+    }
+}
+
+/* Emit one reflective (chameleon paint) vertex. */
+static void refl_emit_vert(int wx, int wy, int wz, const float n[3],
+    float base, float depth)
+{
+    HwrReflectVertex *o = &refl_verts[refl_vert_count++];
+    o->x = (float)wx; o->y = (float)wy; o->z = (float)wz;
+    o->nx = n[0]; o->ny = n[1]; o->nz = n[2];
+    o->depth = depth;
+    o->base = base;
+}
+
+/* Rotate a vehicle object point by its M33 matrix.
+ * Replicates transform_rot_object_shpoint: inputs scaled ×2, result >>15.
+ * Inputs are raw SinglePoint X/Y/Z (int16); output is the rotated world-space
+ * offset to add to the vehicle's tile position. */
+static void hwr_rotate_point(const HwrM33 *m,
+    int px, int py, int pz, int *rx, int *ry, int *rz)
+{
+    int64_t ix = (int64_t)px * 2;
+    int64_t iy = (int64_t)py * 2;
+    int64_t iz = (int64_t)pz * 2;
+    *rx = (int)((m->R[0][0]*ix + m->R[0][1]*iy + m->R[0][2]*iz) >> 15);
+    *ry = (int)((m->R[1][0]*ix + m->R[1][1]*iy + m->R[1][2]*iz) >> 15);
+    *rz = (int)((m->R[2][0]*ix + m->R[2][1]*iy + m->R[2][2]*iz) >> 15);
+}
+
+/* Reduce a vehicle's cornering lean. The matrix columns are the object's basis
+ * vectors in world space (col0=right, col1=up, col2=forward), magnitude 16384
+ * for unit. We blend the up axis a fraction of the way back toward world-up
+ * (factor 1.0 = no change/full lean, 0.0 = upright), re-orthonormalise (keeping
+ * the heading), and write the basis back. factor 0.5 = half the tilt. */
+static void hwr_reduce_tilt(const HwrM33 *in, HwrM33 *out, float factor)
+{
+    double rx,ry,rz, ux,uy,uz, fxx,fxy,fxz, l, d, ty;
+    /* Decode columns. */
+    rx=in->R[0][0]; ry=in->R[1][0]; rz=in->R[2][0];
+    ux=in->R[0][1]; uy=in->R[1][1]; uz=in->R[2][1];
+    fxx=in->R[0][2]; fxy=in->R[1][2]; fxz=in->R[2][2];
+    l = sqrt(ux*ux+uy*uy+uz*uz);
+    if (l < 1e-6) { *out = *in; return; }
+    ux/=l; uy/=l; uz/=l;
+    /* Target up = world up, sign matching current up so we don't flip. */
+    ty = (uy < 0.0) ? -1.0 : 1.0;
+    /* new_up = lerp(target, up, factor): factor 0 -> upright, 1 -> unchanged. */
+    ux = ux*factor;
+    uy = uy*factor + ty*(1.0-factor);
+    uz = uz*factor;
+    l = sqrt(ux*ux+uy*uy+uz*uz);
+    if (l < 1e-6) { *out = *in; return; }
+    ux/=l; uy/=l; uz/=l;
+    /* Gram-Schmidt forward and right against new up (keeps heading + handedness). */
+    l = sqrt(fxx*fxx+fxy*fxy+fxz*fxz); if (l>1e-6){fxx/=l;fxy/=l;fxz/=l;}
+    d = fxx*ux+fxy*uy+fxz*uz; fxx-=d*ux; fxy-=d*uy; fxz-=d*uz;
+    l = sqrt(fxx*fxx+fxy*fxy+fxz*fxz); if (l<1e-6){*out=*in;return;} fxx/=l;fxy/=l;fxz/=l;
+    l = sqrt(rx*rx+ry*ry+rz*rz); if (l>1e-6){rx/=l;ry/=l;rz/=l;}
+    d = rx*ux+ry*uy+rz*uz; rx-=d*ux; ry-=d*uy; rz-=d*uz;
+    d = rx*fxx+ry*fxy+rz*fxz; rx-=d*fxx; ry-=d*fxy; rz-=d*fxz;
+    l = sqrt(rx*rx+ry*ry+rz*rz); if (l<1e-6){*out=*in;return;} rx/=l;ry/=l;rz/=l;
+    /* Write basis back at unit magnitude 16384. */
+    out->R[0][0]=(int32_t)(rx*16384.0); out->R[1][0]=(int32_t)(ry*16384.0); out->R[2][0]=(int32_t)(rz*16384.0);
+    out->R[0][1]=(int32_t)(ux*16384.0); out->R[1][1]=(int32_t)(uy*16384.0); out->R[2][1]=(int32_t)(uz*16384.0);
+    out->R[0][2]=(int32_t)(fxx*16384.0); out->R[1][2]=(int32_t)(fxy*16384.0); out->R[2][2]=(int32_t)(fxz*16384.0);
+}
+
+/* Build the world position of a static building object point. Buildings are
+ * axis-aligned, so MapX/MapZ/OffsetY (cached at load) suffice directly.
  * For TT_BUILDING, thing_position_uses_y_mul_8 is false, so the render path uses
  * cor_dy = thing.Y>>8 = OffsetY directly (already in the floor's 8*Alt scale -
- * NO extra 8x, or buildings fly). Using 8*tile_alt instead sank some buildings. */
+ * NO extra 8x, or buildings fly). Using 8*tile_alt instead sank some buildings.
+ * Vehicles use hwr_rotate_point() + live Thing position instead of these macros. */
 #define FACE_OBJ_WORLDX(obj, pt) ((int)(uint16_t)(obj)->MapX + (int)(pt)->X)
 #define FACE_OBJ_WORLDZ(obj, pt) ((int)(uint16_t)(obj)->MapZ + (int)(pt)->Z)
 #define FACE_OBJ_WORLDY(obj, pt) ((int)(obj)->OffsetY + (int)(pt)->Y)
@@ -907,6 +1099,8 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
     (void)ctx;
     face_vert_count = 0;
     face_index_count = 0;
+    refl_vert_count = 0;
+    refl_index_count = 0;
     if (out != NULL) {
         out->verts = NULL; out->vert_count = 0;
         out->indices = NULL; out->index_count = 0;
@@ -927,22 +1121,108 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
 
     for (o = 1; o < next_object; o++) {
         struct HwrObject *obj = &game_objects[o];
-        int mtx = (uint16_t)obj->MapX >> 8;   /* MapX/Z are world units (tile<<8) */
-        int mtz = (uint16_t)obj->MapZ >> 8;
         int f;
+        /* World-space origin and optional rotation matrix for this object.
+         * Only TT_VEHICLE objects use the dynamic Thing position + rotation
+         * matrix (captured at gate time). Buildings, gates and other static
+         * objects keep the cached MapX/OffsetY/MapZ path with no rotation. */
+        int obj_tx, obj_ty, obj_tz;
+        const HwrM33 *obj_mat = NULL;
+        HwrM33 obj_mat_lvl;        /* tilt-reduced copy for vehicles */
+        int snapped    = (obj_snap_valid && o < obj_snap_count);
+        int is_dynamic = (snapped && obj_snap[o].is_dynamic);
+
+        if (is_dynamic) {
+            /* Dynamic object (vehicle / turret / rotor): position + matrix
+             * captured at floor-gate time (see obj_snap), so it is consistent
+             * with the camera snapshot this present uses. Reading live things[]
+             * here would draw it one sim-turn ahead of the camera -> swims
+             * against the road. */
+            int16_t matx_idx = obj_snap[o].matx;
+            obj_tx = obj_snap[o].tx;
+            obj_ty = obj_snap[o].ty;
+            obj_tz = obj_snap[o].tz;
+            /* Cull by captured tile position. */
+            if ((obj_tx >> 8) < x0 || (obj_tx >> 8) > x1 ||
+                (obj_tz >> 8) < z0 || (obj_tz >> 8) > z1)
+                continue;
+            if (matx_idx > 0 && matx_idx < (int16_t)next_local_mat) {
+                obj_mat = &snap_local_mats[matx_idx];
+                /* Halve the cornering lean for actual vehicles (not turrets/
+                 * rotors, which don't bank). */
+                if (obj_snap[o].is_vehicle) {
+                    hwr_reduce_tilt(obj_mat, &obj_mat_lvl, 0.5f);
+                    obj_mat = &obj_mat_lvl;
+                }
+            }
+        } else {
+            /* Static building: cached world-unit position, no rotation. */
+            int mtx = (uint16_t)obj->MapX >> 8;
+            int mtz = (uint16_t)obj->MapZ >> 8;
+            if (mtx < x0 || mtx > x1 || mtz < z0 || mtz > z1)
+                continue;
+            obj_tx = (int)(uint16_t)obj->MapX;
+            obj_ty = (int)obj->OffsetY;
+            obj_tz = (int)(uint16_t)obj->MapZ;
+        }
 
         /* One object can be referenced by several map columns; emit once. */
         if (face_obj_seen[o >> 3] & (1 << (o & 7)))
             continue;
         face_obj_seen[o >> 3] |= (uint8_t)(1 << (o & 7));
 
-        /* Cull by map placement against the visible tile window. */
-        if (mtx < x0 || mtx > x1 || mtz < z0 || mtz > z1)
-            continue;
-
         /* --- Quads (face4) --- */
         for (f = 0; f < obj->NumbFaces4; f++) {
             struct HwrObjFace4 *fc = &game_object_faces4[obj->StartFace4 + f];
+            /* Reflective ("chameleon") paint faces (FGFlg_Unkn80) are diverted to
+             * the reflective batch and drawn by the chameleon pass (view-angle hue
+             * shift + sheen) instead of as plain textured geometry. SW is told to
+             * skip them too (DrIT_ObFace*Refl suppression), so no double-draw.
+             * If normals are unavailable, fall through to the textured path so the
+             * face still renders (no holes). */
+            if ((fc->GFlags & 0x80) && game_normals != NULL && next_normal > 0) {
+                struct HwrSinglePoint *rp[4];
+                int rwx[4], rwy[4], rwz[4], rk, rbase;
+                float rsd, rn[4][3];
+                int16_t rsh[4];
+                if (refl_vert_count + 4 > HWR_REFL_MAX_VERTS ||
+                    refl_index_count + 6 > HWR_REFL_MAX_INDEX)
+                    continue;
+                rsh[0]=fc->Shade0; rsh[1]=fc->Shade1; rsh[2]=fc->Shade2; rsh[3]=fc->Shade3;
+                for (rk = 0; rk < 4; rk++) {
+                    rp[rk] = &game_object_points[fc->PointNo[rk]];
+                    if (obj_mat != NULL) {
+                        int dx, dy, dz;
+                        hwr_rotate_point(obj_mat, rp[rk]->X, rp[rk]->Y, rp[rk]->Z,
+                            &dx, &dy, &dz);
+                        rwx[rk] = obj_tx + dx; rwy[rk] = obj_ty + dy; rwz[rk] = obj_tz + dz;
+                    } else {
+                        rwx[rk] = obj_tx + (int)rp[rk]->X;
+                        rwy[rk] = obj_ty + (int)rp[rk]->Y;
+                        rwz[rk] = obj_tz + (int)rp[rk]->Z;
+                    }
+                    if (rsh[rk] >= 0 && rsh[rk] < (int16_t)next_normal) {
+                        struct HwrNormal *nn = &game_normals[rsh[rk]];
+                        hwr_world_normal(obj_mat, nn->NX, nn->NY, nn->NZ, rn[rk]);
+                    } else {
+                        rn[rk][0]=0.0f; rn[rk][1]=1.0f; rn[rk][2]=0.0f;
+                    }
+                }
+                rbase = refl_vert_count;
+                for (rk = 0; rk < 4; rk++) {
+                    rsd = face_scrd((float)rwx[rk], (float)rwy[rk], (float)rwz[rk]);
+                    refl_emit_vert(rwx[rk], rwy[rk], rwz[rk], rn[rk],
+                        (float)fc->ExCol, rsd);
+                }
+                /* Same diagonal as the textured quad: (0,2,1)+(3,1,2). */
+                refl_index[refl_index_count++] = rbase + 0;
+                refl_index[refl_index_count++] = rbase + 2;
+                refl_index[refl_index_count++] = rbase + 1;
+                refl_index[refl_index_count++] = rbase + 3;
+                refl_index[refl_index_count++] = rbase + 1;
+                refl_index[refl_index_count++] = rbase + 2;
+                continue;
+            }
             /* Object faces use the RAW Texture value as the index (no 0x3FFF
              * mask, no 0x8000 flag - those are floor-tile semantics). Mirror
              * set_floor_texture_uv: clamp an out-of-range index to 0 and still
@@ -980,9 +1260,18 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
 
             for (k = 0; k < 4; k++) {
                 p[k] = &game_object_points[fc->PointNo[k]];
-                wx[k] = FACE_OBJ_WORLDX(obj, p[k]);
-                wy[k] = FACE_OBJ_WORLDY(obj, p[k]);
-                wz[k] = FACE_OBJ_WORLDZ(obj, p[k]);
+                if (obj_mat != NULL) {
+                    int dx, dy, dz;
+                    hwr_rotate_point(obj_mat, p[k]->X, p[k]->Y, p[k]->Z,
+                        &dx, &dy, &dz);
+                    wx[k] = obj_tx + dx;
+                    wy[k] = obj_ty + dy;
+                    wz[k] = obj_tz + dz;
+                } else {
+                    wx[k] = obj_tx + (int)p[k]->X;
+                    wy[k] = obj_ty + (int)p[k]->Y;
+                    wz[k] = obj_tz + (int)p[k]->Z;
+                }
                 /* Per-vertex depth: faces are real 3D surfaces, so a single
                  * per-face depth makes overlapping/curved faces z-fight. */
                 sd[k] = face_scrd((float)wx[k], (float)wy[k], (float)wz[k]);
@@ -1007,6 +1296,46 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
         /* --- Triangles (face3) --- */
         for (f = 0; f < obj->NumbFaces; f++) {
             struct HwrObjFace3 *fc = &game_object_faces3[obj->StartFace + f];
+            /* Reflective ("chameleon") paint faces -> reflective batch (see face4). */
+            if ((fc->GFlags & 0x80) && game_normals != NULL && next_normal > 0) {
+                struct HwrSinglePoint *rp[3];
+                int rwx[3], rwy[3], rwz[3], rk, rbase;
+                float rsd, rn[3][3];
+                int16_t rsh[3];
+                if (refl_vert_count + 3 > HWR_REFL_MAX_VERTS ||
+                    refl_index_count + 3 > HWR_REFL_MAX_INDEX)
+                    continue;
+                rsh[0]=fc->Shade0; rsh[1]=fc->Shade1; rsh[2]=fc->Shade2;
+                for (rk = 0; rk < 3; rk++) {
+                    rp[rk] = &game_object_points[fc->PointNo[rk]];
+                    if (obj_mat != NULL) {
+                        int dx, dy, dz;
+                        hwr_rotate_point(obj_mat, rp[rk]->X, rp[rk]->Y, rp[rk]->Z,
+                            &dx, &dy, &dz);
+                        rwx[rk] = obj_tx + dx; rwy[rk] = obj_ty + dy; rwz[rk] = obj_tz + dz;
+                    } else {
+                        rwx[rk] = obj_tx + (int)rp[rk]->X;
+                        rwy[rk] = obj_ty + (int)rp[rk]->Y;
+                        rwz[rk] = obj_tz + (int)rp[rk]->Z;
+                    }
+                    if (rsh[rk] >= 0 && rsh[rk] < (int16_t)next_normal) {
+                        struct HwrNormal *nn = &game_normals[rsh[rk]];
+                        hwr_world_normal(obj_mat, nn->NX, nn->NY, nn->NZ, rn[rk]);
+                    } else {
+                        rn[rk][0]=0.0f; rn[rk][1]=1.0f; rn[rk][2]=0.0f;
+                    }
+                }
+                rbase = refl_vert_count;
+                for (rk = 0; rk < 3; rk++) {
+                    rsd = face_scrd((float)rwx[rk], (float)rwy[rk], (float)rwz[rk]);
+                    refl_emit_vert(rwx[rk], rwy[rk], rwz[rk], rn[rk],
+                        (float)fc->ExCol, rsd);
+                }
+                refl_index[refl_index_count++] = rbase + 0;
+                refl_index[refl_index_count++] = rbase + 1;
+                refl_index[refl_index_count++] = rbase + 2;
+                continue;
+            }
             /* Triangles index game_face_textures (struct SingleTexture, 3 UVs)
              * via set_face_texture_uv - NOT game_textures (the floor/quad array).
              * Using the wrong array sampled empty texels -> magenta/gaps. */
@@ -1035,9 +1364,18 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
 
             for (k = 0; k < 3; k++) {
                 p[k] = &game_object_points[fc->PointNo[k]];
-                wx[k] = FACE_OBJ_WORLDX(obj, p[k]);
-                wy[k] = FACE_OBJ_WORLDY(obj, p[k]);
-                wz[k] = FACE_OBJ_WORLDZ(obj, p[k]);
+                if (obj_mat != NULL) {
+                    int dx, dy, dz;
+                    hwr_rotate_point(obj_mat, p[k]->X, p[k]->Y, p[k]->Z,
+                        &dx, &dy, &dz);
+                    wx[k] = obj_tx + dx;
+                    wy[k] = obj_ty + dy;
+                    wz[k] = obj_tz + dz;
+                } else {
+                    wx[k] = obj_tx + (int)p[k]->X;
+                    wy[k] = obj_ty + (int)p[k]->Y;
+                    wz[k] = obj_tz + (int)p[k]->Z;
+                }
                 sd[k] = face_scrd((float)wx[k], (float)wy[k], (float)wz[k]);
             }
 
@@ -1058,6 +1396,22 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
     return face_index_count;
 }
 
+/* Hand back the reflective (chameleon paint) batch collected by sw_get_faces.
+ * Must be called after sw_get_faces() each frame (the floor pass calls faces
+ * before this). */
+static int sw_get_reflect_faces(void *ctx, HwrReflectBatch *out)
+{
+    (void)ctx;
+    if (out == NULL)
+        return 0;
+    out->verts = refl_verts;
+    out->vert_count = refl_vert_count;
+    out->indices = refl_index;
+    out->index_count = refl_index_count;
+    return refl_index_count;
+}
+
+
 /* Local cap matching HWR_MAX_LIGHTS in hwr_floor.c — keep in sync. */
 #define SW_LIGHTS_MAX 64
 
@@ -1076,6 +1430,40 @@ static int sw_get_lights(void *ctx, HwrLight *out, int max)
         return 0;
     if (max > SW_LIGHTS_MAX)
         max = SW_LIGHTS_MAX;
+
+    /* Reserve light slots for nearby vehicle headlights/tails so the map lights
+     * (a city is densely lit) don't fill all 64 and starve them. Count vehicles
+     * within range of the camera; each contributes 2 lights.
+     *
+     * The cull disc is centred not on the camera look-point but SHIFTED forward
+     * along the view direction (the camera is always angled), so its near edge
+     * sits further from the viewer and its outer edge reaches well into the
+     * scene. Used by both the reserve count and the placement loop below. */
+    long veh_cull_cx, veh_cull_cz;
+    const long VEH_CULL_RANGE2 = 5120L * 5120L;   /* ~20 tiles outer radius */
+    {
+        float vfx = (float)snap.D10, vfz = (float)snap.D14;   /* into-screen XZ dir */
+        float vfl = (float)sqrt(vfx*vfx + vfz*vfz);
+        const float VEH_CULL_SHIFT = 1536.0f;                 /* push ~6 tiles into scene */
+        if (vfl > 1e-3f) { vfx /= vfl; vfz /= vfl; }
+        veh_cull_cx = snap.xc + (long)(vfx * VEH_CULL_SHIFT);
+        veh_cull_cz = snap.zc + (long)(vfz * VEH_CULL_SHIFT);
+    }
+    int veh_reserve = 0;
+    {
+        if (obj_snap_valid) {
+            unsigned o; int nv = 0;
+            for (o = 1; o < obj_snap_count; o++) {
+                long ddx, ddz;
+                if (!obj_snap[o].is_vehicle) continue;
+                ddx = (long)obj_snap[o].tx - veh_cull_cx;
+                ddz = (long)obj_snap[o].tz - veh_cull_cz;
+                if (ddx*ddx + ddz*ddz <= VEH_CULL_RANGE2) nv++;
+            }
+            veh_reserve = nv * 4;                      /* 2 headlights + 2 tails per car */
+            if (veh_reserve > 32) veh_reserve = 32;    /* cap: ~8 nearest cars */
+        }
+    }
 
     /* --- Debug: dump all light IDs when light_debug is enabled --- */
     if (hwr_lights_defaults().light_debug) {
@@ -1213,7 +1601,7 @@ static int sw_get_lights(void *ctx, HwrLight *out, int max)
         dz = (int)fl->Z - cz;
         d2 = dx*dx + dz*dz;
 
-        if (nnearest < max) {
+        if (nnearest < max - veh_reserve) {
             nearest[nnearest].idx   = i;
             nearest[nnearest].dist2 = d2;
             nnearest++;
@@ -1236,6 +1624,7 @@ static int sw_get_lights(void *ctx, HwrLight *out, int max)
         out[i].x = (float)fl->X + 70.0f;    /* 70 PRC east */
         out[i].y = (float)fl->Y;
         out[i].z = (float)fl->Z + 50.0f;    /* 50 PRC south */
+        out[i].fdx = 0.0f; out[i].fdz = 0.0f;   /* map lights are round */
         if (fl->TrueIntensity < 0) {
             /* Anti-light: shader reads .r as the darkening amount and the
              * negative radius as the flag. Use TrueIntensity (stable,
@@ -1305,6 +1694,91 @@ static int sw_get_lights(void *ctx, HwrLight *out, int max)
         }
     }
 
+    /* --- Vehicle headlights + tail lights ---------------------------------
+     * Each vehicle gets a white point light a short way IN FRONT (a round pool
+     * on the road/buildings, exactly like the original) and a red point light
+     * behind. These reuse the normal point-light path (radial falloff), so no
+     * separate pass is needed. Positions are MAPCOORD, matching out[].x/z and
+     * the floor/face world coords. Forward comes from the vehicle matrix. */
+    hwr_sw_vehicle_lights = 0;
+    if (obj_snap_valid) {
+        int veh_light_start = nnearest;
+        /* Tunables (MAPCOORD; 256 = one tile). */
+        const float HL_FRONT_OFF = 420.0f;   /* lamp position ahead of centre (egg extends further forward) */
+        const float HL_REAR_OFF  = 340.0f;   /* tail position behind centre */
+        const float HL_SIDE      = 70.0f;    /* L/R lamp offset from the centreline */
+        const int   HL_FWD_SIGN  = -1;        /* flip if pools land at wrong end */
+        const float HL_REACH     = 900.0f;   /* headlight forward reach (egg length) */
+        const float TL_POOL2     = 100.0f*100.0f*2.0f;  /* tail cull radius² */
+        const float HL_BRIGHT    = 3.0f;
+        const float TL_BRIGHT    = 2.4f;
+        unsigned o;
+        for (o = 1; o < obj_snap_count && nnearest + 4 <= max; o++) {
+            const HwrM33 *m;
+            float fx, fz, rx, rz, fl;
+            float tx, ty, tz;
+            long ddx, ddz;
+            int s;
+            if (!obj_snap[o].is_vehicle)
+                continue;
+            ddx = (long)obj_snap[o].tx - veh_cull_cx;
+            ddz = (long)obj_snap[o].tz - veh_cull_cz;
+            if (ddx*ddx + ddz*ddz > VEH_CULL_RANGE2)
+                continue;   /* only cars within the (shifted) cull disc get lights */
+            tx = (float)obj_snap[o].tx;
+            ty = (float)obj_snap[o].ty;
+            tz = (float)obj_snap[o].tz;
+            /* Forward and right (XZ) from the vehicle matrix; fall back to axes. */
+            m = (obj_snap[o].matx > 0 && obj_snap[o].matx < (int16_t)next_local_mat)
+                ? &snap_local_mats[obj_snap[o].matx] : NULL;
+            if (m != NULL) {
+                int dx, dy, dz;
+                hwr_rotate_point(m, 0, 0, 256, &dx, &dy, &dz);
+                fx = (float)dx; fz = (float)dz;
+                hwr_rotate_point(m, 256, 0, 0, &dx, &dy, &dz);
+                rx = (float)dx; rz = (float)dz;
+            } else {
+                fx = 0.0f; fz = 256.0f; rx = 256.0f; rz = 0.0f;
+            }
+            fl = (float)sqrt(fx*fx + fz*fz);
+            if (fl > 1e-3f) { fx /= fl; fz /= fl; }
+            fl = (float)sqrt(rx*rx + rz*rz);
+            if (fl > 1e-3f) { rx /= fl; rz /= fl; }
+            fx *= (float)HL_FWD_SIGN; fz *= (float)HL_FWD_SIGN;
+
+            for (s = -1; s <= 1; s += 2) {
+                float ox = rx * (HL_SIDE * s), oz = rz * (HL_SIDE * s);
+                /* Headlight (shaped/egg): warm-white, projecting forward. */
+                out[nnearest].x = tx + fx*HL_FRONT_OFF + ox;
+                out[nnearest].y = ty;
+                out[nnearest].z = tz + fz*HL_FRONT_OFF + oz;
+                out[nnearest].r = 1.00f * HL_BRIGHT;
+                out[nnearest].g = 0.93f * HL_BRIGHT;
+                out[nnearest].b = 0.78f * HL_BRIGHT;
+                out[nnearest].radius = 1.0f;          /* >0 = positive light */
+                out[nnearest].max_dist2 = HL_REACH * HL_REACH;
+                out[nnearest].fdx = fx;               /* shaped: teardrop along forward */
+                out[nnearest].fdz = fz;
+                nnearest++;
+            }
+            for (s = -1; s <= 1; s += 2) {
+                float ox = rx * (HL_SIDE * s), oz = rz * (HL_SIDE * s);
+                /* Tail (round): red pool behind. */
+                out[nnearest].x = tx - fx*HL_REAR_OFF + ox;
+                out[nnearest].y = ty;
+                out[nnearest].z = tz - fz*HL_REAR_OFF + oz;
+                out[nnearest].r = 1.00f * TL_BRIGHT;
+                out[nnearest].g = 0.05f * TL_BRIGHT;
+                out[nnearest].b = 0.00f;
+                out[nnearest].radius = 1.0f;
+                out[nnearest].max_dist2 = TL_POOL2;
+                out[nnearest].fdx = 0.0f; out[nnearest].fdz = 0.0f;
+                nnearest++;
+            }
+        }
+        hwr_sw_vehicle_lights = nnearest - veh_light_start;
+    }
+
     return nnearest;
 }
 
@@ -1365,6 +1839,7 @@ static HwrSceneSource sw_source = {
     sw_get_camera,
     sw_get_floor,
     sw_get_faces,
+    sw_get_reflect_faces,
     sw_get_lights,
     sw_get_sprites,
     sw_get_palette,

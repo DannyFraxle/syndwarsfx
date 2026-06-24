@@ -262,10 +262,39 @@ Planned sub-tasks:
 
 ---
 
-### Phase 7 — Vehicles
+### Phase 7 — Vehicles ✅ (2026-06-24)
 
-Moving and rotating vehicle rendering in GL. Includes vehicle-mounted lights
-(e.g. headlights and flashing police car lights). chameleon paint areas (also called colour-shift, flip paint, or spectraflair-style paint) & reflection on cars.
+Moving, rotating vehicles render as 3D geometry with metallic paint and lights.
+
+Implemented:
+- **3D bodies tracking movement**: vehicle (and turret/rotor) faces use the live
+  Thing position + rotation matrix instead of the cached building placement.
+  `obj_snap` in `source_sw.c` captures per-object position/matrix at floor-gate
+  time (so it matches the camera snapshot); `hwr_rotate_point()` rotates points.
+  - Dynamic path gated to: `TT_VEHICLE`, `TT_BUILDING/SubTT_BLD_MGUN` (turrets,
+    Y>>5), `TT_BUILDING/SubTT_BLD_MOVN_ROTOR` (Y>>8). Everything else keeps the
+    static cached path — fixed regressions where buildings floated and gates
+    broke.
+  - **Y scale gotcha**: vehicles use `PRCCOORD_TO_YCOORD` = `Y>>5` (not `>>8`).
+- **Chameleon / spectraflair paint**: reflective faces (`GFlags & 0x80`) are
+  diverted to a dedicated `hwr_reflect_render` pass (in `hwr_floor.c`) — a
+  procedural fragment shader does a deep, view-angle hue sweep
+  (green→blue→purple) + thin sweeping streak highlights, modulated by scene
+  lighting so it darkens in shadow. SW `DrIT_ObFace*Refl` suppressed under FX3D.
+- **Headlights + tail lights** as point lights injected into `sw_get_lights`
+  (reuses the floor/face radial-lighting path — round pools on road/buildings,
+  no separate pass): two white **egg-shaped** headlights (the point light gained
+  a forward dir `fdx/fdz` + teardrop falloff in the floor shader — narrow/bright
+  near the lamp, widening forward) and two round red tails. Reserved light slots
+  so they aren't starved; culled to a view-shifted disc (camera is angled).
+  A car's own lamps are excluded from its paint (`hwr_sw_vehicle_lights`) so it
+  doesn't self-illuminate.
+- **Cornering lean halved**: `hwr_reduce_tilt()` blends the body's up-axis
+  partway back to world-up for rendering only (physics unchanged).
+
+NOT done (deferred): flashing police lights (RM 2), per-headlight cast shadows
+(RM); vehicle ground shadow darkening was attempted and reverted (the SW model
+shadow is invisible over the keyed floor; see Phase 10 notes).
 
 ---
 
@@ -288,6 +317,32 @@ aligns the GL projection precisely with the SW engine view. Enable ini option to
 
 Bug fixing, edge-case handling, performance tuning, and final lighting
 calibration pass across multiple levels. Better rain atmospherics. Full-framerate scrolling (game ticks at 16 fps, scroll at monitor refresh hz)
+
+**Full-framerate scrolling — investigation notes (2026-06-23):**
+The loop is hard-locked to 16 fps: `is_game_turn_due()` always returns true and
+`wait_next_displayframe()` == `wait_next_gameturn()` (`src/game_speed.c`); sim
+and display are not decoupled (the documented TODO on `game_num_fps`). Vsync is
+already on (`SDL_GL_SetSwapInterval(1)` in `hwr_init.c`), so the present blocks
+to monitor Hz — decoupling is the only blocker.
+
+A **GL-only camera-interpolation** spike was tried and reverted: decouple the
+loop (time-based `is_game_turn_due`), keep two camera keyframes in
+`source_sw.c`, and blend them per display frame. It made *everything shake
+violently* when the camera moved. Root cause: the SW overlay composited over the
+3D scene (HUD, shadows, vehicle chrome/reflective faces) is **frozen** for the
+whole 62 ms sim-turn, so interpolating only the GL world slides it under the
+frozen overlay and snaps back each turn — a 16 Hz sawtooth. **Conclusion:
+GL-only interpolation is not viable while any world-locked SW overlay is drawn
+over the GL scene.**
+
+Viable approaches (pick when tackling this):
+1. Re-render *both* layers per display frame with an interpolated camera — keeps
+   them in sync, but runs SW rasterisation at screen Hz (~4× load).
+2. Migrate the remaining world-locked SW overlay (shadows, reflective/chrome
+   faces) into the GL pipeline, leaving only the screen-space HUD in SW — then
+   GL-only interpolation works. Preferred long-term.
+3. Full decoupling with Thing-position interpolation (smooth moving objects too)
+   — overlaps with v2.0 **RM 5** (motion tweening).
 
 ---
 
