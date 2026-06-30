@@ -40,12 +40,21 @@ static const char *blit_frag_src =
     "uniform sampler2D uScreen;   // R8, palette index in 0..255\n"
     "uniform sampler2D uPalette;  // RGB8 256x1, full-range 8-bit colour\n"
     "uniform int uKey;            // index to discard (<0 = none)\n"
+    "uniform float uAlpha;        // background opacity (<1 = transparent HUD fill)\n"
+    "uniform float uBgLuma;       // luminance threshold: pixels below are background\n"
+    "                             //   (get uAlpha); pixels above are content (solid).\n"
+    "                             //   Set to 0 to make everything solid (uBgLuma<=0).\n"
     "void main(){\n"
     "    float idx = texture(uScreen, vUV).r * 255.0;\n"
     "    if (uKey >= 0 && int(idx + 0.5) == uKey)\n"
     "        discard;             // let the 3D scene below show through\n"
     "    vec3 c = texture(uPalette, vec2((idx + 0.5) / 256.0, 0.5)).rgb;\n"
-    "    frag = vec4(c, 1.0);\n"
+    "    float a = 1.0;\n"
+    "    if (uBgLuma > 0.0) {\n"
+    "        float luma = dot(c, vec3(0.299, 0.587, 0.114));\n"
+    "        a = (luma < uBgLuma) ? uAlpha : 1.0;\n"
+    "    }\n"
+    "    frag = vec4(c, a);\n"
     "}\n";
 
 static GLuint blit_prog = 0;
@@ -56,6 +65,8 @@ static GLuint blit_pal_tex = 0;
 static GLint  blit_loc_screen = -1;
 static GLint  blit_loc_palette = -1;
 static GLint  blit_loc_key = -1;
+static GLint  blit_loc_alpha = -1;
+static GLint  blit_loc_bgluma = -1;
 static int    blit_ready = 0;
 
 static GLuint compile_shader(GLenum type, const char *src)
@@ -110,6 +121,8 @@ static int blit_init(void)
     blit_loc_screen  = glGetUniformLocation(blit_prog, "uScreen");
     blit_loc_palette = glGetUniformLocation(blit_prog, "uPalette");
     blit_loc_key     = glGetUniformLocation(blit_prog, "uKey");
+    blit_loc_alpha   = glGetUniformLocation(blit_prog, "uAlpha");
+    blit_loc_bgluma  = glGetUniformLocation(blit_prog, "uBgLuma");
 
     glGenVertexArrays(1, &blit_vao);
     glBindVertexArray(blit_vao);
@@ -141,7 +154,7 @@ static int blit_init(void)
 }
 
 static void blit_core(const uint8_t *px, int w, int h, int pitch,
-    const uint8_t *pal, int key_index, int do_clear)
+    const uint8_t *pal, int key_index, int do_clear, float alpha, float bg_luma)
 {
     if (!hwr_is_ready() || px == NULL || w <= 0 || h <= 0)
         return;
@@ -153,7 +166,13 @@ static void blit_core(const uint8_t *px, int w, int h, int pitch,
 
     hwr_sync_viewport();   /* the window resizes per game video mode */
     glDisable(GL_DEPTH_TEST);   /* the overlay sits on top of the 3D scene */
-    glDisable(GL_BLEND);
+    if (alpha < 1.0f) {
+        /* Transparent HUD: blend the overlay over the 3D scene. */
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    } else {
+        glDisable(GL_BLEND);
+    }
     if (do_clear)
         glClear(GL_COLOR_BUFFER_BIT);
 
@@ -174,10 +193,15 @@ static void blit_core(const uint8_t *px, int w, int h, int pitch,
     glUniform1i(blit_loc_screen, 0);
     glUniform1i(blit_loc_palette, 1);
     glUniform1i(blit_loc_key, key_index);
+    glUniform1f(blit_loc_alpha, alpha);
+    glUniform1f(blit_loc_bgluma, bg_luma);
 
     glBindVertexArray(blit_vao);
     glDrawArrays(GL_TRIANGLES, 0, 6);
     glBindVertexArray(0);
+
+    if (alpha < 1.0f)
+        glDisable(GL_BLEND);
 
     hwr_gl_check("blit_core");
 }
@@ -186,12 +210,28 @@ void hwr_present_indexed(const uint8_t *px, int w, int h, int pitch,
     const uint8_t *pal)
 {
     /* Full opaque blit: clear first, no key (menus / non-engine screens). */
-    blit_core(px, w, h, pitch, pal, -1, 1);
+    blit_core(px, w, h, pitch, pal, -1, 1, 1.0f, 0.0f);
 }
 
 void hwr_present_indexed_keyed(const uint8_t *px, int w, int h, int pitch,
     const uint8_t *pal, int key_index)
 {
     /* Overlay over the already-rendered 3D scene: no clear, discard key pixels. */
-    blit_core(px, w, h, pitch, pal, key_index, 0);
+    blit_core(px, w, h, pitch, pal, key_index, 0, 1.0f, 0.0f);
+}
+
+void hwr_present_indexed_keyed_alpha(const uint8_t *px, int w, int h, int pitch,
+    const uint8_t *pal, int key_index, float alpha)
+{
+    /* Keyed overlay, blended at `alpha` over the 3D scene (transparent HUD). */
+    blit_core(px, w, h, pitch, pal, key_index, 0, alpha, 0.0f);
+}
+
+void hwr_present_indexed_keyed_luma(const uint8_t *px, int w, int h, int pitch,
+    const uint8_t *pal, int key_index, float bg_alpha, float bg_luma)
+{
+    /* Keyed overlay with per-pixel luma split: pixels below bg_luma threshold
+     * are composited at bg_alpha (panel background fill); pixels at or above
+     * are fully opaque (outlines, numbers, powerbar, map). */
+    blit_core(px, w, h, pitch, pal, key_index, 0, bg_alpha, bg_luma);
 }

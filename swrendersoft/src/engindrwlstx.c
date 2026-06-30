@@ -20,10 +20,12 @@
 #include "engindrwlstx.h"
 
 #include <assert.h>
+#include <string.h>
 
 #include "enginbckt.h"
 #include "enginfloor.h"
 #include "enginshadws.h"
+#include "enginsngobjs.h"
 #include "enginsngtxtr.h"
 /******************************************************************************/
 
@@ -46,7 +48,51 @@ int engine_hwr_suppress_faces = 0;
 /* When nonzero, Thing-based sprite draw items are skipped during drawlist
  * execution so the FX3D renderer can draw them as camera-facing billboards. */
 int engine_hwr_suppress_sprites = 0;
-unsigned char hwr_sprite_skip_mask[256] = {0};
+/* 512 bytes = 4096 bits: game_sort_sprites holds up to 4001 entries, so a
+ * 256-byte (2048-bit) mask overflowed when smoke pushed the sort-sprite count
+ * past 2048 — high-index sprites couldn't be suppressed (software smoke drew on
+ * top of the GL billboards) and the collection wrote out of bounds. */
+unsigned char hwr_sprite_skip_mask[512] = {0};
+
+/* Per-effect skip masks for the dedicated fire/phwoar arrays (separate index
+ * namespaces from the Thing sort-sprites). A set bit means the FX3D renderer
+ * collected that effect as a translucent billboard, so the SW draw is skipped.
+ * 512 flames -> 64 bytes, 1024 phwoar -> 128 bytes. Set by the FX3D scene
+ * source, cleared each frame alongside hwr_sprite_skip_mask. */
+unsigned char hwr_fire_skip_mask[64] = {0};
+unsigned char hwr_phwoar_skip_mask[128] = {0};
+
+/* FX3D Phase 8: bitset of object indices the SW engine decided are
+ * semi-transparent this frame (deep-radar see-through buildings). Set in
+ * draw_object() during drawlist build (which always runs, even when face draw
+ * is suppressed) and read by the FX3D scene source to route those objects'
+ * faces into the blended transparent pass. Cleared each frame in
+ * reset_drawlist(). 8192 bytes covers all 16-bit object indices. */
+unsigned char hwr_obj_transp_mask[8192] = {0};
+
+/* FX3D: bitset of object indices the SW drawlist build actually drew this frame
+ * (draw_object set the bit). The GL face emitter brute-forces every entry in
+ * game_objects[], which would keep drawing buildings the SW engine has stopped
+ * traversing (destroyed/collapsed buildings still linger in the array). Gating
+ * the GL static-object faces on this mask makes GL match SW exactly. Set in
+ * draw_object during the build; cleared once per frame in process_engine_unk3
+ * (game.c) alongside hwr_obj_transp_mask. Keyed by game_objects[] index. */
+unsigned char hwr_obj_live_mask[8192] = {0};
+
+/* FX3D: world-space positions of the light "glares" (car headlights / street
+ * lamps) enlisted this frame by build_glare(). These are screen-space additive
+ * quads in SW (special-obj-face4 mode 9), which the GL emitter can't reuse, so
+ * build_glare records the lamp world pos + radius here and the FX3D scene source
+ * draws them as additive glow billboards instead. Cleared at frame start in
+ * process_engine_unk3 (game.c); the SW draw of these glare faces is suppressed
+ * under FX3D (see drawitem_is_suppressed_glare). */
+struct HwrGlare hwr_glare_list[HWR_GLARE_MAX];
+int hwr_glare_count = 0;
+
+/* CarGlare.Flag sequence for the current do_car_glare() (see header). */
+int hwr_glare_flag_seq[HWR_GLARE_FLAG_MAX];
+int hwr_glare_flag_n = 0;
+int hwr_glare_flag_pos = 0;
 
 /* True for the opaque face draw-item types the FX3D renderer takes over. */
 static TbBool drawitem_is_suppressed_face(ubyte type)
@@ -70,6 +116,11 @@ static TbBool drawitem_is_suppressed_face(ubyte type)
      * draw to avoid double-drawing them over the 3D scene. */
     case DrIT_ObFace3Refl:
     case DrIT_ObFace4Refl:
+    /* Semi-transparent (deep-radar see-through) faces are drawn by the FX3D
+     * blended transparent pass; suppress the SW tinted draw so it doesn't
+     * paint over the 3D scene. */
+    case DrIT_ObFace3Tran:
+    case DrIT_ObFace4Tran:
         return true;
     default:
         return false;
@@ -86,6 +137,40 @@ static TbBool drawitem_is_suppressed_sprite(const struct DrawItem *itm)
     ushort ss_idx = itm->Offset;
     if (hwr_sprite_skip_mask[ss_idx >> 3] & (1 << (ss_idx & 7)))
         return true;
+    return false;
+}
+
+/* Returns true when the draw item is a light "glare" (headlight / lamp) special
+ * face the FX3D renderer draws as an additive glow billboard instead. Glares are
+ * special-obj-face4 entries with mode (Flags) 9 or 10 (set by build_glare). */
+static TbBool drawitem_is_suppressed_glare(const struct DrawItem *itm)
+{
+    if (!engine_hwr_suppress_faces)
+        return false;
+    if (itm->Type != DrIT_SpObFace4 || game_special_obj_faces4 == NULL)
+        return false;
+    {
+        ubyte fl = game_special_obj_faces4[itm->Offset].Flags;
+        /* 9/10 = light glares (GL additive billboards); 15 = tinted slices
+         * (laser/lightning) and 17 = shaded circle fans (shield-hit / blast /
+         * recoil / nuclear discs) -> GL overlay quads. */
+        return (fl == 9 || fl == 10 || fl == 15 || fl == 17);
+    }
+}
+
+/* Returns true when the draw item is a fire/phwoar effect the FX3D renderer has
+ * collected as a translucent billboard (per-effect skip masks, separate index
+ * namespaces from the Thing sort-sprites). */
+static TbBool drawitem_is_suppressed_effect(const struct DrawItem *itm)
+{
+    ushort idx;
+    if (!engine_hwr_suppress_sprites)
+        return false;
+    idx = itm->Offset;
+    if (itm->Type == DrIT_SFireFlame && idx < 512)
+        return (hwr_fire_skip_mask[idx >> 3] & (1 << (idx & 7))) != 0;
+    if (itm->Type == DrIT_SFrmPhwoar && idx < 1024)
+        return (hwr_phwoar_skip_mask[idx >> 3] & (1 << (idx & 7))) != 0;
     return false;
 }
 
@@ -149,6 +234,12 @@ void reset_drawlist(void)
     tnext_floor_texture = next_floor_texture;
 
     next_floor_tile = 1;
+    /* NOTE: the FX3D deep-radar transparent-object mask (hwr_obj_transp_mask) is
+     * NOT cleared here. reset_drawlist() can run multiple times per frame (e.g.
+     * game.c process_engine_unk3 and lvdraw3d func_2e440), which would wipe the
+     * bits draw_object() set during the build before the GL present consumes
+     * them. Instead the mask is cleared at the end of sw_get_faces() once the
+     * present has read it. */
 }
 
 // Special non-textured draw; used during nuclear explosions?
@@ -169,6 +260,10 @@ void draw_drawitem_1(ushort dihead)
           hwr_run_sprite_pick(itm->Offset, itm->Type);
           continue;
       }
+      if (drawitem_is_suppressed_effect(itm))
+          continue;
+      if (drawitem_is_suppressed_glare(itm))
+          continue;
       switch (itm->Type)
       {
       case DrIT_ObFace3Txtr:
@@ -247,6 +342,10 @@ void draw_drawitem_2(ushort dihead)
           hwr_run_sprite_pick(itm->Offset, itm->Type);
           continue;
       }
+      if (drawitem_is_suppressed_effect(itm))
+          continue;
+      if (drawitem_is_suppressed_glare(itm))
+          continue;
       switch (itm->Type)
       {
       case DrIT_ObFace3Txtr:

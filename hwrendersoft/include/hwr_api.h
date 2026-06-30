@@ -101,6 +101,28 @@ int hwr_reflect_render(const uint8_t *pal8);
  *  and face passes, before SSAO resolve. Returns nonzero if anything drew. */
 int hwr_sprites_render(const uint8_t *pal8, int filter_linear);
 
+/** Render semi-transparent faces (Phase 8): deep-radar see-through buildings
+ *  and static glass/fence faces, pulled from get_transparent_faces and drawn
+ *  alpha-blended over the opaque scene (depth-tested, not depth-writing). Call
+ *  after hwr_faces_render. Returns nonzero if anything drew. */
+int hwr_transparent_render(const uint8_t *pal8, int filter_linear);
+
+/** Configure the transparent face pass (from fx3d_lights.ini [transparency]):
+ *  enable toggles it; alpha is the blended fragment opacity (0..1);
+ *  deepradar_idx is the palette index used to flat-tint deep-radar see-through
+ *  buildings (the syndicate purple, default 216). */
+void hwr_transparent_config(int enable, float alpha, int deepradar_idx);
+
+/** Render translucent sprite billboards (Phase 8): fire/flame/smoke/glow
+ *  effects flagged HWR_BILLBOARD_TRANSLUCENT, drawn blended (additive for
+ *  emissive, alpha otherwise) after the opaque sprite pass. Returns nonzero if
+ *  anything drew. */
+int hwr_sprites_trans_render(const uint8_t *pal8, int filter_linear);
+
+/** Configure the translucent sprite pass: enable toggles it; alpha scales the
+ *  per-sprite opacity (0..1). */
+void hwr_sprites_trans_config(int enable, float alpha);
+
 /** Drop cached sprite atlas and state; call on level change. */
 void hwr_sprites_reset(void);
 
@@ -112,6 +134,17 @@ void hwr_floor_reset(void);
  *  hwr_present_indexed but with the compositing key; key_index < 0 disables it. */
 void hwr_present_indexed_keyed(const uint8_t *px, int w, int h, int pitch,
     const uint8_t *pal, int key_index);
+
+/** As hwr_present_indexed_keyed, but blends the (non-key) overlay over the 3D
+ *  scene at `alpha` (0..1) — used for the transparent HUD panel option. */
+void hwr_present_indexed_keyed_alpha(const uint8_t *px, int w, int h, int pitch,
+    const uint8_t *pal, int key_index, float alpha);
+
+/** As hwr_present_indexed_keyed_alpha but applies alpha only to pixels whose
+ *  palette colour has luminance below bg_luma (the panel background fill);
+ *  brighter pixels (outlines, numbers, map) are fully opaque. */
+void hwr_present_indexed_keyed_luma(const uint8_t *px, int w, int h, int pitch,
+    const uint8_t *pal, int key_index, float bg_alpha, float bg_luma);
 
 /** Configure screen-space ambient occlusion (from fx3d_lights.ini). enable
  *  toggles the whole G-buffer path; radius is the screen-space sample radius
@@ -135,6 +168,12 @@ void hwr_ssao_begin(int w, int h);
  *  is already in the back buffer). Call after the floor/face passes, before the
  *  keyed HUD overlay. */
 void hwr_ssao_resolve(void);
+
+/** Nonzero when the SSAO G-buffer (MRT: colour @0 + world-position @1) is the
+ *  bound draw target between hwr_ssao_begin() and hwr_ssao_resolve(). Blended
+ *  passes that share the G-buffer use this to restrict their draw to the colour
+ *  attachment so they don't corrupt the world-position attachment. */
+int hwr_ssao_active(void);
 
 /** Configure the directional sun and shadow map (from fx3d_lights.ini [sun]).
  *  enable toggles the whole shadow-map path; brightness is the lit-ground

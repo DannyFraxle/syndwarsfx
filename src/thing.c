@@ -1591,7 +1591,13 @@ short new_thing_smoke_gen_clone(struct SimpleThing *p_clsthing)
     p_sthing->StartTimer1 = p_clsthing->StartTimer1;
     p_sthing->U.UEffect.OX = p_clsthing->U.UEffect.OX;
     p_sthing->U.UEffect.OY = p_clsthing->U.UEffect.OY;
-    p_sthing->U.UEffect.OZ = p_clsthing->U.UEffect.OZ;
+    /* OZ is the smoke-generator's spawn interval: process_smoke_generator resets
+     * the countdown to ~OZ after each puff. Halve it to roughly double the number
+     * of smoke particles emitted (keep >=1 to avoid a divide-by-zero in the
+     * timer reset). */
+    p_sthing->U.UEffect.OZ = p_clsthing->U.UEffect.OZ / 2;
+    if (p_sthing->U.UEffect.OZ < 1)
+        p_sthing->U.UEffect.OZ = 1;
     return thing;
 }
 

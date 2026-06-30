@@ -179,12 +179,14 @@
 
 /** details on how much and how fast to rotate/tilt/zoom the camera.
  */
-#define CAMERA_TILT_MIN -192
-#define CAMERA_TILT_MAX -152
+#define CAMERA_TILT_MIN -232
+#define CAMERA_TILT_MAX -90
 #define CAMERA_ZOOM_MIN 120
 #define CAMERA_ZOOM_MAX 256
 #define CAMERA_ROTATION_INPUT_MULTIPLIER 256
 #define CAMERA_TILT_INPUT_MULTIPLIER 4
+#define MOUSE_ROTATE_SENSITIVITY  96
+#define MOUSE_TILT_SENSITIVITY    1
 
 enum PostRenderAction {
     PRend_NONE = 0,
@@ -1839,6 +1841,19 @@ void process_engine_unk3(void)
     PlayerInfo *p_locplayer;
 
     get_engine_inputs();
+
+    /* FX3D Phase 8: clear the deep-radar transparent-object mask once per frame,
+     * before the drawlist build (engine_draw_things -> draw_object) repopulates
+     * it. Cleared here rather than in reset_drawlist() (which runs several times
+     * per frame) or in sw_get_faces() (called several times per GL present), both
+     * of which caused the see-through buildings to flicker. */
+    memset(hwr_obj_transp_mask, 0, sizeof(hwr_obj_transp_mask));
+    /* FX3D: clear the live-object mask too; draw_object repopulates it during the
+     * build so the GL face emitter only draws objects SW still traverses. */
+    memset(hwr_obj_live_mask, 0, sizeof(hwr_obj_live_mask));
+    /* FX3D: reset the light-glare list; build_glare repopulates it during the
+     * build, the FX3D renderer draws them as additive glow billboards. */
+    hwr_glare_count = 0;
 
     reset_drawlist();
     ingame.NextRocket = 0;
@@ -4913,16 +4928,16 @@ void do_scroll_map(void)
     ctlmode = p_locplayer->UserInput[byte_153198-1].ControlMode & ~UInpCtr_AllFlagsMask;
     engn_xc_orig = engn_xc;
     engn_zc_orig = engn_zc;
-    if (ctlmode == UInpCtr_Mouse || PacketRecord_IsPlayback())
-    {
-        // Only allow scroll view if panel is not used
-        if (p_locplayer->PanelState[mouser] == PANEL_STATE_NORMAL)
+        if ((ctlmode == UInpCtr_Mouse && !lbDisplay.MMiddleButton) || PacketRecord_IsPlayback())
         {
-            scroll_map_input(&dx, &dy);
-            scroll_map_update_alt();
-            dampr = 9;
+            // Only allow scroll view if panel is not used
+            if (p_locplayer->PanelState[mouser] == PANEL_STATE_NORMAL)
+            {
+                scroll_map_input(&dx, &dy);
+                scroll_map_update_alt();
+                dampr = 9;
+            }
         }
-    }
 
     abase = -engn_anglexz >> 5;
     angle = -1;
@@ -5092,6 +5107,43 @@ void do_rotate_map(void)
         :  :  : "eax" );
     return;
 #endif
+
+    static TbBool mmb_active = false;
+    static long mmb_prev_mouse_x = 0;
+    static long mmb_prev_mouse_y = 0;
+
+    // Middle mouse button camera orbit/pitch
+    if (lbDisplay.MMiddleButton)
+    {
+        if (!mmb_active)
+        {
+            mmb_prev_mouse_x = lbDisplay.MMouseX;
+            mmb_prev_mouse_y = lbDisplay.MMouseY;
+            mmb_active = true;
+        }
+        long delta_x = lbDisplay.MMouseX - mmb_prev_mouse_x;
+        long delta_y = lbDisplay.MMouseY - mmb_prev_mouse_y;
+
+        if (delta_x != 0)
+            engn_anglexz += delta_x * MOUSE_ROTATE_SENSITIVITY;
+
+        if (delta_y != 0)
+        {
+            long new_cam_tilt = cam_tilt + delta_y * MOUSE_TILT_SENSITIVITY;
+            if (new_cam_tilt < CAMERA_TILT_MIN)
+                new_cam_tilt = CAMERA_TILT_MIN;
+            if (new_cam_tilt > CAMERA_TILT_MAX)
+                new_cam_tilt = CAMERA_TILT_MAX;
+            cam_tilt = new_cam_tilt;
+        }
+
+        mmb_prev_mouse_x = lbDisplay.MMouseX;
+        mmb_prev_mouse_y = lbDisplay.MMouseY;
+    }
+    else
+    {
+        mmb_active = false;
+    }
 
     short rotate_input = 0;
     if (is_gamekey_pressed(GKey_VIEW_SPIN_R))

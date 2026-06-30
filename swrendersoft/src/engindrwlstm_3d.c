@@ -694,6 +694,13 @@ struct SingleObjectFace4 *build_glare(short x1, short y1, short z1, short r1)
     int bckt;
     uint sftex;
     ushort pt;
+    int glare_siren = 0;
+
+    /* Consume this glare's CarGlare.Flag from the per-vehicle sequence set up by
+     * build_vehicle (in call order, including off-screen ones, so the index
+     * stays aligned with the car_glare entries). 0 for non-vehicle glares. */
+    if (hwr_glare_flag_pos < hwr_glare_flag_n)
+        glare_siren = hwr_glare_flag_seq[hwr_glare_flag_pos++];
 
     ep.X3d = x1 - engn_xc;
     ep.Z3d = z1 - engn_zc;
@@ -714,6 +721,18 @@ struct SingleObjectFace4 *build_glare(short x1, short y1, short z1, short r1)
 
     if ((ep.pp.Y + scaled_r < 0) || (ep.pp.Y - scaled_r > vec_window_height))
         return NULL;
+
+    /* FX3D: record this glare's world position + radius so the hardware renderer
+     * can draw it as an additive glow billboard (its SW screen-space face is
+     * suppressed under FX3D). On-screen only — we reach here past the cull. */
+    if (hwr_glare_count < HWR_GLARE_MAX) {
+        hwr_glare_list[hwr_glare_count].x = x1;
+        hwr_glare_list[hwr_glare_count].y = y1;
+        hwr_glare_list[hwr_glare_count].z = z1;
+        hwr_glare_list[hwr_glare_count].r = r1;
+        hwr_glare_list[hwr_glare_count].siren = glare_siren;
+        hwr_glare_count++;
+    }
 
     p_face4 = draw_item_add_special_obj_face4(DrIT_SpObFace4, bckt);
     if (p_face4 == NULL) {

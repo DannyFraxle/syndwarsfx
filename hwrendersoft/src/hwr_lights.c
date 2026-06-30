@@ -74,6 +74,12 @@ static HwrLightDefaults hwr_defaults = {
     50,             /* filler_maxint — Intensity ≤ 50 = filler */
     200,            /* building_maxint — Intensity ≤ 200 = building, > 200 = street */
     0,              /* xbr_scale — off by default */
+    /* --- transparency (Phase 8) --- */
+    1,              /* transp_enable — blended faces on */
+    0.5f,           /* transp_alpha */
+    1,              /* transp_sprite_enable — blended sprites on */
+    0.85f,          /* transp_sprite_alpha — slightly see-through glow */
+    0,              /* transp_debug — diagnostic: force all faces transparent */
 };
 
 static void table_defaults(void)
@@ -99,7 +105,28 @@ void hwr_lights_clear(void)
 }
 
 /* Section ids for the simple line-by-line parser. */
-enum { SEC_NONE = 0, SEC_LIGHTS, SEC_DEFAULTS, SEC_SSAO, SEC_SUN, SEC_CATEGORIES, SEC_SPRITES };
+enum { SEC_NONE = 0, SEC_LIGHTS, SEC_DEFAULTS, SEC_SSAO, SEC_SUN, SEC_CATEGORIES, SEC_SPRITES, SEC_TRANSP };
+
+static void parse_transp_line(const char *p)
+{
+    float fv;
+    int iv;
+    if (sscanf(p, "enable = %d", &iv) == 1) {
+        hwr_defaults.transp_enable = (iv != 0) ? 1 : 0;
+    } else if (sscanf(p, "alpha = %f", &fv) == 1) {
+        if (fv < 0.0f) fv = 0.0f;
+        if (fv > 1.0f) fv = 1.0f;
+        hwr_defaults.transp_alpha = fv;
+    } else if (sscanf(p, "sprite_enable = %d", &iv) == 1) {
+        hwr_defaults.transp_sprite_enable = (iv != 0) ? 1 : 0;
+    } else if (sscanf(p, "sprite_alpha = %f", &fv) == 1) {
+        if (fv < 0.0f) fv = 0.0f;
+        if (fv > 1.0f) fv = 1.0f;
+        hwr_defaults.transp_sprite_alpha = fv;
+    } else if (sscanf(p, "debug = %d", &iv) == 1) {
+        hwr_defaults.transp_debug = (iv != 0) ? 1 : 0;
+    }
+}
 
 static void parse_sun_line(const char *p)
 {
@@ -366,6 +393,8 @@ void hwr_lights_load(const char *path)
                 section = SEC_CATEGORIES;
             else if (strncmp(p, "[sprites]", 9) == 0)
                 section = SEC_SPRITES;
+            else if (strncmp(p, "[transparency]", 14) == 0)
+                section = SEC_TRANSP;
             else
                 section = SEC_NONE;
             continue;
@@ -394,6 +423,8 @@ void hwr_lights_load(const char *path)
             parse_categories_line(p);
         } else if (section == SEC_SPRITES) {
             parse_sprites_line(p);
+        } else if (section == SEC_TRANSP) {
+            parse_transp_line(p);
         }
     }
     fclose(f);

@@ -359,6 +359,11 @@ void hwr_ssao_config(int enable, float radius, float world, float strength,
     ss_debug    = debug;
 }
 
+int hwr_ssao_active(void)
+{
+    return (ss_enable && ss_ready) ? 1 : 0;
+}
+
 void hwr_ssao_set_viewdir(float x, float y, float z)
 {
     float len = (float)sqrt((double)(x*x + y*y + z*z));

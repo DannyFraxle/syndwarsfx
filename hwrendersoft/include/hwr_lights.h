@@ -67,6 +67,12 @@ typedef struct {
     int   filler_maxint;        /**< Intensity threshold: <= this => filler */
     int   building_maxint;      /**< Intensity threshold: <= this => building, > => street */
     int   xbr_scale;            /**< 0=off, 2=2x, 3=3x, 4=4x upscale via xBR */
+    /* Transparency pass ([transparency] section, Phase 8). */
+    int   transp_enable;        /**< 1 = draw semi-transparent faces (deep-radar + glass/fence) blended. */
+    float transp_alpha;         /**< Blended face opacity, 0..1 (default 0.5). */
+    int   transp_sprite_enable; /**< 1 = draw translucent sprites (fire/smoke/glow) blended in GL. */
+    float transp_sprite_alpha;  /**< Translucent sprite opacity scale, 0..1 (default 1.0). */
+    int   transp_debug;         /**< 1 = force ALL building/object faces transparent (diagnostic). */
 } HwrLightDefaults;
 
 /** Reset every entry to white (1,1,1) at scale 1.0 and defaults to sane values. */

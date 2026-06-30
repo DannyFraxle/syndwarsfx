@@ -38,7 +38,7 @@ void hwr_sw_collect_sprites(void);
 /** Bitmask indexed by SortSprite index: bit set = this sprite was collected
  *  by the HW renderer and should be skipped by the SW drawlist. Defined in
  *  engindrwlstx.c (libswrender) so both libraries share one copy. */
-extern unsigned char hwr_sprite_skip_mask[256];
+extern unsigned char hwr_sprite_skip_mask[512];
 
 /** Snapshot the engine-view camera (projection factors + centre) for this
  *  frame. Call at floor-draw time, while the projection globals still hold the

@@ -82,6 +82,11 @@ TbBool hwrender_present_frame(void);
 /** Release the GL backend. Safe to call unconditionally. */
 void hwrender_shutdown(void);
 
+/** Pass 1 before drawing popup screens (e.g. pause) to force full-opacity
+ *  WScreen compositing so controls stay solid; pass 0 when done. */
+void hwrender_set_opaque_present(int on);
+
+
 /******************************************************************************/
 #ifdef __cplusplus
 }

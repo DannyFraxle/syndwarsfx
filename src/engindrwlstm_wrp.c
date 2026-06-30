@@ -947,6 +947,21 @@ short draw_object(int sh_x, int sh_y, int sh_z,
     if (word_1552F8 == 5)
         doflags |= DrwObjF_NoWobblyElevation;
 
+    /* FX3D: record every object the build draws this frame so the hardware
+     * renderer can skip stale objects (destroyed buildings linger in
+     * game_objects[] but are no longer reached here). Keyed by object index. */
+    {
+        int obj_idx = (int)(point_object - game_objects);
+        if (obj_idx >= 0 && obj_idx < (int)(sizeof(hwr_obj_live_mask) * 8)) {
+            hwr_obj_live_mask[obj_idx >> 3] |= (unsigned char)(1 << (obj_idx & 7));
+            /* FX3D Phase 8: also record objects the deep-radar made see-through
+             * so the hardware renderer draws them in its blended transparent
+             * pass instead of as opaque geometry. */
+            if ((doflags & DrwObjF_StartBelowWindow) != 0)
+                hwr_obj_transp_mask[obj_idx >> 3] |= (unsigned char)(1 << (obj_idx & 7));
+        }
+    }
+
     return draw_object_faces(cor_dx, cor_dy, cor_dz, point_object, doflags);
 }
 

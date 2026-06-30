@@ -159134,9 +159134,9 @@ data_15338d:
 		.ascii  "\x00\x12\x13\x00\x00\x00\x00"
 		.ascii  "\x18\x00\x00\x00"
 
-master_glare:	/* 0x153774 */
+GLOBAL(master_glare)	/* 0x153774 */
 		.byte	0x0
-data_153775:
+GLOBAL(data_153775)
 		.ascii  "\x01\x01\x02\x03\x01\x04\x02\x06"
 		.ascii  "\x02\x00\x00\x08\x02\x0a\x02\x0c"
 		.ascii  "\x04\x10\x02\x12\x01\x13\x02\x15"

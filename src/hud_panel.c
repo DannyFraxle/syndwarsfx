@@ -60,6 +60,7 @@
 #include "sound.h"
 #include "thing.h"
 #include "swlog.h"
+#include "hwrender_glue.h"
 /******************************************************************************/
 extern long dword_1DC36C;
 
@@ -654,7 +655,7 @@ void draw_new_panel_sprite_std(int px, int py, ulong spr_id)
     p_spr = &pop1_sprites[spr_id];
     dword_1DC36C = ingame.Scanner.Brightness;
 
-    if (ingame.PanelPermutation == -1) {
+    if (ingame.PanelPermutation == -1 && !hwrender_active()) {
         lbDisplay.DrawFlags |= Lb_SPRITE_TRANSPAR4;
         ApSpriteDrawLowTransGreyRemap(px, py, p_spr,
           &pixmap.fade_table[0 * PALETTE_8b_COLORS]);
@@ -678,7 +679,7 @@ void draw_new_panel_sprite_scaled_std(int px, int py, ulong spr_id, int dest_wid
     p_spr = &pop1_sprites[spr_id];
     dword_1DC36C = ingame.Scanner.Brightness;
 
-    if (ingame.PanelPermutation == -1) {
+    if (ingame.PanelPermutation == -1 && !hwrender_active()) {
         lbDisplay.DrawFlags |= Lb_SPRITE_TRANSPAR4;
         ApSpriteDrawScaledLowTransGreyRemap(px, py, p_spr, dest_width, dest_height,
           &pixmap.fade_table[0 * PALETTE_8b_COLORS]);
@@ -701,7 +702,7 @@ void draw_new_panel_sprite_dark(int px, int py, ulong spr_id)
     p_spr = &pop1_sprites[spr_id];
     dword_1DC36C = 8;
 
-    if (ingame.PanelPermutation == -1) {
+    if (ingame.PanelPermutation == -1 && !hwrender_active()) {
         lbDisplay.DrawFlags |= Lb_SPRITE_TRANSPAR4;
         ApSpriteDrawLowTransGreyRemap(px, py, p_spr,
           &pixmap.fade_table[0 * PALETTE_8b_COLORS]);
@@ -724,7 +725,7 @@ void draw_new_panel_sprite_scaled_dark(int px, int py, ulong spr_id, int dest_wi
     p_spr = &pop1_sprites[spr_id];
     dword_1DC36C = 8;
 
-    if (ingame.PanelPermutation == -1) {
+    if (ingame.PanelPermutation == -1 && !hwrender_active()) {
         lbDisplay.DrawFlags |= Lb_SPRITE_TRANSPAR4;
         ApSpriteDrawScaledLowTransGreyRemap(px, py, p_spr, dest_width, dest_height,
           &pixmap.fade_table[0 * PALETTE_8b_COLORS]);
@@ -748,11 +749,13 @@ void draw_new_panel_sprite_prealp(int px, int py, ulong spr_id)
     p_spr = &pop1_sprites[spr_id];
     dword_1DC36C = ingame.Scanner.Brightness;
 
-    if (ingame.PanelPermutation == -1) {
+    if (ingame.PanelPermutation == -1 && !hwrender_active()) {
         lbDisplay.DrawFlags |= Lb_SPRITE_TRANSPAR4;
         ApSpriteDrawLowTransGreyRemap(px, py, p_spr,
           &pixmap.fade_table[0 * PALETTE_8b_COLORS]);
         lbDisplay.DrawFlags &= ~Lb_SPRITE_TRANSPAR4;
+    } else if (hwrender_active()) {
+        LbSpriteDraw(px, py, p_spr);
     }
 }
 

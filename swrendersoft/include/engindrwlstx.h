@@ -126,7 +126,37 @@ extern int engine_hwr_suppress_faces;
  * draw them as camera-facing billboards. The hwr_sprite_skip_mask bitset
  * identifies which SortSprite indices were collected. */
 extern int engine_hwr_suppress_sprites;
-extern unsigned char hwr_sprite_skip_mask[256];
+extern unsigned char hwr_sprite_skip_mask[512];
+
+/* FX3D Phase 8: bitset of object indices flagged semi-transparent (deep-radar
+ * see-through) this frame. Set during drawlist build in draw_object(); read by
+ * the FX3D scene source to route those objects' faces into the blended
+ * transparent pass. Indexed by object index (game_objects[]). */
+extern unsigned char hwr_obj_transp_mask[8192];
+
+/* FX3D: bitset of object indices the SW build actually drew this frame (set in
+ * draw_object). The FX3D scene source gates its static-object faces on this so
+ * GL stops drawing buildings the SW engine no longer traverses (destroyed). */
+extern unsigned char hwr_obj_live_mask[8192];
+
+/* FX3D: light-glare (headlight / lamp) world positions enlisted this frame by
+ * build_glare(), drawn by the FX3D renderer as additive glow billboards. */
+#define HWR_GLARE_MAX 512
+/* siren: CarGlare.Flag of this glare — 0 = plain (headlight / lamp), 1 and 2 =
+ * the two police roof siren lights (drawn red / blue and flashed by FX3D). */
+struct HwrGlare { int x, y, z, r, siren; };
+extern struct HwrGlare hwr_glare_list[HWR_GLARE_MAX];
+extern int hwr_glare_count;
+
+/* Per-vehicle CarGlare.Flag sequence for the glares about to be enlisted by the
+ * next do_car_glare() call. build_vehicle() fills this from the vehicle's
+ * car_glare range; build_glare() consumes one flag per call (in order) so each
+ * recorded glare carries its Flag. flag_n = 0 means "no capture" (plain glares,
+ * e.g. street lamps). */
+#define HWR_GLARE_FLAG_MAX 64
+extern int hwr_glare_flag_seq[HWR_GLARE_FLAG_MAX];
+extern int hwr_glare_flag_n;
+extern int hwr_glare_flag_pos;
 
 extern short word_1A5834;
 extern short word_1A5836;

@@ -81,6 +81,10 @@ static TbBool hwr_glue_active = false;
 /* Set by hwrender_floor_gate() when the engine view was gated for 3D this
  * frame; tells the present path to render the 3D scene and key the overlay. */
 int hwr_floor_gated_frame = 0;
+/* When set, forces the WScreen composite to full opacity so popup controls
+ * (e.g. pause screen) stay solid while the box fill tint comes from the GL
+ * overlay pass instead of alpha-blending the whole WScreen. */
+static int hwr_opaque_present = 0;
 /* Key index the source side discards (kept in sync with HWR_KEY_INDEX). */
 extern int hwr_sw_key_index;
 
@@ -123,6 +127,9 @@ static void glue_present(void)
                 d.sun_haze);
             hwr_ssao_config(d.ssao_enable, d.ssao_radius, d.ssao_world,
                 d.ssao_strength, d.ssao_bias, d.ssao_debug);
+            hwr_transparent_config(d.transp_enable, d.transp_alpha,
+                deep_radar_surface_col);
+            hwr_sprites_trans_config(d.transp_sprite_enable, d.transp_sprite_alpha);
             hwr_thingno_debug(d.thingno_debug);
             hwr_sprites_debug(d.sprite_debug);
             hwr_scene_begin();
@@ -133,14 +140,32 @@ static void glue_present(void)
             hwr_faces_render(pal, fx3d_filter_objects);
             hwr_reflect_render(pal);          /* chameleon vehicle paint */
             hwr_sprites_render(pal, fx3d_filter_sprites);
+            hwr_transparent_render(pal, fx3d_filter_objects);  /* blended faces (Phase 8) */
+            hwr_sprites_trans_render(pal, fx3d_filter_sprites); /* blended sprites (Phase 8) */
             hwr_ssao_resolve();              /* composites colour*AO to back buffer */
+            hwr_overlay_render();            /* screen-space tinted overlays (shield/blast) */
             hwr_thingno_render();            /* overlay ThingNo debug labels */
             hwr_sprites_debug_render();      /* overlay sprite debug labels */
             hwr_thingbrowse_render();        /* thing category browser (F5) */
             hwr_tuning_render();             /* lighting tuning panel (F7) */
         }
-        hwr_present_indexed_keyed((const unsigned char *)lbDisplay.WScreen,
-            w, h, w, pal, HWR_KEY_INDEX);
+        /* Transparent HUD option (PanelPermutation == -1): blend the keyed HUD
+         * overlay over the 3D scene. The software path's own transparency
+         * blends against the engine framebuffer, which here is just the key, so
+         * it can't see the 3D — do the blend at composite time instead. */
+        /* PanelPermutation == -1: luma-split composite — dark pixels (panel
+         * background fill) blended at 0.5 alpha, bright pixels (outlines,
+         * numbers, powerbar, map) fully opaque. bg_luma threshold 0.18 sits
+         * between the dark purple fill (luma ~0.03) and bright cyan outlines
+         * (luma ~0.6); adjust in fx3d_lights.ini if needed.
+         * Exception: hwr_opaque_present (pause popup) forces full opacity. */
+        if (ingame.PanelPermutation == -1 && !hwr_opaque_present) {
+            hwr_present_indexed_keyed_luma((const unsigned char *)lbDisplay.WScreen,
+                w, h, w, pal, HWR_KEY_INDEX, 0.5f, 0.38f);
+        } else {
+            hwr_present_indexed_keyed((const unsigned char *)lbDisplay.WScreen,
+                w, h, w, pal, HWR_KEY_INDEX);
+        }
     } else {
         /* Menus / non-engine screens: plain full blit. */
         hwr_present_indexed((const unsigned char *)lbDisplay.WScreen, w, h, w,
@@ -152,12 +177,19 @@ static void glue_present(void)
 
 /* Declarations from libswrender for the sprite-suppression gate. */
 extern int engine_hwr_suppress_sprites;
+/* Target-box list (hud_target.c); cleared per frame, refilled during HUD draw,
+ * consumed by the GL overlay pass. */
+extern int hwr_tgtbox_count;
+/* Pause popup box fills (fepause.c); consumed by the GL overlay pass. */
+extern int hwr_pause_box_count;
 
 TbBool hwrender_floor_gate(void)
 {
     int w, h;
     /* Reset the sprite-suppression gate; only set it below if we collect. */
     engine_hwr_suppress_sprites = 0;
+    hwr_tgtbox_count = 0;
+    hwr_pause_box_count = 0;
     if (!hwr_glue_active)
         return false;
     w = lbDisplay.GraphicsScreenWidth;
@@ -254,6 +286,15 @@ void hwrender_shutdown(void)
         hwr_shutdown();
         hwr_glue_active = false;
     }
+}
+
+void hwrender_set_opaque_present(int on)
+{
+#if defined(HAVE_HWRENDER)
+    hwr_opaque_present = on;
+#else
+    (void)on;
+#endif
 }
 
 #endif /* HAVE_HWRENDER */

@@ -64,6 +64,36 @@ void do_car_glare(struct Thing *p_car)
         : : "a" (p_car));
 }
 
+/* FX3D: capture the CarGlare.Flag of each glare the next do_car_glare() will
+ * enlist, so the hardware renderer can colour the police roof "siren" lights
+ * (Flag 1 = red, Flag 2 = blue) and flash them. do_car_glare (asm) walks
+ * car_glare[ master_glare[model] .. +data_153775[model] ] in order, calling
+ * build_glare per entry; build_glare consumes this sequence in lock-step. The
+ * lookup mirrors the asm: model = Thing.StartFrame (3D model select), and the
+ * master/count tables are interleaved (stride 2) from 0x153774. */
+#pragma pack(1)
+struct CarGlareFx { short Dix, Diy, Diz; unsigned char Flag; };  /* == CarGlare, sizeof 7 */
+#pragma pack()
+extern const struct CarGlareFx car_glare[];
+extern const unsigned char master_glare[];
+extern const unsigned char data_153775[];
+
+static void fx3d_setup_glare_flags(struct Thing *p_thing)
+{
+    int model = p_thing->StartFrame;
+    hwr_glare_flag_pos = 0;
+    hwr_glare_flag_n = 0;
+    if (model >= 0 && model <= 0x1f) {
+        int base = master_glare[model * 2];
+        int cnt  = data_153775[model * 2];
+        int i;
+        if (cnt > HWR_GLARE_FLAG_MAX) cnt = HWR_GLARE_FLAG_MAX;
+        for (i = 0; i < cnt; i++)
+            hwr_glare_flag_seq[i] = car_glare[base + i].Flag;
+        hwr_glare_flag_n = cnt;
+    }
+}
+
 void process_child_object(struct Thing *p_vehicle)
 {
 #if 0
@@ -287,7 +317,10 @@ void build_vehicle(struct Thing *p_thing)
            16 * ((6 - p_thing->U.UVehicle.RecoilTimer) & 0x0F));
     }
 
+    fx3d_setup_glare_flags(p_thing);
     do_car_glare(p_thing);
+    hwr_glare_flag_n = 0;
+    hwr_glare_flag_pos = 0;
 }
 
 void build_person(struct Thing *p_thing)

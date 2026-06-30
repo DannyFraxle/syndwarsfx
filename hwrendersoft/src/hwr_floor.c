@@ -111,6 +111,8 @@ static const char *floor_frag_src =
     "uniform int   uSunDebug;            // 1 = greyscale lit factor\n"
     "uniform float uSunHaze;             // 0..1 atmospheric scatter (softens shadow edges)\n"
     "uniform int uFilter;                // 0 = nearest, 1 = palette-correct bilinear\n"
+    "uniform float uAlpha;               // output alpha (1 = opaque; <1 = blended transparency)\n"
+    "uniform int uDeepRadarIdx;          // palette index for deep-radar tint (page sentinel 254)\n"
     "vec3 pal_lookup(int idx) {\n"
     "    return texture(uPalette, vec2((float(idx) + 0.5) / 256.0, 0.5)).rgb;\n"
     "}\n"
@@ -182,18 +184,24 @@ static const char *floor_frag_src =
     "    light_col *= ao;\n"
     "    light_col *= clamp(1.0 - shadow, 0.0, 1.0);\n"
     "    light_col = max(light_col, 0.0);              // allow >1.0 for overbright glow\n"
-    "    if (vUV.z > 254.5) {             // flat-shaded face (Texture==0), no texture\n"
-    "        frag = vec4(vec3(0.55) * light_col, 1.0);\n"
+    "    if (vUV.z > 253.5 && vUV.z < 254.5) {  // deep-radar see-through: flat syndicate tint, no texture\n"
+    "        frag = vec4(pal_lookup(uDeepRadarIdx), uAlpha);\n"
     "        return;\n"
     "    }\n"
-    "    // Nearest: single texel with GL_NEAREST, key check first\n"
+    "    if (vUV.z > 254.5) {             // flat-shaded face (Texture==0), no texture\n"
+    "        frag = vec4(vec3(0.55) * light_col, uAlpha);\n"
+    "        return;\n"
+    "    }\n"
+    "    // Nearest: single texel with GL_NEAREST.\n"
     "    int idx = int(texture(uTex, vUV).r * 255.0 + 0.5);\n"
-    "    if (uTransKey >= 0 && idx == uTransKey)\n"
-    "        discard;\n"
     "    if (uFilter == 1) {\n"
     "        // Palette-correct bilinear: sample 4 nearest integer texels via\n"
     "        // texelFetch (bypasses GL filtering), convert each to RGB through\n"
-    "        // the palette, then bilinear blend in RGB space.\n"
+    "        // the palette, then bilinear blend in RGB space.  For keyed (cutout)\n"
+    "        // textures (wire fence / scaffolding / grates) the key texel is\n"
+    "        // excluded from BOTH the colour blend (no dark key-colour fringe) and\n"
+    "        // a coverage value, so the cutout edge follows the smooth bilinear\n"
+    "        // iso-line instead of the blocky texel grid.\n"
     "        int page = int(vUV.z);\n"
     "        vec2 tc = vUV.xy * 256.0 - 0.5;\n"
     "        ivec2 uv0 = ivec2(floor(tc));\n"
@@ -203,12 +211,26 @@ static const char *floor_frag_src =
     "        int i10 = int(texelFetch(uTex, ivec3(uv1.x, uv0.y, page), 0).r * 255.0 + 0.5);\n"
     "        int i01 = int(texelFetch(uTex, ivec3(uv0.x, uv1.y, page), 0).r * 255.0 + 0.5);\n"
     "        int i11 = int(texelFetch(uTex, ivec3(uv1.x, uv1.y, page), 0).r * 255.0 + 0.5);\n"
-    "        vec3 c = mix(mix(pal_lookup(i00), pal_lookup(i10), f.x),\n"
-    "                     mix(pal_lookup(i01), pal_lookup(i11), f.x), f.y);\n"
-    "        frag = vec4(c * light_col, 1.0);\n"
+    "        // Per-texel weight: 0 for the transparent key, else the bilinear weight.\n"
+    "        float w00 = (1.0-f.x)*(1.0-f.y); float w10 = f.x*(1.0-f.y);\n"
+    "        float w01 = (1.0-f.x)*f.y;       float w11 = f.x*f.y;\n"
+    "        if (uTransKey >= 0) {\n"
+    "            if (i00 == uTransKey) w00 = 0.0;\n"
+    "            if (i10 == uTransKey) w10 = 0.0;\n"
+    "            if (i01 == uTransKey) w01 = 0.0;\n"
+    "            if (i11 == uTransKey) w11 = 0.0;\n"
+    "        }\n"
+    "        float cov = w00 + w10 + w01 + w11;\n"
+    "        if (uTransKey >= 0 && cov < 0.5)\n"
+    "            discard;\n"
+    "        vec3 c = (pal_lookup(i00)*w00 + pal_lookup(i10)*w10\n"
+    "                + pal_lookup(i01)*w01 + pal_lookup(i11)*w11) / max(cov, 1e-4);\n"
+    "        frag = vec4(c * light_col, uAlpha);\n"
     "    } else {\n"
+    "        if (uTransKey >= 0 && idx == uTransKey)\n"
+    "            discard;\n"
     "        vec3 c = pal_lookup(idx);\n"
-    "        frag = vec4(c * light_col, 1.0);\n"
+    "        frag = vec4(c * light_col, uAlpha);\n"
     "    }\n"
     "}\n";
 
@@ -238,6 +260,8 @@ static GLint  fl_loc_sun_pcf   = -1;
 static GLint  fl_loc_sun_debug = -1;
 static GLint  fl_loc_sun_haze  = -1;
 static GLint  fl_loc_filter   = -1;
+static GLint  fl_loc_alpha    = -1;
+static GLint  fl_loc_deepradar = -1;
 static int    fl_filter = -1;            /* 0 = params applied, non-zero = need update */
 static int    fl_ready = 0;
 static int    fl_pages_uploaded = 0;
@@ -312,6 +336,8 @@ static int fl_init(void)
     fl_loc_sun_debug  = glGetUniformLocation(fl_prog, "uSunDebug");
     fl_loc_sun_haze   = glGetUniformLocation(fl_prog, "uSunHaze");
     fl_loc_filter     = glGetUniformLocation(fl_prog, "uFilter");
+    fl_loc_alpha      = glGetUniformLocation(fl_prog, "uAlpha");
+    fl_loc_deepradar  = glGetUniformLocation(fl_prog, "uDeepRadarIdx");
 
     glGenVertexArrays(1, &fl_vao);
     glBindVertexArray(fl_vao);
@@ -458,6 +484,7 @@ static void fl_setup_program(const HwrCamera *cam, const unsigned char *pal8,
     glUniform1i(fl_loc_tex, 0);
     glUniform1i(fl_loc_pal, 1);
     glUniform1i(fl_loc_transkey, trans_key);
+    glUniform1f(fl_loc_alpha, 1.0f);    /* opaque by default; transparent pass overrides */
 
     /* Sun shadow map on texture unit 3. */
     glActiveTexture(GL_TEXTURE3);
@@ -581,6 +608,71 @@ int hwr_faces_render(const unsigned char *pal8, int filter_linear)
     return 1;
 }
 
+/* ---- Transparent (blended) face pass config (Phase 8) ------------------- */
+static int   tr_enable = 1;
+static float tr_alpha  = 0.5f;   /* fragment alpha for blended faces */
+static int   tr_deepradar_idx = 216; /* palette index for the deep-radar tint (0xd8) */
+
+void hwr_transparent_config(int enable, float alpha, int deepradar_idx)
+{
+    tr_enable = enable;
+    if (alpha < 0.0f) alpha = 0.0f;
+    if (alpha > 1.0f) alpha = 1.0f;
+    tr_alpha = alpha;
+    if (deepradar_idx >= 0 && deepradar_idx < 256)
+        tr_deepradar_idx = deepradar_idx;
+}
+
+/** Render semi-transparent object/building faces (Phase 8): deep-radar
+ *  see-through buildings and static glass/fence faces, pulled from the bound
+ *  source's get_transparent_faces. Reuses the floor/face program and texture
+ *  pages (call after hwr_faces_render so the pages are uploaded). Draws with
+ *  alpha blending, testing against the opaque depth but not writing it, and the
+ *  batch is pre-sorted back-to-front by the source. Returns nonzero if drawn. */
+int hwr_transparent_render(const unsigned char *pal8, int filter_linear)
+{
+    HwrCamera cam;
+    HwrGeometryBatch batch;
+    const HwrSceneSource *s = hwr_source;
+
+    if (!tr_enable)
+        return 0;
+    if (!hwr_is_ready() || s == NULL || s->get_transparent_faces == NULL)
+        return 0;
+    if (s->get_camera == NULL || !fl_ready)
+        return 0;
+    if (s->get_camera(s->ctx, &cam) != 0)
+        return 0;
+    if (s->get_transparent_faces(s->ctx, &batch) <= 0 || batch.index_count <= 0)
+        return 0;
+
+    /* Same projection/texture/lighting as opaque faces; index 0 stays the
+     * texture transparent key (windows / grates). */
+    fl_setup_program(&cam, pal8, 0);
+    glUniform1i(fl_loc_filter, filter_linear);
+    glUniform1f(fl_loc_alpha, tr_alpha);
+    glUniform1i(fl_loc_deepradar, tr_deepradar_idx);
+    {
+        HwrLight lights[HWR_MAX_LIGHTS];
+        int nlight = (s->get_lights != NULL)
+            ? s->get_lights(s->ctx, lights, HWR_MAX_LIGHTS) : 0;
+        fl_upload_lights(lights, nlight < 0 ? 0 : nlight);
+    }
+
+    /* Blend over the opaque scene; test depth but don't write it (so blended
+     * faces don't occlude each other in the z-buffer; correctness comes from
+     * the source's back-to-front triangle sort). */
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
+    fl_draw_batch(&batch);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+
+    hwr_gl_check("hwr_transparent_render");
+    return 1;
+}
+
 /* ===================================================================== */
 /* Reflective "chameleon" (spectraflair) paint pass.                      */
 /* Reuses the floor projection in the vertex shader, but shades the paint */
@@ -691,7 +783,11 @@ static const char *refl_frag_src =
     "    // the full spectraflair rainbow shows as the surface curves/camera turns.\n"
     "    float sweep = (a*0.5 + 0.5) + 0.25*b;     // 2D-ish view-angle sweep\n"
     "    float hue = fract(uHueBase + uHueSpan * sweep);\n"
+    "    // Near-black metallic body: uPaintLevel keeps the flat base very dark.\n"
     "    vec3 paint = hsv2rgb(vec3(hue, uSat, uPaintLevel));\n"
+    "    // Full-value chameleon colour used for the REFLECTIONS, so the multicolour\n"
+    "    // iridescence still shows vividly even though the body is mostly black.\n"
+    "    vec3 refl  = hsv2rgb(vec3(hue, uSat, 1.0));\n"
     "    // Streaks: thin anisotropic highlight bands that sweep as the angle\n"
     "    // changes. cos() of the vertical sweep gives smooth repeating lines; the\n"
     "    // high power thins them into streaks. The interpolated normal keeps them\n"
@@ -699,7 +795,13 @@ static const char *refl_frag_src =
     "    float bands  = 0.5 + 0.5*cos(b*uStreakFreq*6.2831853 + a*2.5);\n"
     "    float streak = pow(bands, uStreakSharp);\n"
     "    float edge   = clamp(length(vec2(a, b)), 0.0, 1.0);  // brighter at grazing\n"
-    "    vec3 col = paint + streak * edge * uSheen * uTintHi;\n"
+    "    float fres   = pow(edge, 3.0);                       // grazing-angle rim\n"
+    "    // Mostly-black base + multicolour reflective streaks + rainbow rim + a\n"
+    "    // touch of white sparkle highlight.\n"
+    "    vec3 col = paint\n"
+    "             + refl * streak * uSheen\n"
+    "             + refl * fres * 0.35\n"
+    "             + uTintHi * streak * edge * uSheen * 0.4;\n"
     "    // --- scene lighting factor (point lights + sun + ambient), same as the\n"
     "    //     floor, so painted panels go dark in shadow / unlit interiors ---\n"
     "    vec3 light_col = vec3(0.0);\n"
@@ -879,10 +981,10 @@ int hwr_reflect_render(const unsigned char *pal8)
     glUniform1f(rf_l_huebase, 0.33f);      /* start at green */
     glUniform1f(rf_l_huespan, 0.55f);      /* sweep ~green->blue->purple */
     glUniform1f(rf_l_sat, 0.9f);           /* deep, saturated colours */
-    glUniform1f(rf_l_paintlevel, 0.5f);    /* metallic, not washed out */
+    glUniform1f(rf_l_paintlevel, 0.07f);   /* near-black metallic body */
     glUniform1f(rf_l_streakfreq, 3.0f);    /* number of streak bands */
     glUniform1f(rf_l_streaksharp, 8.0f);   /* thin, sharp streaks */
-    glUniform1f(rf_l_sheen, 0.5f);         /* streak highlight strength */
+    glUniform1f(rf_l_sheen, 0.9f);         /* multicolour reflection strength */
     glUniform3f(rf_l_tinthi, 0.85f, 0.90f, 1.0f);
 
     /* Scene lighting so painted panels darken in shadow / unlit interiors,

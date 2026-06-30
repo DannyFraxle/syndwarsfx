@@ -123,6 +123,23 @@ typedef struct {
 #define HWR_BILLBOARD_TRANSLUCENT 0x01
 #define HWR_BILLBOARD_NOSHADOW   0x02   /* light sources — skip shadow casting */
 #define HWR_BILLBOARD_ONTOP      0x04   /* depth-bias toward camera (e.g. dropped items over bodies) */
+#define HWR_BILLBOARD_ADDITIVE   0x08   /* translucent blend hint: additive (fire/explosions/glow)
+                                         * instead of alpha-over (smoke). Only meaningful with
+                                         * HWR_BILLBOARD_TRANSLUCENT. */
+
+/** A screen-space coloured quad (four corners in screen pixels, plus an RGBA
+ *  colour) for flat-tinted 2D overlay effects (shield-hit spheres, blast rings,
+ *  lightning). Corners are in the engine's projected pixel space (origin at the
+ *  screen top-left, same units as the camera centre_x/centre_y). */
+typedef struct {
+    float x[4], y[4];      /* corner screen positions (pixels) */
+    float r, g, b, a;      /* fill colour 0..1 (flat quads) */
+    /* Textured quads (slot >= 0): sampled from the sprite atlas — used to draw
+     * HUD sprite art (e.g. the target-box tile) blended over the 3D. Corners map
+     * TL,TR,BR,BL to the UV rect. a is the blend opacity. */
+    int   slot;            /* atlas slot, or -1 for a flat coloured quad */
+    float u0, v0, u1, v1;
+} HwrOverlayQuad;
 
 /** Pull interface implemented per game title. All getters return the number of
  *  items produced (>=0) or a negative value on error. The backend calls
@@ -146,6 +163,12 @@ typedef struct HwrSceneSource {
      *  procedural view-angle hue shift + sheen (Phase 7). May be NULL. */
     int  (*get_reflect_faces)(void *ctx, HwrReflectBatch *out);
 
+    /** Semi-transparent object/building faces (Phase 8): deep-radar see-through
+     *  buildings and static glass/fence faces. Same vertex layout as get_faces;
+     *  the batch is pre-sorted back-to-front for correct alpha blending. Drawn
+     *  by the blended transparent pass after the opaque scene. May be NULL. */
+    int  (*get_transparent_faces)(void *ctx, HwrGeometryBatch *out);
+
     /** Up to max lights into out[]; returns count (Phase 5). */
     int  (*get_lights)(void *ctx, HwrLight *out, int max);
 
@@ -164,6 +187,12 @@ typedef struct HwrSceneSource {
      *  software HUD/objects over the 3D scene (see the hybrid present path).
      *  May be NULL if compositing is not used. */
     int (*get_key_index)(void *ctx);
+
+    /** Screen-space coloured overlay quads (flat-tinted special faces the engine
+     *  draws in 2D: shield-hit spheres, blast rings, lightning slices). Up to
+     *  max quads into out[]; returns count. Drawn blended on top of the resolved
+     *  3D scene. May be NULL. */
+    int (*get_overlays)(void *ctx, HwrOverlayQuad *out, int max);
 } HwrSceneSource;
 
 /******************************************************************************/

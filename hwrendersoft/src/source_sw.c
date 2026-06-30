@@ -303,7 +303,89 @@ struct TbSprite {
 #define HWR_DI_Unkn15     0x0F
 #define HWR_DI_SFrmPersB  0x1C
 #define HWR_DI_SFrmEfctV  0x1D
+#define HWR_DI_SpObFace4   0x0C
+#define HWR_DI_SharpnlPoly 0x14
+#define HWR_DI_SFrmPhwoar  0x15
+#define HWR_DI_SFireFlame  0x19
+
+/* Special object face4 + screen point pool (for flat-tinted 2D overlay effects:
+ * shield-hit spheres, blast rings, lightning). Layouts mirror enginsngobjs.h /
+ * engindrwlstx.h. These special faces store already-projected screen points and
+ * a palette colour (ExCol); render mode (Flags) 15 = 50% tint blend. */
+#pragma pack(push, 1)
+struct HwrSpObFace4 {       /* == SingleObjectFace4, sizeof 40 */
+    int16_t  PointNo[4];
+    uint16_t Texture;
+    uint8_t  GFlags, Flags;
+    uint16_t ExCol;
+    uint16_t Object;
+    int16_t  Shade0, Shade1, Shade2, Shade3;
+    int16_t  Light0, Light1, Light2, Light3;
+    uint16_t FaceNormal, WalkHeader, UnknTringl1, UnknTringl2;
+};
+struct HwrSpecialPoint { int16_t X, Y, Z, PadTo8; };
+#pragma pack(pop)
+extern struct HwrSpObFace4    *game_special_obj_faces4;
+extern struct HwrSpecialPoint *game_screen_point_pool;
+
 #define HWR_SMTT_DROPPED_ITEM 0x19   /* SimpleThing Type for a dropped (collectable) item */
+
+/* Effect arrays from enginshrapn.h (fire flames / phwoar smoke+explosion clouds).
+ * Layouts mirror that header exactly (packed); the symbols resolve at the final
+ * executable link. The draw list carries one DrIT_SFireFlame / DrIT_SFrmPhwoar
+ * item per visible effect with Offset = index into these arrays. */
+#pragma pack(push, 1)
+struct HwrFireFlame {       /* == struct FireFlame, sizeof 20 */
+    uint8_t  type, count;
+    int8_t   fvel, fcount, big, dbig, ddbig;
+    uint8_t  life;
+    uint16_t frame;
+    int16_t  x, y, z;
+    uint16_t PointOffset;
+    uint16_t next;
+};
+struct HwrPhwoar {          /* == struct Phwoar */
+    int32_t  x, y, z;
+    int8_t   vx, vy, vz;
+    uint8_t  type, rabbit, gestation;
+    int8_t   die;
+    uint8_t  vf;
+    uint16_t f;
+    uint16_t PointOffset;
+    uint16_t child;
+    uint8_t  fc, shit;
+};
+#pragma pack(pop)
+extern struct HwrFireFlame FIRE_flame[512];
+extern struct HwrPhwoar    phwoar[1024];
+
+/* Target boxes recorded by the HUD (hud_target.c): screen centre + half-extent +
+ * bracket-set variant (0 person, 1 vehicle). Drawn as a translucent box tile. */
+struct HwrTgtBoxRec { int16_t cx, cy, half; uint8_t variant; };
+extern struct HwrTgtBoxRec hwr_tgtbox_list[64];
+extern int hwr_tgtbox_count;
+/* Pause popup box fills (fepause.c): each entry is a screen rect + palette
+ * colour to draw as a semi-transparent GL overlay quad (purple tint over 3D). */
+struct HwrPauseBoxRec { short x0, y0, x1, y1; uint8_t colr; };
+extern struct HwrPauseBoxRec hwr_pause_box_list[8];
+extern int hwr_pause_box_count;
+/* HUD sprite bank (pop1_sprites): same TbSprite layout as m_sprites. */
+extern struct TbSprite *pop1_sprites;
+
+/* Per-effect skip masks (defined in engindrwlstx.c, libswrender). A set bit
+ * means the FX3D renderer collected that effect as a billboard, so the SW
+ * drawlist executor must skip its software draw. 512 flames -> 64 bytes,
+ * 1024 phwoar -> 128 bytes. */
+extern unsigned char hwr_fire_skip_mask[64];
+extern unsigned char hwr_phwoar_skip_mask[128];
+
+/* Light-glare (headlight / lamp) world positions enlisted by build_glare this
+ * frame (see engindrwlstx.h struct HwrGlare). Drawn as additive glow billboards;
+ * their SW screen-space faces are suppressed under FX3D. Layout must match. */
+struct HwrGlareRec { int x, y, z, r, siren; };
+#define HWR_GLARE_MAX 512
+extern struct HwrGlareRec hwr_glare_list[HWR_GLARE_MAX];
+extern int hwr_glare_count;
 
 /* The SW sort-sprite, draw-list and frame/sprite arrays. */
 extern struct SortSprite *game_sort_sprites;
@@ -316,19 +398,38 @@ extern struct Element    *melement_ani, *mele_ani_end;
 extern struct TbSprite   *m_sprites, *m_sprites_end;
 
 /* Pre-collected billboard storage (filled by hwr_sw_collect_sprites,
- * consumed by sw_get_sprites). */
-#define HWR_MAX_COLLECTED 2048
+ * consumed by sw_get_sprites). Must match SPR_MAX_BILLBOARDS in hwr_sprite.c;
+ * raised from 2048 so heavy combat (agents + a big explosion's smoke puffs +
+ * fire + glares) no longer overflows and drops the tail of the smoke to the
+ * flickering software fallback. */
+#define HWR_MAX_COLLECTED 4096
 static HwrBillboard hwr_collected_billboards[HWR_MAX_COLLECTED];
 static int          hwr_collected_count = 0;
 static int          hwr_xbr_count = 0;
+/* Effect-collection counts (fire/phwoar), surfaced in the KP-7 dump. */
+static int          hwr_fire_seen = 0, hwr_fire_coll = 0;
+static int          hwr_phwoar_seen = 0, hwr_phwoar_coll = 0;
+static int          hwr_effect_badslot = 0;
+
+/* Screen-space overlay quads (shield/blast/lightning special faces), snapshotted
+ * at gate time — the draw list and screen-point pool are reset/overwritten
+ * before the GL present, so they must be captured here, not read live. */
+#define HWR_MAX_OVERLAYS 4096
+static HwrOverlayQuad hwr_collected_overlays[HWR_MAX_OVERLAYS];
+static int            hwr_collected_overlay_count = 0;
+
+/* Diagnostic: histogram of draw-item types (DrIT_*) in the draw list this frame,
+ * dumped on KP-7 — to find which type the chimney/building smoke uses. */
+static int            hwr_di_hist[64];
 
 /* Viewport, supplied by the host at creation time. */
 static int sw_view_w = 0;
 static int sw_view_h = 0;
 
 /* The skip mask the drawlist executor checks — storage defined in
- * engindrwlstx.c (libswrender), linked at the final executable. */
-extern unsigned char hwr_sprite_skip_mask[256];
+ * engindrwlstx.c (libswrender), linked at the final executable. 512 bytes =
+ * 4096 bits to cover game_sort_sprites (up to 4001 entries). */
+extern unsigned char hwr_sprite_skip_mask[512];
 
 /* render_ghost is a ghosting lookup table used by SW sprite drawing functions.
  * It must be set before ANY sprite drawing; normally it's set inside
@@ -341,6 +442,311 @@ extern struct {
     unsigned char ghost_table[256 * 256];
 } pixmap;
 
+/* Composite a sprite frame's version-0 elements into the atlas (with the same
+ * xBR upscale as the Thing path) and return its atlas slot, or <0 on failure.
+ * Used for the effect arrays (fire/phwoar) which draw a plain frame with no FRV
+ * versioning — the SW drawers (draw_frame_on_screen / draw_frame_scaled_alpha)
+ * only emit elements whose version bits (Flags & 0xFE00) are zero, so we match
+ * that here. *out_fw/*out_fh receive the composited (pre-xBR) pixel size. */
+static int hwr_effect_frame_slot(unsigned short frm_idx, int *out_fw, int *out_fh)
+{
+    struct Frame *frm;
+    unsigned short el_idx;
+    int off_x, off_y, max_x, max_y, fw, fh, slot, xbr_key;
+    uint32_t key;
+
+    if (frm_idx == 0 || frm_idx >= (unsigned short)(frame_end - frame))
+        return -1;
+    frm = &frame[frm_idx];
+    xbr_key = hwr_lights_defaults().xbr_scale;
+    key = ((uint32_t)frm_idx << 18) | ((uint32_t)(xbr_key & 0x03) << 2);
+
+    /* Bounding box of the version-0 elements. */
+    off_x = 0x7FFFFFFF; off_y = 0x7FFFFFFF;
+    max_x = -0x7FFFFFFF; max_y = -0x7FFFFFFF;
+    for (el_idx = frm->FirstElement; el_idx > 0; ) {
+        struct Element *el;
+        if (el_idx >= (unsigned short)(mele_ani_end - melement_ani))
+            break;
+        el = &melement_ani[el_idx];
+        if (el->ToSprite > 0 && (el->Flags & 0xFE00) == 0) {
+            struct TbSprite *spr = (struct TbSprite *)((uint8_t *)m_sprites + el->ToSprite);
+            if (spr > m_sprites && spr < m_sprites_end) {
+                int ex = (int)(el->X) >> 1;
+                int ey = (int)(el->Y) >> 1;
+                int sw = spr->SWidth, sh = spr->SHeight;
+                if (ex < off_x) off_x = ex;
+                if (ey < off_y) off_y = ey;
+                if (ex + sw > max_x) max_x = ex + sw;
+                if (ey + sh > max_y) max_y = ey + sh;
+            }
+        }
+        el_idx = el->Next;
+    }
+    if (off_x == 0x7FFFFFFF) off_x = 0;
+    if (off_y == 0x7FFFFFFF) off_y = 0;
+    fw = max_x - off_x; fh = max_y - off_y;
+    if (fw <= 0 || fh <= 0 || fw > 256 || fh > 256)
+        return -1;
+    if (out_fw) *out_fw = fw;
+    if (out_fh) *out_fh = fh;
+
+    slot = hwr_atlas_find(key);
+    if (slot != -1)
+        return slot;   /* cached (>=0) or blacklisted (-2) */
+
+    {
+        uint8_t comp[256 * 256 * 4];
+        memset(comp, 0, (size_t)fw * fh * 4);
+        for (el_idx = frm->FirstElement; el_idx > 0; ) {
+            struct Element *el;
+            if (el_idx >= (unsigned short)(mele_ani_end - melement_ani))
+                break;
+            el = &melement_ani[el_idx];
+            if (el->ToSprite > 0 && (el->Flags & 0xFE00) == 0) {
+                struct TbSprite *spr = (struct TbSprite *)((uint8_t *)m_sprites + el->ToSprite);
+                if (spr > m_sprites && spr < m_sprites_end) {
+                    int spr_w = spr->SWidth, spr_h = spr->SHeight;
+                    int el_x = ((int)(el->X) >> 1) - off_x;
+                    int el_y = ((int)(el->Y) >> 1) - off_y;
+                    int flip_h = (el->Flags & 0x0001) != 0;
+                    if (spr_w > 0 && spr_h > 0 && spr_w <= 256 && spr_h <= 256) {
+                        uint8_t temp[256 * 256], opq[256 * 256];
+                        int row, col;
+                        memset(temp, 0, sizeof(temp));
+                        memset(opq, 0, sizeof(opq));
+                        if (hwr_rle_decode_opaque(spr->Data, temp, opq, spr_w, spr_h) == 0) {
+                            /* Effects are self-lit — bake the raw full-bright palette
+                             * colour (no fade-table dim) so fire stays bright; the
+                             * billboard shade is set to full at draw time. */
+                            for (row = 0; row < spr_h && el_y + row < fh; row++) {
+                                for (col = 0; col < spr_w && el_x + col < fw; col++) {
+                                    int idx = row * spr_w + col;
+                                    int dst_x = flip_h ? (el_x + spr_w - 1 - col) : (el_x + col);
+                                    int dst = ((el_y + row) * fw + dst_x) * 4;
+                                    int pixel = temp[idx];
+                                    if (opq[idx]) {
+                                        comp[dst + 0] = lbPaletteColors[pixel].r;
+                                        comp[dst + 1] = lbPaletteColors[pixel].g;
+                                        comp[dst + 2] = lbPaletteColors[pixel].b;
+                                        comp[dst + 3] = 255;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            el_idx = el->Next;
+        }
+
+        {
+            int sf = hwr_lights_defaults().xbr_scale;
+            uint8_t *reg_pixels = comp;
+            int reg_w = fw, reg_h = fh;
+            uint8_t *scaled = NULL;
+            if (sf >= 2 && sf <= 4 && fw * sf <= 4096 && fh * sf <= 4096) {
+                int sw = fw * sf, sh = fh * sf;
+                scaled = (uint8_t *)malloc((size_t)sw * sh * 4);
+                if (scaled) {
+                    if (xbr_scale(comp, scaled, fw, fh, sf) == 0) {
+                        reg_pixels = scaled; reg_w = sw; reg_h = sh;
+                        hwr_xbr_count++;
+                    } else {
+                        free(scaled); scaled = NULL;
+                    }
+                }
+            }
+            slot = hwr_atlas_register(key, reg_pixels, reg_w, reg_h);
+            if (slot < 0 && reg_pixels != comp)
+                slot = hwr_atlas_register(key, comp, fw, fh);
+            if (scaled) free(scaled);
+        }
+    }
+    return slot;
+}
+
+/* Collect fire flames + phwoar (smoke/explosion) clouds from the SW draw list as
+ * translucent billboards. Fire/explosions blend additively (glow); smoke blends
+ * alpha-over. Items we successfully collect are marked in the per-effect skip
+ * masks so the SW drawlist executor skips their software draw; items we cannot
+ * atlas are left for the software renderer (no skip bit set). */
+static void hwr_sw_collect_effects(void)
+{
+    unsigned short i;
+
+    hwr_fire_seen = hwr_fire_coll = 0;
+    hwr_phwoar_seen = hwr_phwoar_coll = 0;
+    hwr_effect_badslot = 0;
+
+    for (i = 1; i < next_draw_item && hwr_collected_count < HWR_MAX_COLLECTED; i++) {
+        struct DrawItem *itm = &game_draw_list[i];
+        int is_fire   = (itm->Type == HWR_DI_SFireFlame);
+        int is_phwoar = (itm->Type == HWR_DI_SFrmPhwoar);
+        unsigned short off = itm->Offset;
+        unsigned short frm_idx;
+        float wx, wy, wz, bigf = 1.0f;
+        int fw = 0, fh = 0, slot;
+
+        if (!is_fire && !is_phwoar)
+            continue;
+        if (is_fire) hwr_fire_seen++; else hwr_phwoar_seen++;
+
+        /* World position. The GL billboard vertex shader subtracts the camera
+         * centre uCtr = (xc, 8*yc, zc); the SW enlist of these effects feeds
+         * transform_shpoint a vertical delta of (worldY - yc) - 8*yc (one extra
+         * -yc vs the Thing path), so the matching billboard Y carries that -yc.
+         * Fire stores world units directly (short x/y/z); phwoar stores fixed
+         * point like a Thing (X>>8, Y>>5, Z>>8). */
+        if (is_fire) {
+            struct HwrFireFlame *fl;
+            if (off >= 512) continue;
+            fl = &FIRE_flame[off];
+            frm_idx = fl->frame;
+            wx = (float)fl->x;
+            wy = (float)fl->y - (float)snap.yc;
+            wz = (float)fl->z;
+            /* draw_fire_flame scales by (overall_scale*(big+128))>>7 when big!=0;
+             * (big+128)/128 is 1.0 at big==0 so it works for the unscaled case too. */
+            bigf = (float)((int)fl->big + 128) / 128.0f;
+            if (bigf < 0.25f) bigf = 0.25f;
+        } else {
+            struct HwrPhwoar *ph;
+            if (off >= 1024) continue;
+            ph = &phwoar[off];
+            frm_idx = ph->f;
+            wx = (float)(ph->x >> 8);
+            wy = (float)(ph->y >> 5) - (float)snap.yc;
+            wz = (float)(ph->z >> 8);
+        }
+
+        slot = hwr_effect_frame_slot(frm_idx, &fw, &fh);
+        if (slot < 0) {
+            hwr_effect_badslot++;
+            continue;   /* leave to the SW renderer (don't set the skip bit) */
+        }
+        if (is_fire) hwr_fire_coll++; else hwr_phwoar_coll++;
+
+        {
+            HwrBillboard *bb = &hwr_collected_billboards[hwr_collected_count];
+            float sc = (float)snap.scale;
+            float rnorm = sqrtf((float)snap.D14 * snap.D14 + (float)snap.D10 * snap.D10);
+            float res_scale = (sw_view_h > 0) ? (float)sw_view_h / 480.0f : 1.0f;
+            bb->x = wx; bb->y = wy; bb->z = wz;
+            bb->sprite = (uint16_t)slot;
+            bb->shade = 48;   /* full brightness — effects are self-lit */
+            bb->flags = HWR_BILLBOARD_TRANSLUCENT | HWR_BILLBOARD_NOSHADOW
+                      | (is_fire ? HWR_BILLBOARD_ADDITIVE : 0);
+            if (sc <= 0.0f) sc = 256.0f;
+            if (rnorm > 0.001f && snap.D1C != 0) {
+                bb->half_size_x = (float)fw * 100663296.0f / (sc * rnorm) * 0.85f * res_scale * bigf;
+                bb->half_size_y = (float)fh * 100663296.0f / (sc * (float)snap.D1C) * 0.85f * res_scale * bigf;
+            } else {
+                bb->half_size_x = (float)fw * 18.0f * 0.85f * res_scale * bigf;
+                bb->half_size_y = (float)fh * 18.0f * 0.85f * res_scale * bigf;
+            }
+            /* Effects anchor at the emitter centre (the projected x/y/z point),
+             * unlike Thing sprites which anchor at the feet. */
+            hwr_collected_count++;
+        }
+
+        if (is_fire)
+            hwr_fire_skip_mask[off >> 3] |= (uint8_t)(1 << (off & 7));
+        else
+            hwr_phwoar_skip_mask[off >> 3] |= (uint8_t)(1 << (off & 7));
+    }
+}
+
+/* Emit the light glares (car headlights / street lamps) recorded by build_glare
+ * as additive glow billboards. build_glare uses transform_point, which equals
+ * transform_shpoint with a vertical delta of (y - (yc>>3)) - 8*yc, so the
+ * matching billboard Y is y - (yc>>3). Their SW screen-space faces are
+ * suppressed under FX3D (drawitem_is_suppressed_glare). */
+static void hwr_sw_collect_glares(void)
+{
+    int i;
+    int slot_white, slot_red, slot_blue;
+    /* Police siren flash phase: alternate red/blue every 250 ms (each colour
+     * pulses twice a second). 0 = red side lit, 1 = blue side lit. */
+    int phase = (int)((SDL_GetTicks() / 250u) & 1u);
+    if (hwr_glare_count <= 0)
+        return;
+    slot_white = hwr_atlas_glow_slot(0);
+    slot_red   = hwr_atlas_glow_slot(1);
+    slot_blue  = hwr_atlas_glow_slot(2);
+    if (slot_white < 0)
+        return;
+    for (i = 0; i < hwr_glare_count && hwr_collected_count < HWR_MAX_COLLECTED; i++) {
+        int siren = hwr_glare_list[i].siren;
+        int slot;
+        HwrBillboard *bb;
+        float r = (float)hwr_glare_list[i].r;
+        if (siren == 1) {
+            if (phase != 0) continue;          /* red shows on phase 0 only */
+            slot = (slot_red >= 0) ? slot_red : slot_white;
+        } else if (siren == 2) {
+            if (phase != 1) continue;          /* blue shows on phase 1 only */
+            slot = (slot_blue >= 0) ? slot_blue : slot_white;
+        } else {
+            slot = slot_white;                 /* plain headlight / lamp */
+        }
+        bb = &hwr_collected_billboards[hwr_collected_count];
+        bb->x = (float)hwr_glare_list[i].x;
+        bb->y = (float)hwr_glare_list[i].y - (float)(snap.yc >> 3);
+        bb->z = (float)hwr_glare_list[i].z;
+        bb->sprite = (uint16_t)slot;
+        bb->shade = 48;   /* full brightness — self-lit glow */
+        bb->flags = HWR_BILLBOARD_TRANSLUCENT | HWR_BILLBOARD_NOSHADOW
+                  | HWR_BILLBOARD_ADDITIVE;
+        /* build_glare's screen radius is r*scale/256; the billboard half-size is
+         * in world units and the shader applies the same scale/perspective, so
+         * ~4*r reproduces roughly half that on-screen size (tunable). */
+        bb->half_size_x = r * 4.0f;
+        bb->half_size_y = r * 4.0f;
+        hwr_collected_count++;
+    }
+}
+
+/* Snapshot the flat-tinted special-face overlay quads (shield-hit / blast /
+ * lightning) at gate time. The special faces (DrIT_SpObFace4 modes 15/17) carry
+ * already-projected screen points + a palette colour (ExCol); we capture them
+ * now because the draw list and screen-point pool are reset before the GL
+ * present. Their SW draw is suppressed under FX3D. */
+static void hwr_sw_collect_overlays(void)
+{
+    unsigned short i;
+    hwr_collected_overlay_count = 0;
+    if (game_draw_list == NULL || game_special_obj_faces4 == NULL ||
+        game_screen_point_pool == NULL)
+        return;
+    for (i = 1; i < next_draw_item && hwr_collected_overlay_count < HWR_MAX_OVERLAYS; i++) {
+        struct DrawItem *itm = &game_draw_list[i];
+        struct HwrSpObFace4 *fc;
+        HwrOverlayQuad *q;
+        int k, col;
+        if (itm->Type != HWR_DI_SpObFace4)
+            continue;
+        fc = &game_special_obj_faces4[itm->Offset];
+        /* 15 = tinted slices (laser/lightning), 17 = shaded circle fans
+         * (shield-hit / blast / recoil / nuclear discs). */
+        if (fc->Flags != 15 && fc->Flags != 17)
+            continue;
+        q = &hwr_collected_overlays[hwr_collected_overlay_count];
+        for (k = 0; k < 4; k++) {
+            struct HwrSpecialPoint *sp = &game_screen_point_pool[(uint16_t)fc->PointNo[k]];
+            q->x[k] = (float)sp->X;
+            q->y[k] = (float)sp->Y;
+        }
+        col = fc->ExCol & 0xFF;
+        q->r = (float)lbPaletteColors[col].r / 255.0f;
+        q->g = (float)lbPaletteColors[col].g / 255.0f;
+        q->b = (float)lbPaletteColors[col].b / 255.0f;
+        q->a = 0.5f;   /* mode 15/17 = 50% ghost blend */
+        q->slot = -1;  /* flat-coloured quad */
+        hwr_collected_overlay_count++;
+    }
+}
+
 void hwr_sw_collect_sprites(void)
 {
     unsigned short i;
@@ -349,12 +755,19 @@ void hwr_sw_collect_sprites(void)
     int hwr_eligible_count = 0;
     int hwr_passed_count = 0;
     memset(hwr_sprite_skip_mask, 0, sizeof(hwr_sprite_skip_mask));
+    memset(hwr_fire_skip_mask, 0, sizeof(hwr_fire_skip_mask));
+    memset(hwr_phwoar_skip_mask, 0, sizeof(hwr_phwoar_skip_mask));
     render_ghost = &pixmap.ghost_table[0];
 
     if (!snap.valid || game_draw_list == NULL || game_sort_sprites == NULL)
         return;
     if (frame == NULL || m_sprites == NULL || melement_ani == NULL)
         return;
+
+    /* Diagnostic: count every draw-item type present this frame. */
+    memset(hwr_di_hist, 0, sizeof(hwr_di_hist));
+    for (i = 1; i < next_draw_item; i++)
+        hwr_di_hist[game_draw_list[i].Type & 63]++;
 
     for (i = 1; i < next_draw_item && hwr_collected_count < HWR_MAX_COLLECTED; i++) {
         struct DrawItem *itm = &game_draw_list[i];
@@ -384,6 +797,56 @@ void hwr_sw_collect_sprites(void)
         thing = (struct HwrSimpleThingMini *)ss->SrcItem;
         if (thing->Type == 0) continue;
         hwr_passed_count++;
+
+        /* Scale-effect sprites (DrIT_Unkn15): drift smoke (chimneys, burning
+         * buildings), explosion clouds, flames, splashes. Here SortSprite.Scale
+         * is a SCALE FACTOR, not an FRV version pack, and the SW draws the whole
+         * frame alpha-blended & scaled (draw_sort_sprite1c -> draw_frame_scaled_
+         * alpha). Treating Scale as FRV (as the normal path does) composites a
+         * garbage frame that gets skipped or thrashes the atlas -> the smoke fell
+         * back to the flickering software bitmap. Composite without FRV (effect
+         * compositor) and size by the scale, as a translucent billboard. */
+        if (itm->Type == HWR_DI_Unkn15) {
+            int efw = 0, efh = 0;
+            int eslot = hwr_effect_frame_slot(ss->Frame, &efw, &efh);
+            if (eslot >= 0) {
+                HwrBillboard *bb = &hwr_collected_billboards[hwr_collected_count];
+                float sc = (float)snap.scale;
+                float rnorm = sqrtf((float)snap.D14 * snap.D14 + (float)snap.D10 * snap.D10);
+                float res_scale = (sw_view_h > 0) ? (float)sw_view_h / 480.0f : 1.0f;
+                float scl = (float)ss->Scale / 256.0f;   /* scale-effect enlargement */
+                int st = thing->SubType;
+                int is_flame = (st == 46 || st == 52 || st == 56 || st == 57);
+                /* Fade the particle out over its remaining life. shade now drives
+                 * the effect ALPHA (see the self-lit shader path), so newest
+                 * smoke is opaque and it dissolves as Timer1 counts down to 0.
+                 * Use the full life if StartTimer1 is set, else fade over the
+                 * last ~64 ticks. */
+                float life = (thing->StartTimer1 > 0) ? (float)thing->StartTimer1 : 64.0f;
+                float fade = (float)thing->Timer1 / life;
+                if (fade < 0.0f) fade = 0.0f;
+                if (fade > 1.0f) fade = 1.0f;
+                if (sc <= 0.0f) sc = 256.0f;
+                if (scl <= 0.05f) scl = 1.0f;
+                bb->x = (float)(thing->X >> 8);
+                bb->y = (float)(thing->Y >> 5);
+                bb->z = (float)(thing->Z >> 8);
+                bb->sprite = (uint16_t)eslot;
+                bb->shade = (uint8_t)(fade * 48.0f + 0.5f);
+                bb->flags = HWR_BILLBOARD_TRANSLUCENT | HWR_BILLBOARD_NOSHADOW
+                          | (is_flame ? HWR_BILLBOARD_ADDITIVE : 0);
+                if (rnorm > 0.001f && snap.D1C != 0) {
+                    bb->half_size_x = (float)efw * 100663296.0f / (sc * rnorm) * 0.85f * res_scale * scl;
+                    bb->half_size_y = (float)efh * 100663296.0f / (sc * (float)snap.D1C) * 0.85f * res_scale * scl;
+                } else {
+                    bb->half_size_x = (float)efw * 18.0f * 0.85f * res_scale * scl;
+                    bb->half_size_y = (float)efh * 18.0f * 0.85f * res_scale * scl;
+                }
+                hwr_collected_count++;
+                hwr_sprite_skip_mask[ss_idx >> 3] |= (uint8_t)(1 << (ss_idx & 7));
+            }
+            continue;
+        }
 
         {
             unsigned short frm_idx = ss->Frame;
@@ -590,6 +1053,23 @@ void hwr_sw_collect_sprites(void)
                 /* NOSHADOW (light emitters don't cast blob shadows) is a separate
                  * shadow-casting concern, unrelated to brightness. */
                 bb->flags = is_emitter ? HWR_BILLBOARD_NOSHADOW : 0;
+                /* The effect-versioned frames (DrIT_SFrmEfctV) are the person
+                 * shield bubble — a translucent energy overlay, not a solid
+                 * sprite. Route it through the blended pass (alpha) and don't let
+                 * it cast a blob shadow. */
+                if (itm->Type == HWR_DI_SFrmEfctV)
+                    bb->flags |= HWR_BILLBOARD_TRANSLUCENT | HWR_BILLBOARD_NOSHADOW;
+                /* Scale-effect sprites (DrIT_Unkn15) are smoke / flames /
+                 * splashes — translucent, not solid. Drift smoke (chimney smoke,
+                 * burning/destroyed buildings) and explosion clouds blend alpha;
+                 * the flame subtypes glow additively. Without this they render as
+                 * opaque billboards (the "solid software-looking" smoke). */
+                if (itm->Type == HWR_DI_Unkn15) {
+                    int st = thing ? thing->SubType : 0;
+                    int is_flame = (st == 46 || st == 52 || st == 56 || st == 57);
+                    bb->flags |= HWR_BILLBOARD_TRANSLUCENT | HWR_BILLBOARD_NOSHADOW
+                              | (is_flame ? HWR_BILLBOARD_ADDITIVE : 0);
+                }
                 /* Dropped items sit at the same spot as the dead body that
                  * dropped them; bias them toward the camera so they always draw
                  * on top and stay easy to click. */
@@ -617,6 +1097,11 @@ void hwr_sw_collect_sprites(void)
         }
     }
 
+    /* Append translucent effect billboards (fire/smoke/explosions). */
+    hwr_sw_collect_effects();
+    hwr_sw_collect_glares();
+    hwr_sw_collect_overlays();
+
     /* ---- KP-7 one-shot debug dump (xBR/billboard stats) ---- */
     {
         static int prev_kp7 = 0;
@@ -634,6 +1119,15 @@ void hwr_sw_collect_sprites(void)
                     snap.D3C, snap.D40, snap.scale, snap.persp);
                 fprintf(df, "collected: %d   eligible=%d passed=%d next_draw_item=%d next_sort_sprite=%d\n",
                     hwr_collected_count, hwr_eligible_count, hwr_passed_count, next_draw_item, next_sort_sprite);
+                fprintf(df, "effects: fire seen=%d coll=%d  phwoar seen=%d coll=%d  badslot=%d\n",
+                    hwr_fire_seen, hwr_fire_coll, hwr_phwoar_seen, hwr_phwoar_coll, hwr_effect_badslot);
+                fprintf(df, "overlays (shield/blast mode15/17): %d  glares=%d\n",
+                    hwr_collected_overlay_count, hwr_glare_count);
+                fprintf(df, "draw-item types (DrIT:count):");
+                for (di = 0; di < 64; di++)
+                    if (hwr_di_hist[di])
+                        fprintf(df, " %d:%d", di, hwr_di_hist[di]);
+                fprintf(df, "\n");
                 for (di = 0; di < hwr_collected_count && di < 10; di++) {
                     fprintf(df, " [%d]: pos=(%.0f,%.0f,%.0f) hw=%.0f hh=%.0f slot=%d shade=%d\n",
                         di, hwr_collected_billboards[di].x, hwr_collected_billboards[di].y,
@@ -757,6 +1251,29 @@ static HwrReflectVertex refl_verts[HWR_REFL_MAX_VERTS];
 static uint32_t         refl_index[HWR_REFL_MAX_INDEX];
 static int              refl_vert_count = 0;
 static int              refl_index_count = 0;
+
+/* --- Transparent (blended) face buffers, filled alongside sw_get_faces.
+ * Faces flagged see-through are diverted here (Phase 8): the deep-radar
+ * mask (whole objects the SW engine made semi-transparent) and static
+ * transparent-mode faces (SW vec_mode 6 = wire fence / glass). Drawn by the
+ * blended transparent pass, back-to-front sorted in sw_get_transparent_faces. */
+#define HWR_TRANS_MAX_VERTS  (64 * 1024)
+#define HWR_TRANS_MAX_INDEX  (96 * 1024)
+static HwrVertex trans_verts[HWR_TRANS_MAX_VERTS];
+static uint32_t  trans_index[HWR_TRANS_MAX_INDEX];
+static uint32_t  trans_index_sorted[HWR_TRANS_MAX_INDEX];
+static int       trans_vert_count = 0;
+static int       trans_index_count = 0;
+
+/* The deep-radar transparent-object bitset, populated in draw_object()
+ * (libswrender) during the SW drawlist build; read here to route those
+ * objects' faces into the blended pass. */
+extern unsigned char hwr_obj_transp_mask[8192];
+/* Objects the SW build actually drew this frame (set in draw_object). Static
+ * building faces are gated on this so GL stops drawing destroyed/collapsed
+ * buildings that still linger in game_objects[] but are no longer traversed. */
+extern unsigned char hwr_obj_live_mask[8192];
+
 
 /* Texture pages packed contiguously (18 * 256 * 256) for the GL texture array. */
 static uint8_t   floor_pages[HWR_TMAP_PAGES * HWR_TMAP_DIM * HWR_TMAP_DIM];
@@ -996,6 +1513,17 @@ static void face_emit_vert(int wx, int wy, int wz, uint8_t u, uint8_t v,
     o->tile_depth = depth;
 }
 
+/* Emit one transparent (blended) face vertex into the transparent batch. */
+static void trans_emit_vert(int wx, int wy, int wz, uint8_t u, uint8_t v,
+    uint8_t page, uint8_t light, float depth)
+{
+    HwrVertex *o = &trans_verts[trans_vert_count++];
+    o->x = (float)wx; o->y = (float)wy; o->z = (float)wz;
+    o->u = u; o->v = v;
+    o->page = page; o->light = light;
+    o->tile_depth = depth;
+}
+
 /* Rotate an object-space normal by the object matrix (or identity) and return a
  * unit world-space vector. Mirrors compute_normals_light_ratio's matrix_transform
  * step; the chameleon shader then projects this against the camera factors. */
@@ -1101,6 +1629,9 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
     face_index_count = 0;
     refl_vert_count = 0;
     refl_index_count = 0;
+    trans_vert_count = 0;
+    trans_index_count = 0;
+    int transp_debug = hwr_lights_defaults().transp_debug;
     if (out != NULL) {
         out->verts = NULL; out->vert_count = 0;
         out->indices = NULL; out->index_count = 0;
@@ -1159,6 +1690,12 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
             /* Static building: cached world-unit position, no rotation. */
             int mtx = (uint16_t)obj->MapX >> 8;
             int mtz = (uint16_t)obj->MapZ >> 8;
+            /* Only emit static objects the SW build actually drew this frame.
+             * Destroyed/collapsed buildings stay in game_objects[] but are no
+             * longer traversed by the SW build (draw_object), so their live bit
+             * is clear — skip them so GL doesn't render a building SW removed. */
+            if (!((hwr_obj_live_mask[o >> 3] >> (o & 7)) & 1))
+                continue;
             if (mtx < x0 || mtx > x1 || mtz < z0 || mtz > z1)
                 continue;
             obj_tx = (int)(uint16_t)obj->MapX;
@@ -1170,6 +1707,12 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
         if (face_obj_seen[o >> 3] & (1 << (o & 7)))
             continue;
         face_obj_seen[o >> 3] |= (uint8_t)(1 << (o & 7));
+
+        /* Deep-radar see-through: whole object flagged semi-transparent by the
+         * SW engine this frame -> all its (non-reflective) faces blend.
+         * [transparency] debug=1 forces every object transparent (diagnostic to
+         * separate "blended pass works" from "deep-radar mask is being set"). */
+        int obj_transp = transp_debug || ((hwr_obj_transp_mask[o >> 3] >> (o & 7)) & 1);
 
         /* --- Quads (face4) --- */
         for (f = 0; f < obj->NumbFaces4; f++) {
@@ -1229,6 +1772,21 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
              * render, never drop the face. */
             int texidx = fc->Texture;
             int flat = (texidx == 0);   /* untextured -> flat-shaded face */
+            /* Transparent (blended) face: whole object is deep-radar see-through,
+             * or this face uses the SW transparent-textured mode (wire fence /
+             * glass). Reflective faces handled above; everything else opaque. */
+            /* Blended (see-through) faces: deep-radar see-through objects, or the
+             * mode-6 "transparent textured" faces (window glass / fences). Both
+             * the opaque and blended passes discard the index-0 texture key, but
+             * mode-6 glass has solid (non-key) glass texels that must blend so
+             * you can see the building interior through bank windows — hence the
+             * blended pass, not opaque. */
+            /* Blended (see-through) faces: building WINDOW GLASS (modes 21/25 —
+             * bank fronts etc.) so you can see the interior, plus deep-radar
+             * see-through objects (obj_transp). Mode 6 (fences/scaffolding) is
+             * NOT here: it goes to the opaque pass, which discards the index-0
+             * texture key, giving solid bars with see-through gaps. */
+            int is_transp = obj_transp || fc->Flags == 21 || fc->Flags == 25;
             struct HwrFloorTex *tx = NULL;
             uint8_t pg, u0,v0c,u1,v1c,u2,v2c,u3,v3c;
             struct HwrSinglePoint *p[4];
@@ -1237,9 +1795,14 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
 
             if (!flat && texidx >= game_textures_limit)
                 texidx = 0;   /* clamp like set_floor_texture_uv, still render */
-            if (face_vert_count + 4 > HWR_FACE_MAX_VERTS ||
-                face_index_count + 6 > HWR_FACE_MAX_INDEX)
+            if (is_transp) {
+                if (trans_vert_count + 4 > HWR_TRANS_MAX_VERTS ||
+                    trans_index_count + 6 > HWR_TRANS_MAX_INDEX)
+                    continue;
+            } else if (face_vert_count + 4 > HWR_FACE_MAX_VERTS ||
+                       face_index_count + 6 > HWR_FACE_MAX_INDEX) {
                 break;
+            }
             if (flat) {
                 pg = 255;   /* shader sentinel: flat-shaded, no texture sample */
                 u0=v0c=u1=v1c=u2=v2c=u3=v3c=0;
@@ -1277,20 +1840,38 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
                 sd[k] = face_scrd((float)wx[k], (float)wy[k], (float)wz[k]);
             }
 
-            base = face_vert_count;
-            face_emit_vert(wx[0], wy[0], wz[0], u0, v0c, pg, 200, sd[0]);
-            face_emit_vert(wx[1], wy[1], wz[1], u1, v1c, pg, 200, sd[1]);
-            face_emit_vert(wx[2], wy[2], wz[2], u2, v2c, pg, 200, sd[2]);
-            face_emit_vert(wx[3], wy[3], wz[3], u3, v3c, pg, 200, sd[3]);
             /* Quad diagonal is PN1-PN2, matching draw_object_face4d_textrd:
              * triangles (PN0,PN2,PN1) + (PN3,PN1,PN2). A naive (0,1,2)+(0,2,3)
              * fan splits the wrong diagonal and leaves triangular gaps. */
-            face_index[face_index_count++] = base + 0;
-            face_index[face_index_count++] = base + 2;
-            face_index[face_index_count++] = base + 1;
-            face_index[face_index_count++] = base + 3;
-            face_index[face_index_count++] = base + 1;
-            face_index[face_index_count++] = base + 2;
+            if (is_transp) {
+                /* Deep-radar see-through faces lose their texture and render as a
+                 * flat syndicate tint (page sentinel 254); glass/fence (mode 6)
+                 * stay textured. */
+                uint8_t epg = obj_transp ? (uint8_t)254 : pg;
+                base = trans_vert_count;
+                trans_emit_vert(wx[0], wy[0], wz[0], u0, v0c, epg, 200, sd[0]);
+                trans_emit_vert(wx[1], wy[1], wz[1], u1, v1c, epg, 200, sd[1]);
+                trans_emit_vert(wx[2], wy[2], wz[2], u2, v2c, epg, 200, sd[2]);
+                trans_emit_vert(wx[3], wy[3], wz[3], u3, v3c, epg, 200, sd[3]);
+                trans_index[trans_index_count++] = base + 0;
+                trans_index[trans_index_count++] = base + 2;
+                trans_index[trans_index_count++] = base + 1;
+                trans_index[trans_index_count++] = base + 3;
+                trans_index[trans_index_count++] = base + 1;
+                trans_index[trans_index_count++] = base + 2;
+            } else {
+                base = face_vert_count;
+                face_emit_vert(wx[0], wy[0], wz[0], u0, v0c, pg, 200, sd[0]);
+                face_emit_vert(wx[1], wy[1], wz[1], u1, v1c, pg, 200, sd[1]);
+                face_emit_vert(wx[2], wy[2], wz[2], u2, v2c, pg, 200, sd[2]);
+                face_emit_vert(wx[3], wy[3], wz[3], u3, v3c, pg, 200, sd[3]);
+                face_index[face_index_count++] = base + 0;
+                face_index[face_index_count++] = base + 2;
+                face_index[face_index_count++] = base + 1;
+                face_index[face_index_count++] = base + 3;
+                face_index[face_index_count++] = base + 1;
+                face_index[face_index_count++] = base + 2;
+            }
         }
 
         /* --- Triangles (face3) --- */
@@ -1341,6 +1922,18 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
              * Using the wrong array sampled empty texels -> magenta/gaps. */
             int texidx = fc->Texture;
             int flat = (texidx == 0);
+            /* Blended (see-through) faces: deep-radar see-through objects, or the
+             * mode-6 "transparent textured" faces (window glass / fences). Both
+             * the opaque and blended passes discard the index-0 texture key, but
+             * mode-6 glass has solid (non-key) glass texels that must blend so
+             * you can see the building interior through bank windows — hence the
+             * blended pass, not opaque. */
+            /* Blended (see-through) faces: building WINDOW GLASS (modes 21/25 —
+             * bank fronts etc.) so you can see the interior, plus deep-radar
+             * see-through objects (obj_transp). Mode 6 (fences/scaffolding) is
+             * NOT here: it goes to the opaque pass, which discards the index-0
+             * texture key, giving solid bars with see-through gaps. */
+            int is_transp = obj_transp || fc->Flags == 21 || fc->Flags == 25;
             struct HwrFaceTex *tx = NULL;
             uint8_t pg, u0,v0c,u1,v1c,u2,v2c;
             struct HwrSinglePoint *p[3];
@@ -1349,9 +1942,14 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
 
             if (!flat && texidx >= face_textures_limit)
                 texidx = 0;   /* clamp like set_face_texture_uv, still render */
-            if (face_vert_count + 3 > HWR_FACE_MAX_VERTS ||
-                face_index_count + 3 > HWR_FACE_MAX_INDEX)
+            if (is_transp) {
+                if (trans_vert_count + 3 > HWR_TRANS_MAX_VERTS ||
+                    trans_index_count + 3 > HWR_TRANS_MAX_INDEX)
+                    continue;
+            } else if (face_vert_count + 3 > HWR_FACE_MAX_VERTS ||
+                       face_index_count + 3 > HWR_FACE_MAX_INDEX) {
                 break;
+            }
             if (flat) {
                 pg = 255;
                 u0=v0c=u1=v1c=u2=v2c=0;
@@ -1379,15 +1977,31 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
                 sd[k] = face_scrd((float)wx[k], (float)wy[k], (float)wz[k]);
             }
 
-            base = face_vert_count;
-            face_emit_vert(wx[0], wy[0], wz[0], u0, v0c, pg, 200, sd[0]);
-            face_emit_vert(wx[1], wy[1], wz[1], u1, v1c, pg, 200, sd[1]);
-            face_emit_vert(wx[2], wy[2], wz[2], u2, v2c, pg, 200, sd[2]);
-            face_index[face_index_count++] = base + 0;
-            face_index[face_index_count++] = base + 1;
-            face_index[face_index_count++] = base + 2;
+            if (is_transp) {
+                uint8_t epg = obj_transp ? (uint8_t)254 : pg;
+                base = trans_vert_count;
+                trans_emit_vert(wx[0], wy[0], wz[0], u0, v0c, epg, 200, sd[0]);
+                trans_emit_vert(wx[1], wy[1], wz[1], u1, v1c, epg, 200, sd[1]);
+                trans_emit_vert(wx[2], wy[2], wz[2], u2, v2c, epg, 200, sd[2]);
+                trans_index[trans_index_count++] = base + 0;
+                trans_index[trans_index_count++] = base + 1;
+                trans_index[trans_index_count++] = base + 2;
+            } else {
+                base = face_vert_count;
+                face_emit_vert(wx[0], wy[0], wz[0], u0, v0c, pg, 200, sd[0]);
+                face_emit_vert(wx[1], wy[1], wz[1], u1, v1c, pg, 200, sd[1]);
+                face_emit_vert(wx[2], wy[2], wz[2], u2, v2c, pg, 200, sd[2]);
+                face_index[face_index_count++] = base + 0;
+                face_index[face_index_count++] = base + 1;
+                face_index[face_index_count++] = base + 2;
+            }
         }
     }
+
+    /* NOTE: the deep-radar mask is NOT cleared here. sw_get_faces runs several
+     * times per frame (sun shadow pass + main face pass), so clearing here would
+     * leave later calls with an empty mask -> flicker. It is cleared once per
+     * frame at the top of process_engine_unk3() (game.c), before the build. */
 
     out->verts = face_verts;
     out->vert_count = face_vert_count;
@@ -1409,6 +2023,57 @@ static int sw_get_reflect_faces(void *ctx, HwrReflectBatch *out)
     out->indices = refl_index;
     out->index_count = refl_index_count;
     return refl_index_count;
+}
+
+/* One transparent triangle keyed by centroid depth for back-to-front sorting. */
+struct HwrTransTri { float d; uint32_t i0, i1, i2; };
+
+/* Sort farther triangles first (larger face_scrd depth = farther into screen),
+ * so alpha blending composites back-to-front. */
+static int trans_tri_cmp(const void *pa, const void *pb)
+{
+    float da = ((const struct HwrTransTri *)pa)->d;
+    float db = ((const struct HwrTransTri *)pb)->d;
+    if (da < db) return  1;
+    if (da > db) return -1;
+    return 0;
+}
+
+/* Hand back the transparent (blended) face batch collected by sw_get_faces,
+ * triangle-sorted back-to-front. Must be called after sw_get_faces() each frame. */
+static int sw_get_transparent_faces(void *ctx, HwrGeometryBatch *out)
+{
+    static struct HwrTransTri tri[HWR_TRANS_MAX_INDEX / 3];
+    int ntri, t;
+    (void)ctx;
+    if (out == NULL)
+        return 0;
+    out->verts = NULL; out->vert_count = 0;
+    out->indices = NULL; out->index_count = 0;
+    if (trans_index_count < 3)
+        return 0;
+
+    ntri = trans_index_count / 3;
+    for (t = 0; t < ntri; t++) {
+        uint32_t a = trans_index[t * 3 + 0];
+        uint32_t b = trans_index[t * 3 + 1];
+        uint32_t c = trans_index[t * 3 + 2];
+        tri[t].d = (trans_verts[a].tile_depth + trans_verts[b].tile_depth +
+                    trans_verts[c].tile_depth) * (1.0f / 3.0f);
+        tri[t].i0 = a; tri[t].i1 = b; tri[t].i2 = c;
+    }
+    qsort(tri, (size_t)ntri, sizeof(tri[0]), trans_tri_cmp);
+    for (t = 0; t < ntri; t++) {
+        trans_index_sorted[t * 3 + 0] = tri[t].i0;
+        trans_index_sorted[t * 3 + 1] = tri[t].i1;
+        trans_index_sorted[t * 3 + 2] = tri[t].i2;
+    }
+
+    out->verts = trans_verts;
+    out->vert_count = trans_vert_count;
+    out->indices = trans_index_sorted;
+    out->index_count = ntri * 3;
+    return ntri * 3;
 }
 
 
@@ -1833,6 +2498,173 @@ static int sw_get_key_index(void *ctx)
     return hwr_sw_key_index;
 }
 
+/* Collect the flat-tinted special-face overlay quads (shield-hit spheres, blast
+ * rings, lightning slices) the SW build enlisted as DrIT_SpObFace4 with render
+ * mode (Flags) 15. They carry already-projected screen points and a palette
+ * colour (ExCol); we hand them to the GL overlay pass as screen-space quads. The
+ * matching SW draw is suppressed under FX3D (drawitem_is_suppressed_glare). */
+/* Composite the 4 corner bracket sprites (pop1_sprites) into one box tile in the
+ * atlas, on a transparent background, and return its slot. variant 0 = person
+ * (sprites 78/79/80/81), 1 = vehicle (84/85/86/87); corner order TL,TR,BL,BR.
+ * Cached by a reserved key. *out_dim = the (square) tile size. */
+static int hwr_targetbox_slot(int variant, int *out_dim)
+{
+    enum { TILE_MAX = 256 };
+    static uint8_t tile[TILE_MAX * TILE_MAX * 4];
+    static const uint16_t pv[2][4] = { {78, 79, 80, 81}, {84, 85, 86, 87} };
+    uint32_t key = 0xFFE00000u | (uint32_t)variant;
+    int slot, k, maxd = 0, TILE;
+    *out_dim = 0;
+    if (pop1_sprites == NULL || variant < 0 || variant > 1)
+        return -1;
+    slot = hwr_atlas_find(key);
+    if (slot != -1) {
+        int w, h; hwr_atlas_size(slot, &w, &h); *out_dim = w;
+        return slot;   /* cached (>=0) or blacklisted (-2) */
+    }
+    /* Decode all four corners once, recording each one's tight *opaque* bounding
+     * box (the visible bracket art may sit inset within the sprite's bounding box
+     * with transparent padding — that padding is what was clipping/centring the
+     * left column). We align the opaque bbox's OUTER corner to the tile's outer
+     * corner, so the placement is immune to in-sprite padding. */
+    {
+        static uint8_t dec[4][64 * 64];     /* decoded indices per corner */
+        static uint8_t dop[4][64 * 64];     /* decoded opacity per corner */
+        int cw[4], ch[4];                   /* sprite bbox size */
+        int bx0[4], by0[4], bw[4], bh[4];   /* tight opaque bbox */
+        int ok[4] = {0,0,0,0};
+        int maxbw = 0, gap;
+
+        for (k = 0; k < 4; k++) {
+            struct TbSprite *p = &pop1_sprites[pv[variant][k]];
+            int w = p->SWidth, h = p->SHeight, row, col;
+            int mnx = w, mny = h, mxx = -1, mxy = -1;
+            cw[k] = w; ch[k] = h;
+            if (w <= 0 || h <= 0 || w > 64 || h > 64)
+                continue;
+            memset(dec[k], 0, (size_t)w * h);
+            memset(dop[k], 0, (size_t)w * h);
+            if (hwr_rle_decode_opaque(p->Data, dec[k], dop[k], w, h) != 0)
+                continue;
+            for (row = 0; row < h; row++)
+                for (col = 0; col < w; col++)
+                    if (dop[k][row * w + col]) {
+                        if (col < mnx) mnx = col;
+                        if (col > mxx) mxx = col;
+                        if (row < mny) mny = row;
+                        if (row > mxy) mxy = row;
+                    }
+            if (mxx < 0) continue;          /* fully transparent */
+            bx0[k] = mnx; by0[k] = mny;
+            bw[k] = mxx - mnx + 1; bh[k] = mxy - mny + 1;
+            if (bw[k] > maxbw) maxbw = bw[k];
+            if (bh[k] > maxbw) maxbw = bh[k];
+            ok[k] = 1;
+        }
+        if (maxbw < 2) return -1;
+
+        /* Tile = two corner widths + a modest gap, mirroring the software box
+         * whose middle gap is small relative to the brackets. A transparent
+         * MARGIN around the content keeps the thin bracket arms off the atlas
+         * tile boundary, so bilinear magnification doesn't bleed them into the
+         * neighbouring atlas tile (which was clipping the left/top arms). */
+        enum { MARGIN = 3 };
+        gap = maxbw / 2; if (gap < 2) gap = 2;
+        TILE = 2 * maxbw + gap + 2 * MARGIN;
+        if (TILE > TILE_MAX) TILE = TILE_MAX;
+        *out_dim = TILE;
+        memset(tile, 0, (size_t)TILE * TILE * 4);
+
+        for (k = 0; k < 4; k++) {
+            int w = cw[k], row, col, ox, oy;
+            if (!ok[k]) continue;
+            /* Outer corner of the opaque bbox -> tile corner, inset by MARGIN. */
+            ox = (k == 1 || k == 3) ? (TILE - MARGIN - bw[k]) : MARGIN;
+            oy = (k == 2 || k == 3) ? (TILE - MARGIN - bh[k]) : MARGIN;
+            for (row = 0; row < bh[k]; row++) {
+                for (col = 0; col < bw[k]; col++) {
+                    int si = (by0[k] + row) * w + (bx0[k] + col);
+                    int dx = ox + col, dy = oy + row, di;
+                    if (dx < 0 || dy < 0 || dx >= TILE || dy >= TILE) continue;
+                    if (!dop[k][si]) continue;
+                    di = (dy * TILE + dx) * 4;
+                    tile[di + 0] = lbPaletteColors[dec[k][si]].r;
+                    tile[di + 1] = lbPaletteColors[dec[k][si]].g;
+                    tile[di + 2] = lbPaletteColors[dec[k][si]].b;
+                    tile[di + 3] = 255;
+                }
+            }
+        }
+    }
+    (void)maxd;
+    return hwr_atlas_register(key, tile, TILE, TILE);
+}
+
+static int sw_get_overlays(void *ctx, HwrOverlayQuad *out, int max)
+{
+    int n = hwr_collected_overlay_count;
+    int i;
+    (void)ctx;
+    if (out == NULL || max <= 0)
+        return 0;
+    if (n > max) n = max;
+    memcpy(out, hwr_collected_overlays, (size_t)n * sizeof(HwrOverlayQuad));
+
+    /* Pause popup box fills: semi-transparent purple rects over the 3D scene.
+     * The SW fill is replaced by key (transparent) in draw_box_cutedge; these
+     * GL quads provide the tinted background while controls stay solid. */
+    for (i = 0; i < hwr_pause_box_count && n + 1 <= max; i++) {
+        HwrOverlayQuad *q = &out[n++];
+        float x0 = (float)hwr_pause_box_list[i].x0;
+        float y0 = (float)hwr_pause_box_list[i].y0;
+        float x1 = (float)hwr_pause_box_list[i].x1;
+        float y1 = (float)hwr_pause_box_list[i].y1;
+        uint8_t ci = hwr_pause_box_list[i].colr;
+        q->x[0] = x0; q->y[0] = y0;
+        q->x[1] = x1; q->y[1] = y0;
+        q->x[2] = x1; q->y[2] = y1;
+        q->x[3] = x0; q->y[3] = y1;
+        q->r = lbPaletteColors[ci].r / 255.0f;
+        q->g = lbPaletteColors[ci].g / 255.0f;
+        q->b = lbPaletteColors[ci].b / 255.0f;
+        q->a = 0.55f;
+        q->slot = -1;
+    }
+
+    /* Append the target boxes as a single translucent textured quad each (the
+     * pre-composited bracket box tile), scaled to the box size and centred on the
+     * target. One tile drawn as one quad — no per-corner alignment/bleed. */
+    for (i = 0; i < hwr_tgtbox_count && n + 1 <= max; i++) {
+        int dim = 64;
+        int slot = hwr_targetbox_slot(hwr_tgtbox_list[i].variant, &dim);
+        float cx, cy, h, x0, y0, x1, y1, u0, v0, u1, v1;
+        HwrOverlayQuad *q;
+        if (slot < 0)
+            continue;
+        cx = (float)hwr_tgtbox_list[i].cx;
+        cy = (float)hwr_tgtbox_list[i].cy;
+        h  = (float)hwr_tgtbox_list[i].half;
+        x0 = cx - h; y0 = cy - h; x1 = cx + h; y1 = cy + h;
+        hwr_atlas_uv(slot, &u0, &v0, &u1, &v1);
+        /* Inset by half a texel so bilinear magnification never samples across
+         * the tile's atlas sub-rect edge into a neighbouring tile. */
+        if (dim > 0) {
+            float ht = 0.5f * (u1 - u0) / (float)dim;
+            u0 += ht; u1 -= ht; v0 += ht; v1 -= ht;
+        }
+        q = &out[n++];
+        q->x[0] = x0; q->y[0] = y0;   /* TL */
+        q->x[1] = x1; q->y[1] = y0;   /* TR */
+        q->x[2] = x1; q->y[2] = y1;   /* BR */
+        q->x[3] = x0; q->y[3] = y1;   /* BL */
+        q->u0 = u0; q->v0 = v0; q->u1 = u1; q->v1 = v1;
+        q->slot = slot;
+        q->r = q->g = q->b = 1.0f;
+        q->a = 0.5f;   /* 50% transparent */
+    }
+    return n;
+}
+
 static HwrSceneSource sw_source = {
     NULL,           /* ctx */
     NULL,           /* begin_frame */
@@ -1840,11 +2672,13 @@ static HwrSceneSource sw_source = {
     sw_get_floor,
     sw_get_faces,
     sw_get_reflect_faces,
+    sw_get_transparent_faces,
     sw_get_lights,
     sw_get_sprites,
     sw_get_palette,
     sw_get_texture_pages,
     sw_get_key_index,
+    sw_get_overlays,
 };
 
 /** Return the Syndicate Wars scene source, configured for the given viewport. */

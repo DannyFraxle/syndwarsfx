@@ -38,9 +38,30 @@
 #include "thing.h"
 #include "weapon.h"
 #include "swlog.h"
+#include "hwrender_glue.h"
 /******************************************************************************/
 
 TbBool hud_show_target_health = false;
+
+/* FX3D: target boxes recorded here (screen centre + half-extent + which bracket
+ * set) so the hardware renderer draws them as a translucent box tile (the actual
+ * bracket sprites pre-composited) blended over the 3D scene. variant 0 = person,
+ * 1 = vehicle. Filled by draw_target_*, cleared each frame in the FX3D floor
+ * gate, consumed by the GL overlay pass. */
+struct HwrTgtBox { short cx, cy, half; unsigned char variant; };
+struct HwrTgtBox hwr_tgtbox_list[64];
+int hwr_tgtbox_count = 0;
+
+static void hwr_record_tgt_box(short cx, short cy, short half, unsigned char variant)
+{
+    if (hwr_tgtbox_count < (int)(sizeof(hwr_tgtbox_list) / sizeof(hwr_tgtbox_list[0]))) {
+        hwr_tgtbox_list[hwr_tgtbox_count].cx = cx;
+        hwr_tgtbox_list[hwr_tgtbox_count].cy = cy;
+        hwr_tgtbox_list[hwr_tgtbox_count].half = half;
+        hwr_tgtbox_list[hwr_tgtbox_count].variant = variant;
+        hwr_tgtbox_count++;
+    }
+}
 
 void draw_hud_lock_target(void)
 {
@@ -68,6 +89,14 @@ void draw_target_person(struct Thing *p_person, uint radius)
     ep.Y3d = PRCCOORD_TO_YCOORD(p_person->Y) - engn_yc + 120;
     ep.Flags = 0;
     transform_point(&ep);
+
+    /* Under FX3D: record the box so the hardware renderer draws the bracket box
+     * tile transparently over the 3D (variant 0 = person). */
+    if (hwrender_active()) {
+        int half = radius + pop1_sprites[84].SWidth;
+        hwr_record_tgt_box(ep.pp.X, ep.pp.Y, (short)half, 0);
+        return;
+    }
 
     p_aspr = &pop1_sprites[84];
     p_bspr = &pop1_sprites[78];
@@ -114,6 +143,13 @@ void draw_target_vehicle(struct Thing *p_vehicle)
     transform_shpoint(&sp, cor_x, cor_y - 8 * engn_yc, cor_z);
 
     r = p_vehicle->Radius >> 4;
+
+    /* Under FX3D: record the box (variant 1 = vehicle). */
+    if (hwrender_active()) {
+        int half = r + pop1_sprites[84].SWidth;
+        hwr_record_tgt_box(sp.X, sp.Y, (short)half, 1);
+        return;
+    }
 
     p_aspr = &pop1_sprites[84];
     p_bspr = &pop1_sprites[85];

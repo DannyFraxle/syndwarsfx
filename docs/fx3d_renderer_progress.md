@@ -298,10 +298,76 @@ shadow is invisible over the keyed floor; see Phase 10 notes).
 
 ---
 
-### Phase 8 — Transparency Sort
+### Phase 8 — Transparency ✅ (faces/deep-radar/glass, 2026-06-25)
 
-Correct rendering order for semi-transparent faces and objects (windows,
-wire fences, tinted glass). Deep radar/close buildings transparency. Requires a sorted draw pass.
+Verified in-game: deep-radar buildings render as flat semi-transparent
+**syndicate-purple silhouettes** (palette index `deep_radar_surface_col`=216, via
+a page-254 shader sentinel — texture dropped, no window holes, matching the SW
+look); glass/fence (SW mode-6) faces render textured see-through; sort + depth
+correct. Two hard-won fixes during bring-up: (1) the deep-radar per-object mask
+must be cleared exactly **once per frame** at the top of `process_engine_unk3`
+(not in `reset_drawlist`, which runs several times per frame, nor in
+`sw_get_faces`, which runs several times per GL present) — otherwise the
+see-through buildings flicker/disappear; (2) deep-radar faces must lose their
+texture and use the flat tint, else they look like ordinary textured-transparent
+buildings rather than the SW purple fill.
+
+**Translucent sprites — deferred to a focused follow-up.** The GL translucent
+billboard pass (`hwr_sprites_trans_render`), shader `uAlpha`, sort and
+`[transparency]` sprite config are in place, but: (a) flagging the existing
+light/glow emitters translucent made them vanish (an unresolved issue in that
+pass), so emitters were reverted to opaque; (b) fire/smoke/explosions are **not**
+on the billboard path at all — they come from dedicated SW arrays
+(`DrIT_SFireFlame`, `DrIT_SFrmPhwoar`, `DrIT_SharpnlPoly`) and still render via
+the SW overlay. Converting those to GL needs new collection paths and is its own
+task.
+
+Original implementation notes follow.
+
+
+
+Semi-transparent rendering via a new sorted, alpha-blended GL pass. Four sources:
+
+1. **Static glass/fence faces** — faces whose SW render mode is transparent
+   (`vec_mode = face Flags`, mode **6** = `trig_render_md06` wire fence / glass)
+   are diverted in `source_sw.c:sw_get_faces` into a separate transparent batch.
+2. **Deep-radar see-through buildings** — captured at SW draw time:
+   `draw_object` (`engindrwlstm_wrp.c`) sets a per-object bit in
+   `hwr_obj_transp_mask` whenever `DrwObjF_StartBelowWindow` survives (the
+   existing deep-radar test), the mask is cleared each frame in
+   `reset_drawlist`, and `sw_get_faces` routes every face of a flagged object
+   into the transparent batch. The SW `DrIT_ObFace*Tran` draws are now added to
+   `drawitem_is_suppressed_face` so they don't paint over the 3D scene.
+3. **Translucent sprites** — light/glow emitter billboards are flagged
+   `HWR_BILLBOARD_TRANSLUCENT` in `sw_get_sprites` and drawn in a new blended
+   billboard pass `hwr_sprites_trans_render` (alpha blend, depth-test no-write).
+   The opaque sprite pass skips translucent billboards (and draws everything when
+   the translucent pass is disabled, so nothing vanishes).
+4. **Vehicles** — transparent vehicle faces (glass canopies) flow through the
+   same face split; the divert sits after the `obj_snap`/`hwr_rotate_point`
+   dynamic transform, so glass tracks the moving body.
+
+**Pipeline:**
+- New scene-source getter `get_transparent_faces` (reuses `HwrGeometryBatch` /
+  `HwrVertex`). `sw_get_transparent_faces` triangle-sorts the batch back-to-front
+  by centroid `face_scrd` depth for correct alpha compositing.
+- New face pass `hwr_transparent_render` (in `hwr_floor.c`, reuses the floor/face
+  program + texture pages + lighting) and sprite pass `hwr_sprites_trans_render`
+  (in `hwr_sprite.c`). Both: `GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA`,
+  `glDepthMask(GL_FALSE)`, depth-test `LEQUAL`. Inserted in `hwrender_glue.c`
+  after `hwr_sprites_render` and before `hwr_ssao_resolve` (drawn into the same
+  G-buffer/depth, get the AO composite). The floor/face and sprite fragment
+  shaders gained a `uAlpha` uniform (1.0 for opaque passes).
+- Tunable via `fx3d_lights.ini [transparency]`: `enable`, `alpha`,
+  `sprite_enable`, `sprite_alpha` (parsed in `hwr_lights.c`, applied through
+  `HwrLightDefaults` + `hwr_transparent_config` / `hwr_sprites_trans_config`).
+  Index-0 keying (window/grate holes) is preserved in the blended pass.
+
+Builds clean (win32 MINGW32). **Pending:** in-game verification of deep-radar
+see-through, glass/fence faces, glow-sprite blending, and the back-to-front sort.
+Possible follow-up: collect SW fire/flame (`draw_fire_flame`) and smoke
+(`draw_phwoar`) effects — currently still SW-drawn — into the translucent sprite
+pass (additive blend) for full effect transparency.
 
 ---
 

@@ -46,7 +46,16 @@
 #include "mydraw.h"
 #include "sound.h"
 #include "swlog.h"
+#include "hwrender_glue.h"
 /******************************************************************************/
+/** GL overlay: box-fill rects for the pause popup. When the HW renderer is
+ *  active the SW fill is skipped; these are emitted as semi-transparent GL
+ *  quads instead, so the 3D scene shows through with a purple tint while the
+ *  controls (drawn solid into WScreen) stay fully opaque. */
+struct HwrPauseBoxRec { short x0, y0, x1, y1; uint8_t colr; };
+struct HwrPauseBoxRec hwr_pause_box_list[8];
+int hwr_pause_box_count = 0;
+
 static struct ScreenBox pause_main_box;
 static TbPixel ingame_boxes_colr1, ingame_boxes_colr2;
 static struct ScreenBox samplevol_slider_box;
@@ -185,16 +194,31 @@ void draw_box_cutedge(struct ScreenBox *box, TbPixel colr1)
     stp = pop1_sprites_scale;
     cut = 25 * pop1_sprites_scale;
 
-    lbDisplay.DrawFlags = Lb_SPRITE_TRANSPAR4;
-    LbDrawBox(box->X + 0, box->Y + 0, box->Width - cut, box->Height - cut, colr1);
-    LbDrawBox(box->X + box->Width - cut, box->Y +  cut, cut, box->Height - 2*cut, colr1);
-    LbDrawBox(box->X + cut, box->Y + box->Height - cut, box->Width - cut, cut, colr1);
-    LbDrawTriangle(box->X + box->Width - cut, box->Y + 0,
-      box->X + box->Width, box->Y + cut,
-      box->X + box->Width - cut, box->Y + cut, colr1);
-    LbDrawTriangle(box->X + stp, box->Y + box->Height - cut,
-      box->X + cut, box->Y + box->Height - cut,
-      box->X + cut, box->Y + box->Height - stp, colr1);
+    if (hwrender_active()) {
+        /* Fill the box area with the key colour so the 3D scene shows through.
+         * Record the rect for the GL overlay pass, which draws the purple tint
+         * as a semi-transparent quad over the 3D before the WScreen composite. */
+        LbDrawBox(box->X, box->Y, box->Width, box->Height, HWR_KEY_INDEX);
+        if (hwr_pause_box_count < 8) {
+            hwr_pause_box_list[hwr_pause_box_count].x0 = (short)box->X;
+            hwr_pause_box_list[hwr_pause_box_count].y0 = (short)box->Y;
+            hwr_pause_box_list[hwr_pause_box_count].x1 = (short)(box->X + box->Width);
+            hwr_pause_box_list[hwr_pause_box_count].y1 = (short)(box->Y + box->Height);
+            hwr_pause_box_list[hwr_pause_box_count].colr = colr1;
+            hwr_pause_box_count++;
+        }
+    } else {
+        lbDisplay.DrawFlags = Lb_SPRITE_TRANSPAR4;
+        LbDrawBox(box->X + 0, box->Y + 0, box->Width - cut, box->Height - cut, colr1);
+        LbDrawBox(box->X + box->Width - cut, box->Y +  cut, cut, box->Height - 2*cut, colr1);
+        LbDrawBox(box->X + cut, box->Y + box->Height - cut, box->Width - cut, cut, colr1);
+        LbDrawTriangle(box->X + box->Width - cut, box->Y + 0,
+          box->X + box->Width, box->Y + cut,
+          box->X + box->Width - cut, box->Y + cut, colr1);
+        LbDrawTriangle(box->X + stp, box->Y + box->Height - cut,
+          box->X + cut, box->Y + box->Height - cut,
+          box->X + cut, box->Y + box->Height - stp, colr1);
+    }
 
     lbDisplay.DrawFlags = 0;
     LbDrawLine(box->X + 0, box->Y + 0, box->X + box->Width - cut, box->Y + 0, colr1);
@@ -619,6 +643,12 @@ TbBool pause_screen_handle(void)
     void *affected;
     TbBool resume_game;
 
+    /* Force full-opacity WScreen composite during the pause loop so that
+     * controls (sliders, buttons, text) stay solid. The box fill tint is
+     * provided by GL overlay quads (see draw_box_cutedge + sw_get_overlays). */
+    hwrender_set_opaque_present(1);
+    hwr_pause_box_count = 0;
+
     init_pause_screen_boxes();
     start_pause_screen();
 
@@ -668,6 +698,7 @@ TbBool pause_screen_handle(void)
             SetMusicVolume(100, 0);
             StopAllSamples();
             StopCD();
+            hwrender_set_opaque_present(0);
             return 1;
         }
 
@@ -685,6 +716,7 @@ TbBool pause_screen_handle(void)
     // Wait for the pause key to be released
     wait_for_keypress_end(GKey_PAUSE, false);
 
+    hwrender_set_opaque_present(0);
     lbDisplay.RightButton = 0;
     lbDisplay.LeftButton = 0;
     if (!ingame.fld_unk7DA)

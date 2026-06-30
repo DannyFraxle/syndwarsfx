@@ -435,6 +435,72 @@ void hwr_atlas_bind(int unit)
     glBindTexture(GL_TEXTURE_2D, at.tex);
 }
 
+/* Atlas slots of the procedural glow tiles (white / red / blue), see
+ * hwr_atlas_glow_slot. Cached so spr_build can inset their UVs and avoid
+ * atlas-neighbour bleed (these are the only full-alpha tiles, so unlike the
+ * alpha-keyed sprites their edges would otherwise sample adjacent atlas content
+ * and fringe with stray colour). */
+static int spr_glow_slot[3] = { -1, -1, -1 };
+
+static int spr_is_glow_slot(int slot)
+{
+    return slot >= 0 && (slot == spr_glow_slot[0] || slot == spr_glow_slot[1]
+                      || slot == spr_glow_slot[2]);
+}
+
+int hwr_atlas_glow_slot(int variant)
+{
+    /* Reserved atlas keys for the procedural glow tiles (0xFFFFFFFF is the
+     * blacklist sentinel). variant: 0 = white, 1 = red, 2 = blue. */
+    static const uint32_t GLOW_KEY[3] =
+        { 0xFFFFFFFEu, 0xFFFFFFFDu, 0xFFFFFFFCu };
+    int slot;
+    if (variant < 0 || variant > 2) variant = 0;
+    slot = hwr_atlas_find(GLOW_KEY[variant]);
+    if (slot >= 0)
+        return (spr_glow_slot[variant] = slot);
+    if (slot == -2)
+        return -1;   /* blacklisted (atlas full) */
+    {
+        enum { GW = 64 };
+        uint8_t *px = (uint8_t *)malloc((size_t)GW * GW * 4);
+        int x, y;
+        /* RGB channel scale for white/red/blue. */
+        float cr = (variant == 1) ? 1.0f : (variant == 2 ? 0.15f : 1.0f);
+        float cg = (variant == 0) ? 1.0f : 0.15f;
+        float cb = (variant == 2) ? 1.0f : (variant == 1 ? 0.15f : 1.0f);
+        /* Siren glows brighter than the plain white glow; blue is pushed harder
+         * than red since it reads perceptually dimmer and washes out additively. */
+        float vi = (variant == 0) ? 1.0f : (variant == 2 ? 3.5f : 2.0f);
+        if (px == NULL)
+            return -1;
+        for (y = 0; y < GW; y++) {
+            for (x = 0; x < GW; x++) {
+                float dx = ((float)x + 0.5f) / GW * 2.0f - 1.0f;
+                float dy = ((float)y + 0.5f) / GW * 2.0f - 1.0f;
+                float d = sqrtf(dx * dx + dy * dy);          /* 0 centre .. ~1.41 corner */
+                float f = 1.0f - d;
+                if (f < 0.0f) f = 0.0f;
+                f = f * f;                                    /* soft falloff */
+                f *= 0.075f * vi;                             /* glow intensity */
+                {
+                    uint8_t *p = &px[(y * GW + x) * 4];
+                    /* Additive blend means the dark edges add nothing. Full alpha
+                     * so the alpha-test (atex.a < 0.5) never discards. */
+                    p[0] = (uint8_t)(f * cr * 255.0f + 0.5f);
+                    p[1] = (uint8_t)(f * cg * 255.0f + 0.5f);
+                    p[2] = (uint8_t)(f * cb * 255.0f + 0.5f);
+                    p[3] = 255;
+                }
+            }
+        }
+        slot = hwr_atlas_register(GLOW_KEY[variant], px, GW, GW);
+        free(px);
+        spr_glow_slot[variant] = slot;
+        return slot;
+    }
+}
+
 void hwr_atlas_reset(void)
 {
     atlas_drop_shelves();
@@ -527,11 +593,17 @@ static const char *spr_frag_src =
     "uniform int   uSunPCF;\n"
     "uniform int   uSunDebug;\n"
     "uniform float uSunHaze;\n"
+    "uniform float uAlpha;\n"            /* output alpha (1 = opaque; <1 = translucent) */
+    "uniform int  uUnlit;\n"             /* 1 = self-lit (ignore scene lights) — effects */
     "void main(){\n"
     "    fragPos = vec4(vWorldPos, vScrd);\n"
     "    vec4 atex = texture(uAtlas, vUV);\n"
     "    if (atex.a < 0.5) discard;\n"
     "    vec3 c = atex.rgb;\n"
+    "    /* Effects (smoke/fire/glow) are self-lit like the software renderer: the\n"
+    "     * baked colour at full brightness, with the per-sprite shade used as an\n"
+    "     * ALPHA multiplier so particles can fade out over their life. */\n"
+    "    if (uUnlit == 1) { frag = vec4(c, uAlpha * clamp(vShade, 0.0, 1.0)); return; }\n"
     "    vec3 light_col = vec3(0.0);\n"
     "    float shadow = 0.0;\n"
     "    for (int i = 0; i < uNumLights; i++) {\n"
@@ -569,12 +641,12 @@ static const char *spr_frag_src =
     "            lit = sum_lit / sum_w;\n"
     "            lit = mix(lit, 1.0, uSunHaze);\n"
     "        }\n"
-    "        if (uSunDebug == 1) { frag = vec4(vec3(lit) * vShade, 1.0); return; }\n"
+    "        if (uSunDebug == 1) { frag = vec4(vec3(lit) * vShade, uAlpha); return; }\n"
     "        base += uSunAmbient + uSunBright * lit;\n"
     "    }\n"
     "    light_col = light_col * uGain * uTint + base;\n"
     "    light_col *= clamp(1.0 - shadow, 0.0, 1.0);\n"
-    "    frag = vec4(c * max(light_col, 0.0) * vShade, 1.0);\n"
+    "    frag = vec4(c * max(light_col, 0.0) * vShade, uAlpha);\n"
     "}\n";
 
 /* Shadow blob shader: simple radial gradient on the ground */
@@ -680,7 +752,13 @@ static GLint spr_loc_tint = -1, spr_loc_ao = -1, spr_loc_maxdist2 = -1;
 static GLint spr_loc_sun_mvp = -1, spr_loc_sun_bright = -1, spr_loc_sun_ambient = -1;
 static GLint spr_loc_sun_bias = -1, spr_loc_sun_enable = -1, spr_loc_sun_pcf = -1;
 static GLint spr_loc_sun_debug = -1, spr_loc_sun_haze = -1;
+static GLint spr_loc_alpha = -1;
+static GLint spr_loc_unlit = -1;
 static int   spr_ready = 0;
+
+/* Translucent sprite pass config (Phase 8). */
+static int   spr_tr_enable = 1;
+static float spr_tr_alpha  = 1.0f;
 
 static GLuint shd_prog = 0, shd_vao = 0, shd_vbo = 0, shd_ebo = 0;
 static GLint shd_loc_d10 = -1, shd_loc_d14 = -1, shd_loc_d18 = -1, shd_loc_d1c = -1;
@@ -761,6 +839,8 @@ static int spr_init(void)
     spr_loc_sun_pcf    = glGetUniformLocation(spr_prog, "uSunPCF");
     spr_loc_sun_debug  = glGetUniformLocation(spr_prog, "uSunDebug");
     spr_loc_sun_haze   = glGetUniformLocation(spr_prog, "uSunHaze");
+    spr_loc_alpha      = glGetUniformLocation(spr_prog, "uAlpha");
+    spr_loc_unlit      = glGetUniformLocation(spr_prog, "uUnlit");
 
     glGenVertexArrays(1, &spr_vao);
     glBindVertexArray(spr_vao);
@@ -882,13 +962,20 @@ static int spr_init(void)
  * ========================================================================*/
 
 #define SPR_VERT_STRIDE 28
-#define SPR_MAX_BILLBOARDS 2048
+/* Raised from 2048: heavy combat (many agents + a big explosion's ~1000 phwoar
+ * smoke puffs + fire + glares) overflowed the old cap, so the tail of the smoke
+ * fell back to the software renderer and flickered. Must match HWR_MAX_COLLECTED
+ * in source_sw.c. */
+#define SPR_MAX_BILLBOARDS 4096
 #define SPR_MAX_VERTS (SPR_MAX_BILLBOARDS * 4)
 #define SPR_MAX_INDEX (SPR_MAX_BILLBOARDS * 6)
 
 static float   spr_vbuf[SPR_MAX_VERTS * (SPR_VERT_STRIDE / 4)];
 static uint32_t spr_ibuf[SPR_MAX_INDEX];
 static int      spr_vcount, spr_icount;
+/* Shared scratch for get_sprites — file-scope (not stack) because the cap is now
+ * large; the three sprite/shadow passes run sequentially, never reentrantly. */
+static HwrBillboard spr_billboards[SPR_MAX_BILLBOARDS];
 
 /* Emit a ground shadow quad — inline in hwr_sprites_render, not this helper */
 
@@ -939,6 +1026,8 @@ static void spr_setup_program(const HwrCamera *cam,
     glDisable(GL_BLEND);
 
     glUseProgram(spr_prog);
+    glUniform1f(spr_loc_alpha, 1.0f);   /* opaque; translucent pass overrides */
+    glUniform1i(spr_loc_unlit, 0);      /* opaque sprites are scene-lit */
     glUniform1f(spr_loc_d10, cam->d10);
     glUniform1f(spr_loc_d14, cam->d14);
     glUniform1f(spr_loc_d18, cam->d18);
@@ -988,10 +1077,112 @@ static void spr_setup_program(const HwrCamera *cam,
  * Public entry points
  * ========================================================================= */
 
+/* Build the billboard quad buffers (spr_vbuf/spr_ibuf, spr_vcount/spr_icount)
+ * for the subset matching want_translucent (0 = opaque billboards, 1 = those
+ * flagged HWR_BILLBOARD_TRANSLUCENT). Shared by the opaque and translucent
+ * sprite passes so they stay in sync. */
+static void spr_build(HwrBillboard *billboards, int nbill, const HwrCamera *camp,
+    int want_translucent, int want_additive)
+{
+    HwrCamera cam = *camp;
+    int i;
+    spr_vcount = 0;
+    spr_icount = 0;
+    for (i = 0; i < nbill && spr_vcount + 4 <= SPR_MAX_VERTS; i++) {
+        HwrBillboard *bb = &billboards[i];
+        float u0, v0, u1, v1;
+        int sw, sh;
+        float hw, hh;
+        float shade;
+
+        /* want_translucent: 0 = opaque only, 1 = translucent only, -1 = all
+         * (used by the opaque pass when the translucent pass is disabled, so
+         * flagged sprites still draw instead of vanishing). */
+        if (want_translucent >= 0 &&
+            ((bb->flags & HWR_BILLBOARD_TRANSLUCENT) != 0) != want_translucent)
+            continue;
+        /* want_additive: -1 = don't care, else split the translucent subset by
+         * blend mode so fire/glow draw additively and smoke draws alpha-over. */
+        if (want_additive >= 0 &&
+            ((bb->flags & HWR_BILLBOARD_ADDITIVE) != 0) != want_additive)
+            continue;
+
+        hwr_atlas_uv(bb->sprite, &u0, &v0, &u1, &v1);
+        hwr_atlas_size(bb->sprite, &sw, &sh);
+        if (sw <= 0 || sh <= 0)
+            continue;
+        /* The full-alpha glow tile would otherwise bleed neighbouring atlas
+         * pixels at its edges (alpha-keyed sprites don't, their edges discard);
+         * inset its UVs ~2 texels so sampling stays inside the tile. */
+        if (spr_is_glow_slot(bb->sprite)) {
+            float ix = 2.0f / (float)HWR_ATLAS_W, iy = 2.0f / (float)HWR_ATLAS_H;
+            u0 += ix; u1 -= ix; v0 += iy; v1 -= iy;
+        }
+
+        hw = bb->half_size_x;
+        hh = bb->half_size_y;
+        if (hw <= 0.0f) hw = 8.0f;
+        if (hh <= 0.0f) hh = 8.0f;
+
+        shade = (float)bb->shade / 48.0f;
+        if (shade > 1.0f) shade = 1.0f;
+        /* Opaque sprites keep a 0.15 floor so people/objects never go pitch
+         * black; translucent effects may fade all the way to 0 (smoke fade-out,
+         * where shade drives the alpha). */
+        if (shade < 0.15f && !(bb->flags & HWR_BILLBOARD_TRANSLUCENT))
+            shade = 0.15f;
+        if (shade < 0.0f) shade = 0.0f;
+
+        {
+            float right_norm = sqrtf(cam.d14 * cam.d14 + cam.d10 * cam.d10);
+            float rx, rz;
+            if (right_norm > 0.0001f) {
+                rx = cam.d14 / right_norm;
+                rz = -cam.d10 / right_norm;
+            } else {
+                rx = 1.0f; rz = 0.0f;
+            }
+            float cx = bb->x, cy = bb->y, cz = bb->z;
+            float verts[4][3] = {
+                {cx - rx * hw, cy - hh, cz - rz * hw},
+                {cx + rx * hw, cy - hh, cz + rz * hw},
+                {cx + rx * hw, cy + hh, cz + rz * hw},
+                {cx - rx * hw, cy + hh, cz - rz * hw},
+            };
+            float uvs[4][2] = {{u0,v1}, {u1,v1}, {u1,v0}, {u0,v0}};
+            float cdx = cx - cam.cx;
+            float cdy = cy - cam.cy8;
+            float cdz = cz - cam.cz;
+            float cfb = (cam.d10 * cdx + cam.d14 * cdz) / 65536.0f;
+            float centre_scrd = (cam.d18 * cdy + cam.d1c * cfb) / 65536.0f;
+            if (cam.perspective == 5 && centre_scrd > 1024.0f)
+                centre_scrd = 16384.0f * centre_scrd / (centre_scrd + 16384.0f);
+            if (bb->flags & HWR_BILLBOARD_ONTOP)
+                centre_scrd -= 768.0f;
+            int base = spr_vcount;
+            int k;
+            for (k = 0; k < 4; k++) {
+                float *v = &spr_vbuf[(spr_vcount + k) * (SPR_VERT_STRIDE / 4)];
+                v[0] = verts[k][0]; v[1] = verts[k][1]; v[2] = verts[k][2];
+                v[3] = uvs[k][0];   v[4] = uvs[k][1];
+                v[5] = shade;
+                v[6] = centre_scrd;
+            }
+            spr_ibuf[spr_icount++] = base + 0;
+            spr_ibuf[spr_icount++] = base + 1;
+            spr_ibuf[spr_icount++] = base + 2;
+            spr_ibuf[spr_icount++] = base + 0;
+            spr_ibuf[spr_icount++] = base + 2;
+            spr_ibuf[spr_icount++] = base + 3;
+            spr_vcount += 4;
+        }
+    }
+}
+
 int hwr_sprites_render(const unsigned char *pal8, int filter_linear)
 {
     HwrCamera cam;
-    HwrBillboard billboards[SPR_MAX_BILLBOARDS];
+    HwrBillboard *billboards = spr_billboards;
     const HwrSceneSource *s = hwr_source;
     int nbill, i;
 
@@ -1015,83 +1206,10 @@ int hwr_sprites_render(const unsigned char *pal8, int filter_linear)
         return 0;
     }
 
-    /* Build vertex/index buffer */
-    spr_vcount = 0;
-    spr_icount = 0;
-    for (i = 0; i < nbill && spr_vcount + 4 <= SPR_MAX_VERTS; i++) {
-        HwrBillboard *bb = &billboards[i];
-        float u0, v0, u1, v1;
-        int sw, sh;
-        float hw, hh;
-        float shade;
-
-        hwr_atlas_uv(bb->sprite, &u0, &v0, &u1, &v1);
-        hwr_atlas_size(bb->sprite, &sw, &sh);
-        if (sw <= 0 || sh <= 0)
-            continue;
-
-        /* Use pre-computed half extents from the source */
-        hw = bb->half_size_x;
-        hh = bb->half_size_y;
-        if (hw <= 0.0f) hw = 8.0f;
-        if (hh <= 0.0f) hh = 8.0f;
-
-        shade = (float)bb->shade / 48.0f;
-        if (shade > 1.0f) shade = 1.0f;
-        if (shade < 0.15f) shade = 0.15f;
-
-        /* Compute camera-facing corner positions on CPU.
-         * Camera right direction in XZ from projection factors.
-         * The captured camera was already set before drawlist execution. */
-        {
-            float right_norm = sqrtf(cam.d14 * cam.d14 + cam.d10 * cam.d10);
-            float rx, rz;
-            if (right_norm > 0.0001f) {
-                rx = cam.d14 / right_norm;
-                rz = -cam.d10 / right_norm;
-            } else {
-                rx = 1.0f; rz = 0.0f;
-            }
-            /* Quad corners: center ± (rx*hw, ±hh, rz*hw) */
-            float cx = bb->x, cy = bb->y, cz = bb->z;
-            float verts[4][3] = {
-                {cx - rx * hw, cy - hh, cz - rz * hw},
-                {cx + rx * hw, cy - hh, cz + rz * hw},
-                {cx + rx * hw, cy + hh, cz + rz * hw},
-                {cx - rx * hw, cy + hh, cz - rz * hw},
-            };
-            float uvs[4][2] = {{u0,v1}, {u1,v1}, {u1,v0}, {u0,v0}};
-            /* Compute centre depth (scrd) — same for all four corners */
-            float cdx = cx - cam.cx;
-            float cdy = cy - cam.cy8;
-            float cdz = cz - cam.cz;
-            float cfb = (cam.d10 * cdx + cam.d14 * cdz) / 65536.0f;
-            float centre_scrd = (cam.d18 * cdy + cam.d1c * cfb) / 65536.0f;
-            if (cam.perspective == 5 && centre_scrd > 1024.0f)
-                centre_scrd = 16384.0f * centre_scrd / (centre_scrd + 16384.0f);
-            /* ONTOP billboards (dropped items) get a small depth bias toward the
-             * camera so they win the depth test against the body at the same
-             * spot, without poking through walls at other depths. */
-            if (bb->flags & HWR_BILLBOARD_ONTOP)
-                centre_scrd -= 768.0f;
-            int base = spr_vcount;
-            int k;
-            for (k = 0; k < 4; k++) {
-                float *v = &spr_vbuf[(spr_vcount + k) * (SPR_VERT_STRIDE / 4)];
-                v[0] = verts[k][0]; v[1] = verts[k][1]; v[2] = verts[k][2];
-                v[3] = uvs[k][0];   v[4] = uvs[k][1];
-                v[5] = shade;
-                v[6] = centre_scrd;
-            }
-            spr_ibuf[spr_icount++] = base + 0;
-            spr_ibuf[spr_icount++] = base + 1;
-            spr_ibuf[spr_icount++] = base + 2;
-            spr_ibuf[spr_icount++] = base + 0;
-            spr_ibuf[spr_icount++] = base + 2;
-            spr_ibuf[spr_icount++] = base + 3;
-            spr_vcount += 4;
-        }
-    }
+    /* Build the opaque billboards (translucent ones go to the Phase 8 pass);
+     * when that pass is disabled, draw everything here so nothing vanishes. */
+    (void)i;
+    spr_build(billboards, nbill, &cam, spr_tr_enable ? 0 : -1, -1);
 
     if (spr_vcount <= 0)
         return 0;
@@ -1114,6 +1232,104 @@ int hwr_sprites_render(const unsigned char *pal8, int filter_linear)
     return 1;
 }
 
+void hwr_sprites_trans_config(int enable, float alpha)
+{
+    spr_tr_enable = enable;
+    if (alpha < 0.0f) alpha = 0.0f;
+    if (alpha > 1.0f) alpha = 1.0f;
+    spr_tr_alpha = alpha;
+}
+
+/* Translucent billboard pass (Phase 8): draws sprites flagged
+ * HWR_BILLBOARD_TRANSLUCENT (fire/smoke/glow) blended over the opaque scene.
+ * Depth-tested but not depth-writing; uses the opaque sprite program with a
+ * sub-1 output alpha. Call after hwr_sprites_render, before SSAO resolve. */
+int hwr_sprites_trans_render(const unsigned char *pal8, int filter_linear)
+{
+    HwrCamera cam;
+    HwrBillboard *billboards = spr_billboards;
+    const HwrSceneSource *s = hwr_source;
+    int nbill;
+    (void)pal8; (void)filter_linear;
+
+    if (!spr_tr_enable)
+        return 0;
+    if (!hwr_is_ready() || s == NULL)
+        return 0;
+    if (!spr_ready && spr_init() != HWR_OK)
+        return 0;
+    hwr_atlas_upload_pending();
+    if (s->get_camera == NULL || s->get_camera(s->ctx, &cam) != 0)
+        return 0;
+    if (s->get_sprites == NULL)
+        return 0;
+    nbill = s->get_sprites(s->ctx, billboards, SPR_MAX_BILLBOARDS);
+    if (nbill <= 0)
+        return 0;
+
+    /* The translucent pass shares the SSAO G-buffer (colour @0 + world-position
+     * @1).  The blend MUST NOT touch the world-position attachment: a small
+     * blended sprite over the floor would blend its world position with the
+     * floor's, and the SSAO pass then reads a large height discontinuity at the
+     * sprite's pixels (sprite-pos vs neighbouring floor-pos) and darkens them to
+     * near-black — the sprite "vanishes".  Large glass faces don't hit this
+     * because every neighbour samples the same surface, so the blended position
+     * stays locally smooth.  Restrict the blended draw to colour attachment 0,
+     * then restore the MRT bindings.  Only when the SSAO G-buffer is the bound
+     * target; glDrawBuffers on the default framebuffer expects GL_BACK, not an
+     * attachment enum. */
+    {
+        int gbuf = hwr_ssao_active();
+        int pass;
+
+        spr_setup_program(&cam, s);
+        glUniform1f(spr_loc_alpha, spr_tr_alpha);
+        glUniform1i(spr_loc_unlit, 1);   /* effects (smoke/fire/glow) are self-lit */
+
+        if (gbuf) {
+            static const GLenum draw1[1] = { GL_COLOR_ATTACHMENT0 };
+            glDrawBuffers(1, draw1);
+        }
+        glEnable(GL_BLEND);
+        glDepthMask(GL_FALSE);
+
+        /* Two sub-passes over the translucent subset: alpha-over (smoke) first,
+         * then additive (fire/explosions/glow). Each rebuilds the quad buffers
+         * for its blend-mode subset. */
+        for (pass = 0; pass < 2; pass++) {
+            int want_additive = pass;   /* 0 = alpha-over, 1 = additive */
+            spr_build(billboards, nbill, &cam, 1, want_additive);
+            if (spr_vcount <= 0)
+                continue;
+
+            if (want_additive)
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+            else
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+            glBindVertexArray(spr_vao);
+            glBindBuffer(GL_ARRAY_BUFFER, spr_vbo);
+            glBufferData(GL_ARRAY_BUFFER,
+                (GLsizeiptr)spr_vcount * SPR_VERT_STRIDE, spr_vbuf, GL_STREAM_DRAW);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, spr_ebo);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                (GLsizeiptr)spr_icount * sizeof(uint32_t), spr_ibuf, GL_STREAM_DRAW);
+            glDrawElements(GL_TRIANGLES, spr_icount, GL_UNSIGNED_INT, (void *)0);
+        }
+
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+        if (gbuf) {
+            static const GLenum draw2[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+            glDrawBuffers(2, draw2);
+        }
+    }
+    glBindVertexArray(0);
+
+    hwr_gl_check("hwr_sprites_trans_render");
+    return 1;
+}
+
 /* =========================================================================
  * Shadow passes (blob + projected) — rendered AFTER floor but BEFORE faces
  * so that buildings correctly occlude shadows.
@@ -1121,7 +1337,7 @@ int hwr_sprites_render(const unsigned char *pal8, int filter_linear)
 int hwr_shadows_render(void)
 {
     HwrCamera cam;
-    HwrBillboard billboards[SPR_MAX_BILLBOARDS];
+    HwrBillboard *billboards = spr_billboards;
     const HwrSceneSource *s = hwr_source;
     int nbill, i;
 
@@ -1162,8 +1378,8 @@ int hwr_shadows_render(void)
         glUniform3f(shd_loc_ctr, cam.cx, cam.cy8, cam.cz);
         glUniform1i(shd_loc_persp, cam.perspective);
 
-        float shd_vbuf[SPR_MAX_BILLBOARDS * 4 * 5];
-        uint32_t shd_ibuf[SPR_MAX_BILLBOARDS * 6];
+        static float shd_vbuf[SPR_MAX_BILLBOARDS * 4 * 5];
+        static uint32_t shd_ibuf[SPR_MAX_BILLBOARDS * 6];
         int shd_vc = 0, shd_ic = 0;
 
         for (i = 0; i < nbill; i++) {
@@ -1401,6 +1617,186 @@ int hwr_shadows_render(void)
 
     glDepthFunc(0x0203); /* GL_LEQUAL — restore for subsequent passes */
     hwr_gl_check("hwr_shadows_render");
+    return 1;
+}
+
+/* =========================================================================
+ * Screen-space coloured overlay quads (Phase 8.x): flat-tinted 2D special-face
+ * effects — shield-hit spheres, blast rings, lightning slices. The source hands
+ * them as screen-pixel quads + RGBA; we convert to NDC and alpha-blend on top of
+ * the resolved scene (no depth test — brief overlay effects draw over the 3D).
+ * ========================================================================= */
+
+static const char *ov_vert_src =
+    "#version 330 core\n"
+    "layout(location=0) in vec2 aPos;\n"   /* NDC */
+    "layout(location=1) in vec4 aCol;\n"
+    "out vec4 vCol;\n"
+    "void main(){ vCol = aCol; gl_Position = vec4(aPos, 0.0, 1.0); }\n";
+
+static const char *ov_frag_src =
+    "#version 330 core\n"
+    "in vec4 vCol;\n"
+    "out vec4 frag;\n"
+    "void main(){ frag = vCol; }\n";
+
+/* Textured overlay (HUD sprite tiles from the atlas, e.g. the target box). */
+static const char *ovt_vert_src =
+    "#version 330 core\n"
+    "layout(location=0) in vec2 aPos;\n"
+    "layout(location=1) in vec2 aUV;\n"
+    "layout(location=2) in float aAlpha;\n"
+    "out vec2 vUV; out float vA;\n"
+    "void main(){ vUV = aUV; vA = aAlpha; gl_Position = vec4(aPos, 0.0, 1.0); }\n";
+
+static const char *ovt_frag_src =
+    "#version 330 core\n"
+    "in vec2 vUV; in float vA;\n"
+    "out vec4 frag;\n"
+    "uniform sampler2D uAtlas;\n"
+    "void main(){ vec4 t = texture(uAtlas, vUV); if (t.a < 0.5) discard; frag = vec4(t.rgb, vA); }\n";
+
+static GLuint ov_prog = 0, ov_vao = 0, ov_vbo = 0;
+static GLuint ovt_prog = 0, ovt_vao = 0, ovt_vbo = 0;
+static GLint  ovt_loc_atlas = -1;
+static int    ov_ready = 0;
+
+#define OV_MAX_QUADS 4096
+static HwrOverlayQuad ov_quads[OV_MAX_QUADS];
+static float ov_vbuf[OV_MAX_QUADS * 6 * 6];   /* flat: xy + rgba */
+static float ovt_vbuf[OV_MAX_QUADS * 6 * 5];  /* textured: xy + uv + a */
+
+static int ov_init(void)
+{
+    GLuint vs, fs;
+    GLint ok = 0;
+    vs = spr_compile(GL_VERTEX_SHADER, ov_vert_src);
+    if (!vs) return HWR_ERROR;
+    fs = spr_compile(GL_FRAGMENT_SHADER, ov_frag_src);
+    if (!fs) { glDeleteShader(vs); return HWR_ERROR; }
+    ov_prog = glCreateProgram();
+    glAttachShader(ov_prog, vs);
+    glAttachShader(ov_prog, fs);
+    glLinkProgram(ov_prog);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    glGetProgramiv(ov_prog, GL_LINK_STATUS, &ok);
+    if (!ok) { hwr_set_error("overlay program link failed"); return HWR_ERROR; }
+    glGenVertexArrays(1, &ov_vao);
+    glBindVertexArray(ov_vao);
+    glGenBuffers(1, &ov_vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, ov_vbo);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 24, (void *)0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 24, (void *)8);
+    glBindVertexArray(0);
+
+    vs = spr_compile(GL_VERTEX_SHADER, ovt_vert_src);
+    if (!vs) return HWR_ERROR;
+    fs = spr_compile(GL_FRAGMENT_SHADER, ovt_frag_src);
+    if (!fs) { glDeleteShader(vs); return HWR_ERROR; }
+    ovt_prog = glCreateProgram();
+    glAttachShader(ovt_prog, vs);
+    glAttachShader(ovt_prog, fs);
+    glLinkProgram(ovt_prog);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    glGetProgramiv(ovt_prog, GL_LINK_STATUS, &ok);
+    if (!ok) { hwr_set_error("overlay-tex program link failed"); return HWR_ERROR; }
+    ovt_loc_atlas = glGetUniformLocation(ovt_prog, "uAtlas");
+    glGenVertexArrays(1, &ovt_vao);
+    glBindVertexArray(ovt_vao);
+    glGenBuffers(1, &ovt_vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, ovt_vbo);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 20, (void *)0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 20, (void *)8);
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, 20, (void *)16);
+    glBindVertexArray(0);
+
+    ov_ready = 1;
+    return HWR_OK;
+}
+
+int hwr_overlay_render(void)
+{
+    HwrCamera cam;
+    const HwrSceneSource *s = hwr_source;
+    int nq, i, vc = 0, tvc = 0;
+    float cx, cy;
+    /* Two triangles sharing the TL->BR diagonal: {TL,TR,BR} + {TL,BR,BL}.
+     * (A split using two different diagonals leaves a triangular gap on one
+     * side — that was clipping the box's left arms at an angle.) */
+    static const int order[6] = { 0, 1, 2, 0, 2, 3 };
+    static const float uvx[4] = { 0, 1, 1, 0 }, uvy[4] = { 0, 0, 1, 1 };
+
+    if (!hwr_is_ready() || s == NULL || s->get_overlays == NULL)
+        return 0;
+    if (s->get_camera == NULL || s->get_camera(s->ctx, &cam) != 0)
+        return 0;
+    if (cam.centre_x <= 0.0f || cam.centre_y <= 0.0f)
+        return 0;
+    nq = s->get_overlays(s->ctx, ov_quads, OV_MAX_QUADS);
+    if (nq <= 0)
+        return 0;
+    if (!ov_ready && ov_init() != HWR_OK)
+        return 0;
+    hwr_atlas_upload_pending();   /* box tile may have been registered in get_overlays */
+
+    cx = cam.centre_x; cy = cam.centre_y;
+    for (i = 0; i < nq; i++) {
+        HwrOverlayQuad *q = &ov_quads[i];
+        int j;
+        if (q->slot < 0) {
+            for (j = 0; j < 6; j++) {
+                int c = order[j];
+                float *v = &ov_vbuf[vc * 6];
+                v[0] = q->x[c] / cx - 1.0f;
+                v[1] = 1.0f - q->y[c] / cy;
+                v[2] = q->r; v[3] = q->g; v[4] = q->b; v[5] = q->a;
+                vc++;
+            }
+        } else {
+            for (j = 0; j < 6; j++) {
+                int c = order[j];
+                float *v = &ovt_vbuf[tvc * 5];
+                v[0] = q->x[c] / cx - 1.0f;
+                v[1] = 1.0f - q->y[c] / cy;
+                v[2] = q->u0 + uvx[c] * (q->u1 - q->u0);
+                v[3] = q->v0 + uvy[c] * (q->v1 - q->v0);
+                v[4] = q->a;
+                tvc++;
+            }
+        }
+    }
+
+    glDisable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    if (vc > 0) {
+        glUseProgram(ov_prog);
+        glBindVertexArray(ov_vao);
+        glBindBuffer(GL_ARRAY_BUFFER, ov_vbo);
+        glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)vc * 6 * sizeof(float), ov_vbuf, GL_STREAM_DRAW);
+        glDrawArrays(GL_TRIANGLES, 0, vc);
+    }
+    if (tvc > 0) {
+        glUseProgram(ovt_prog);
+        hwr_atlas_bind(4);
+        glUniform1i(ovt_loc_atlas, 4);
+        glBindVertexArray(ovt_vao);
+        glBindBuffer(GL_ARRAY_BUFFER, ovt_vbo);
+        glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)tvc * 5 * sizeof(float), ovt_vbuf, GL_STREAM_DRAW);
+        glDrawArrays(GL_TRIANGLES, 0, tvc);
+    }
+    glBindVertexArray(0);
+    glDisable(GL_BLEND);
+    glEnable(GL_DEPTH_TEST);
+
+    hwr_gl_check("hwr_overlay_render");
     return 1;
 }
 
