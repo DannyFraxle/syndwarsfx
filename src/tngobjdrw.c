@@ -317,10 +317,24 @@ void build_vehicle(struct Thing *p_thing)
            16 * ((6 - p_thing->U.UVehicle.RecoilTimer) & 0x0F));
     }
 
-    fx3d_setup_glare_flags(p_thing);
-    do_car_glare(p_thing);
-    hwr_glare_flag_n = 0;
-    hwr_glare_flag_pos = 0;
+    {
+        int pre_glare = hwr_glare_count;
+        fx3d_setup_glare_flags(p_thing);
+        do_car_glare(p_thing);
+        hwr_glare_flag_n = 0;
+        hwr_glare_flag_pos = 0;
+        /* Suppress headlamp/rear-light glares (siren==0) for unoccupied vehicles.
+         * Police siren entries (siren 1=red, 2=blue) are always kept. */
+        if (veh_passenger_count(p_thing) == 0) {
+            int gi = pre_glare;
+            while (gi < hwr_glare_count) {
+                if (hwr_glare_list[gi].siren == 0)
+                    hwr_glare_list[gi] = hwr_glare_list[--hwr_glare_count];
+                else
+                    gi++;
+            }
+        }
+    }
 }
 
 void build_person(struct Thing *p_thing)

@@ -164,6 +164,7 @@ typedef void   (HWR_APIENTRY *PFN_glActiveTexture)(GLenum);
 typedef void   (HWR_APIENTRY *PFN_glTexImage2D)(GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const void *);
 typedef void   (HWR_APIENTRY *PFN_glTexSubImage2D)(GLenum, GLint, GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, const void *);
 typedef void   (HWR_APIENTRY *PFN_glTexImage3D)(GLenum, GLint, GLint, GLsizei, GLsizei, GLsizei, GLint, GLenum, GLenum, const void *);
+typedef void   (HWR_APIENTRY *PFN_glTexSubImage3D)(GLenum, GLint, GLint, GLint, GLint, GLsizei, GLsizei, GLsizei, GLenum, GLenum, const void *);
 typedef void   (HWR_APIENTRY *PFN_glTexParameteri)(GLenum, GLenum, GLint);
 
 typedef GLuint (HWR_APIENTRY *PFN_glCreateShader)(GLenum);

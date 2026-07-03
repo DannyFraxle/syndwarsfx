@@ -82,6 +82,12 @@ TbBool hwrender_present_frame(void);
 /** Release the GL backend. Safe to call unconditionally. */
 void hwrender_shutdown(void);
 
+/** Flip between the hardware and software renderers at runtime. The GL
+ * context is kept alive either way (only used for cheap 2D presentation of
+ * the software-rendered frame in software mode); no-op if the hardware
+ * renderer was never brought up. */
+void hwrender_toggle(void);
+
 /** Pass 1 before drawing popup screens (e.g. pause) to force full-opacity
  *  WScreen compositing so controls stay solid; pass 0 when done. */
 void hwrender_set_opaque_present(int on);

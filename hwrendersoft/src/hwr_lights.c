@@ -80,6 +80,20 @@ static HwrLightDefaults hwr_defaults = {
     1,              /* transp_sprite_enable — blended sprites on */
     0.85f,          /* transp_sprite_alpha — slightly see-through glow */
     0,              /* transp_debug — diagnostic: force all faces transparent */
+    /* --- glare billboard settings --- */
+    6.5f,           /* glare_headlamp_width */
+    6.5f,           /* glare_red_width */
+    6.5f,           /* glare_blue_width */
+    1.0f,           /* glare_headlamp_alpha (vi) */
+    3.5f,           /* glare_red_alpha (vi) */
+    5.5f,           /* glare_blue_alpha (vi) */
+    /* --- fire dynamic light --- */
+    1,              /* firelight_enable */
+    1.6f,           /* firelight_brightness */
+    11.0f,          /* firelight_radius (~5.7 tile pool) */
+    0.30f,          /* firelight_flicker */
+    3.0f,           /* firelight_cluster (merge radius, tiles) */
+    1,              /* firelight_min_flames (light all clusters) */
 };
 
 static void table_defaults(void)
@@ -105,7 +119,7 @@ void hwr_lights_clear(void)
 }
 
 /* Section ids for the simple line-by-line parser. */
-enum { SEC_NONE = 0, SEC_LIGHTS, SEC_DEFAULTS, SEC_SSAO, SEC_SUN, SEC_CATEGORIES, SEC_SPRITES, SEC_TRANSP };
+enum { SEC_NONE = 0, SEC_LIGHTS, SEC_DEFAULTS, SEC_SSAO, SEC_SUN, SEC_CATEGORIES, SEC_SPRITES, SEC_TRANSP, SEC_GLARE, SEC_FIRELIGHT };
 
 static void parse_transp_line(const char *p)
 {
@@ -125,6 +139,55 @@ static void parse_transp_line(const char *p)
         hwr_defaults.transp_sprite_alpha = fv;
     } else if (sscanf(p, "debug = %d", &iv) == 1) {
         hwr_defaults.transp_debug = (iv != 0) ? 1 : 0;
+    }
+}
+
+static void parse_glare_line(const char *p)
+{
+    float fv;
+    if (sscanf(p, "headlamp_width = %f", &fv) == 1) {
+        if (fv < 0.5f) fv = 0.5f;
+        hwr_defaults.glare_headlamp_width = fv;
+    } else if (sscanf(p, "red_width = %f", &fv) == 1) {
+        if (fv < 0.5f) fv = 0.5f;
+        hwr_defaults.glare_red_width = fv;
+    } else if (sscanf(p, "blue_width = %f", &fv) == 1) {
+        if (fv < 0.5f) fv = 0.5f;
+        hwr_defaults.glare_blue_width = fv;
+    } else if (sscanf(p, "headlamp_alpha = %f", &fv) == 1) {
+        if (fv < 0.0f) fv = 0.0f;
+        hwr_defaults.glare_headlamp_alpha = fv;
+    } else if (sscanf(p, "red_alpha = %f", &fv) == 1) {
+        if (fv < 0.0f) fv = 0.0f;
+        hwr_defaults.glare_red_alpha = fv;
+    } else if (sscanf(p, "blue_alpha = %f", &fv) == 1) {
+        if (fv < 0.0f) fv = 0.0f;
+        hwr_defaults.glare_blue_alpha = fv;
+    }
+}
+
+static void parse_firelight_line(const char *p)
+{
+    float fv;
+    int iv;
+    if (sscanf(p, "enable = %d", &iv) == 1) {
+        hwr_defaults.firelight_enable = (iv != 0) ? 1 : 0;
+    } else if (sscanf(p, "brightness = %f", &fv) == 1) {
+        if (fv < 0.0f) fv = 0.0f;
+        hwr_defaults.firelight_brightness = fv;
+    } else if (sscanf(p, "radius = %f", &fv) == 1) {
+        if (fv < 1.0f) fv = 1.0f;
+        hwr_defaults.firelight_radius = fv;
+    } else if (sscanf(p, "flicker = %f", &fv) == 1) {
+        if (fv < 0.0f) fv = 0.0f;
+        if (fv > 1.0f) fv = 1.0f;
+        hwr_defaults.firelight_flicker = fv;
+    } else if (sscanf(p, "cluster = %f", &fv) == 1) {
+        if (fv < 0.5f) fv = 0.5f;
+        hwr_defaults.firelight_cluster = fv;
+    } else if (sscanf(p, "min_flames = %d", &iv) == 1) {
+        if (iv < 1) iv = 1;
+        hwr_defaults.firelight_min_flames = iv;
     }
 }
 
@@ -395,6 +458,10 @@ void hwr_lights_load(const char *path)
                 section = SEC_SPRITES;
             else if (strncmp(p, "[transparency]", 14) == 0)
                 section = SEC_TRANSP;
+            else if (strncmp(p, "[glare]", 7) == 0)
+                section = SEC_GLARE;
+            else if (strncmp(p, "[firelight]", 11) == 0)
+                section = SEC_FIRELIGHT;
             else
                 section = SEC_NONE;
             continue;
@@ -425,6 +492,10 @@ void hwr_lights_load(const char *path)
             parse_sprites_line(p);
         } else if (section == SEC_TRANSP) {
             parse_transp_line(p);
+        } else if (section == SEC_GLARE) {
+            parse_glare_line(p);
+        } else if (section == SEC_FIRELIGHT) {
+            parse_firelight_line(p);
         }
     }
     fclose(f);

@@ -39,6 +39,9 @@ typedef struct {
     float tile_depth;  /* per-tile constant scrd, matches SW bucket sort depth */
     uint8_t page;
     uint8_t light;
+    uint8_t emissive; /* 255 for face modes SW never scene-shades (window glass,
+                        * unshaded texture/flat-fill modes - see
+                        * hwr_mode_is_scene_shaded in source_sw.c), 0 otherwise */
 } HwrVertex;
 
 /** The indexed texture pages backing the geometry: count layers of
@@ -126,6 +129,9 @@ typedef struct {
 #define HWR_BILLBOARD_ADDITIVE   0x08   /* translucent blend hint: additive (fire/explosions/glow)
                                          * instead of alpha-over (smoke). Only meaningful with
                                          * HWR_BILLBOARD_TRANSLUCENT. */
+#define HWR_BILLBOARD_UNLIT      0x10   /* bypass scene lighting (unlit=1): use for sprites that
+                                         * must render at full brightness regardless of shadows/lights
+                                         * (e.g. character firing frames with gun-flash overlay). */
 
 /** A screen-space coloured quad (four corners in screen pixels, plus an RGBA
  *  colour) for flat-tinted 2D overlay effects (shield-hit spheres, blast rings,

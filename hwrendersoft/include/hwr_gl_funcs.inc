@@ -38,6 +38,7 @@ HWR_GL_FUNC(void,   glActiveTexture,          (GLenum))
 HWR_GL_FUNC(void,   glTexImage2D,             (GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const void *))
 HWR_GL_FUNC(void,   glTexSubImage2D,          (GLenum, GLint, GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, const void *))
 HWR_GL_FUNC(void,   glTexImage3D,             (GLenum, GLint, GLint, GLsizei, GLsizei, GLsizei, GLint, GLenum, GLenum, const void *))
+HWR_GL_FUNC(void,   glTexSubImage3D,          (GLenum, GLint, GLint, GLint, GLint, GLsizei, GLsizei, GLsizei, GLenum, GLenum, const void *))
 HWR_GL_FUNC(void,   glTexParameteri,          (GLenum, GLenum, GLint))
 
 HWR_GL_FUNC(GLuint, glCreateShader,           (GLenum))

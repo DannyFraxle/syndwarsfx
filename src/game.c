@@ -5703,6 +5703,14 @@ ubyte do_user_interface(void)
         did_inp |= GINPUT_DIRECT;
     }
 
+    // switch between the FX3D hardware renderer and the software renderer
+    if (is_key_pressed(KC_SPACE, KMod_DONTCARE))
+    {
+        clear_key_pressed(KC_SPACE);
+        hwrender_toggle();
+        did_inp |= GINPUT_DIRECT;
+    }
+
     // Game Speed control
     if (!in_network_game)
     {

@@ -4763,7 +4763,7 @@ void process_wielded_weapon_fire(struct Thing *p_person, WeaponType wtype)
 
     wdef = &weapon_defs[wtype];
     wepTurn = p_person->U.UPerson.WeaponTurn;
-    if ((wepTurn == 0) || (wepTurn < wdef->ReFireDelay - 6))
+    if ((wepTurn == 0) || (wepTurn < wdef->ReFireDelay - 1))
         p_person->U.UPerson.FrameId.Version[4] = 0;
 
     switch (wtype)

@@ -29,6 +29,13 @@
 #include <string.h>
 #include <math.h>
 
+/* SW's 0-terminated list of palette indices exempted from all shading (see
+ * LbFadeTableToRGBGenerate, ggenf.c) - baked window/road-marking paint on an
+ * otherwise normally-shaded texture uses these indices to stay full-bright at
+ * any darkness level. Read once to build a 256-entry GPU lookup so the GL
+ * fragment shader can mirror the same per-pixel exemption. */
+extern unsigned char fade_unaffected_colours[];
+
 /* Reproduces transform_shpoint() per-vertex, including the mode-5 perspective
  * foreshortening (which no single matrix can express). */
 static const char *floor_vert_src =
@@ -38,6 +45,7 @@ static const char *floor_vert_src =
     "layout(location=2) in float aDepth;\n"  /* per-tile constant scrd */
     "layout(location=3) in uint aPage;\n"
     "layout(location=4) in float aLight;\n"  /* SW baked shade 0..1 (AO) */
+    "layout(location=5) in float aEmissive;\n"  /* SW baked emissive 0..1 (windows) */
     "uniform float uD10, uD14, uD18, uD1C;\n"
     "uniform float uScale;\n"
     "uniform vec2 uCentre;   // D3C, D40\n"
@@ -46,6 +54,7 @@ static const char *floor_vert_src =
     "out vec3 vUV;\n"
     "out vec3 vWorldPos;\n"
     "out float vAO;\n"
+    "out float vEmissive;\n"
     "out float vScrd;\n"
     "void main(){\n"
     "    float dx = aPos.x - uCtr.x;\n"
@@ -68,6 +77,7 @@ static const char *floor_vert_src =
     "    vUV = vec3((aUV + 0.5) / 256.0, float(aPage));\n"
     "    vWorldPos = aPos;\n"
     "    vAO = aLight;\n"
+    "    vEmissive = aEmissive;\n"
     "    vScrd = scrd;                   // view depth -> SSAO occlusion test\n"
     "    /* aDepth is the tile's scrd at its centre (already perspective-clamped\n"
     "     * in C), matching the SW bucket sort key. scrd is small/near-zero or\n"
@@ -84,11 +94,13 @@ static const char *floor_frag_src =
     "in vec3 vUV;\n"
     "in vec3 vWorldPos;\n"
     "in float vAO;\n"
+    "in float vEmissive;\n"
     "in float vScrd;\n"
     "layout(location=0) out vec4 frag;\n"
     "layout(location=1) out vec4 fragPos;   // xyz world pos + w view depth -> SSAO\n"
     "uniform sampler2DArray uTex;         // R8 palette indices\n"
     "uniform sampler2D uPalette;          // RGB8 256x1, active 8-bit palette\n"
+    "uniform sampler2D uSelfLit;          // R8 256x1, 1.0 for SW's fade_unaffected_colours\n"
     "uniform int uTransKey;               // texel index to treat as transparent (<0 = none)\n"
     "uniform vec3  uLightPos[64];\n"
     "uniform vec3  uLightRgb[64];\n"
@@ -116,8 +128,15 @@ static const char *floor_frag_src =
     "vec3 pal_lookup(int idx) {\n"
     "    return texture(uPalette, vec2((float(idx) + 0.5) / 256.0, 0.5)).rgb;\n"
     "}\n"
+    "float selflit_lookup(int idx) {\n"
+    "    return texture(uSelfLit, vec2((float(idx) + 0.5) / 256.0, 0.5)).r;\n"
+    "}\n"
     "void main(){\n"
     "    fragPos = vec4(vWorldPos, vScrd);   // G-buffer attachment 1\n"
+    "    if (vUV.z > 253.5 && vUV.z < 254.5) {  // deep-radar: flat tint, skip lighting entirely\n"
+    "        frag = vec4(pal_lookup(uDeepRadarIdx), uAlpha);\n"
+    "        return;\n"
+    "    }\n"
     "    vec3 light_col = vec3(0.0);\n"
     "    float shadow = 0.0;             // accumulated darkening from anti-lights\n"
     "    for (int i = 0; i < uNumLights; i++) {\n"
@@ -184,12 +203,9 @@ static const char *floor_frag_src =
     "    light_col *= ao;\n"
     "    light_col *= clamp(1.0 - shadow, 0.0, 1.0);\n"
     "    light_col = max(light_col, 0.0);              // allow >1.0 for overbright glow\n"
-    "    if (vUV.z > 253.5 && vUV.z < 254.5) {  // deep-radar see-through: flat syndicate tint, no texture\n"
-    "        frag = vec4(pal_lookup(uDeepRadarIdx), uAlpha);\n"
-    "        return;\n"
-    "    }\n"
+    "    light_col = max(light_col, vec3(vEmissive)); // SW baked emissive (lit windows)\n"
     "    if (vUV.z > 254.5) {             // flat-shaded face (Texture==0), no texture\n"
-    "        frag = vec4(vec3(0.55) * light_col, uAlpha);\n"
+    "        frag = vec4(vec3(0.15) * light_col, uAlpha);\n"
     "        return;\n"
     "    }\n"
     "    // Nearest: single texel with GL_NEAREST.\n"
@@ -225,19 +241,26 @@ static const char *floor_frag_src =
     "            discard;\n"
     "        vec3 c = (pal_lookup(i00)*w00 + pal_lookup(i10)*w10\n"
     "                + pal_lookup(i01)*w01 + pal_lookup(i11)*w11) / max(cov, 1e-4);\n"
-    "        frag = vec4(c * light_col, uAlpha);\n"
+    "        // SW's fade_unaffected_colours never darken at any shade level (baked\n"
+    "        // window/road-marking paint sharing an otherwise normally-shaded\n"
+    "        // texture) - blend the same way as the colour so a self-lit texel\n"
+    "        // doesn't dim under bilinear filtering either.\n"
+    "        float sl = (selflit_lookup(i00)*w00 + selflit_lookup(i10)*w10\n"
+    "                  + selflit_lookup(i01)*w01 + selflit_lookup(i11)*w11) / max(cov, 1e-4);\n"
+    "        frag = vec4(c * max(light_col, vec3(sl)), uAlpha);\n"
     "    } else {\n"
     "        if (uTransKey >= 0 && idx == uTransKey)\n"
     "            discard;\n"
     "        vec3 c = pal_lookup(idx);\n"
-    "        frag = vec4(c * light_col, uAlpha);\n"
+    "        float sl = selflit_lookup(idx);\n"
+    "        frag = vec4(c * max(light_col, vec3(sl)), uAlpha);\n"
     "    }\n"
     "}\n";
 
 static GLuint fl_prog = 0;
 static GLuint fl_vao = 0, fl_vbo = 0, fl_ebo = 0;
-static GLuint fl_tex = 0, fl_pal = 0;
-static GLint  fl_loc_tex = -1, fl_loc_pal = -1, fl_loc_transkey = -1;
+static GLuint fl_tex = 0, fl_pal = 0, fl_selflit = 0;
+static GLint  fl_loc_tex = -1, fl_loc_pal = -1, fl_loc_selflit = -1, fl_loc_transkey = -1;
 static GLint  fl_loc_d10 = -1, fl_loc_d14 = -1, fl_loc_d18 = -1, fl_loc_d1c = -1;
 static GLint  fl_loc_scale = -1, fl_loc_centre = -1, fl_loc_ctr = -1, fl_loc_persp = -1;
 static GLint  fl_loc_lpos_base = -1;
@@ -307,6 +330,7 @@ static int fl_init(void)
     }
     fl_loc_tex    = glGetUniformLocation(fl_prog, "uTex");
     fl_loc_pal    = glGetUniformLocation(fl_prog, "uPalette");
+    fl_loc_selflit = glGetUniformLocation(fl_prog, "uSelfLit");
     fl_loc_transkey = glGetUniformLocation(fl_prog, "uTransKey");
     fl_loc_d10    = glGetUniformLocation(fl_prog, "uD10");
     fl_loc_d14    = glGetUniformLocation(fl_prog, "uD14");
@@ -363,6 +387,10 @@ static int fl_init(void)
         glEnableVertexAttribArray(4);
         glVertexAttribPointer(4, 1, GL_UNSIGNED_BYTE, GL_TRUE, stride,
             (void *)offsetof(HwrVertex, light));
+        /* SW baked emissive -> normalised 0..1 float (location 5, aEmissive). */
+        glEnableVertexAttribArray(5);
+        glVertexAttribPointer(5, 1, GL_UNSIGNED_BYTE, GL_TRUE, stride,
+            (void *)offsetof(HwrVertex, emissive));
     }
     glBindVertexArray(0);
 
@@ -373,6 +401,23 @@ static int fl_init(void)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    glGenTextures(1, &fl_selflit);
+    glBindTexture(GL_TEXTURE_2D, fl_selflit);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    {
+        unsigned char mask[256];
+        int i;
+        memset(mask, 0, sizeof(mask));
+        for (i = 0; fade_unaffected_colours[i] != 0; i++)
+            mask[fade_unaffected_colours[i]] = 255;
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, 256, 1, 0, GL_RED,
+            GL_UNSIGNED_BYTE, mask);
+    }
 
     if (hwr_gl_check("fl_init"))
         return HWR_ERROR;
@@ -395,6 +440,19 @@ static void fl_upload_pages(const HwrTexturePages *pg, int filter_linear)
         glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_R8, pg->width, pg->height,
             pg->count, 0, GL_RED, GL_UNSIGNED_BYTE, pg->texels);
         fl_pages_uploaded = 1;
+    } else if (fl_pages_uploaded && pg != NULL && pg->texels != NULL) {
+        /* Pages 4/5 hold FLIC-animated content (billboards/equipment/cyborg
+         * playback) that source_sw.c re-decodes into the source buffer every
+         * frame; the rest of the array is static art uploaded once above. */
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        if (4 < pg->count)
+            glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, 4,
+                pg->width, pg->height, 1, GL_RED, GL_UNSIGNED_BYTE,
+                pg->texels + (size_t)4 * pg->width * pg->height);
+        if (5 < pg->count)
+            glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, 5,
+                pg->width, pg->height, 1, GL_RED, GL_UNSIGNED_BYTE,
+                pg->texels + (size_t)5 * pg->width * pg->height);
     }
     if (fl_filter != 0) {
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, filt);
@@ -470,6 +528,9 @@ static void fl_setup_program(const HwrCamera *cam, const unsigned char *pal8,
     }
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D_ARRAY, fl_tex);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, fl_selflit);
+    glActiveTexture(GL_TEXTURE0);   /* restore default active unit */
 
     glEnable(GL_DEPTH_TEST);
     glUseProgram(fl_prog);
@@ -483,6 +544,7 @@ static void fl_setup_program(const HwrCamera *cam, const unsigned char *pal8,
     glUniform1i(fl_loc_persp, cam->perspective);
     glUniform1i(fl_loc_tex, 0);
     glUniform1i(fl_loc_pal, 1);
+    glUniform1i(fl_loc_selflit, 2);
     glUniform1i(fl_loc_transkey, trans_key);
     glUniform1f(fl_loc_alpha, 1.0f);    /* opaque by default; transparent pass overrides */
 

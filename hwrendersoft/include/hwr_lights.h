@@ -73,6 +73,28 @@ typedef struct {
     int   transp_sprite_enable; /**< 1 = draw translucent sprites (fire/smoke/glow) blended in GL. */
     float transp_sprite_alpha;  /**< Translucent sprite opacity scale, 0..1 (default 1.0). */
     int   transp_debug;         /**< 1 = force ALL building/object faces transparent (diagnostic). */
+    /* Glare billboard controls ([glare] section). */
+    float glare_headlamp_width; /**< Billboard size multiplier for white headlamp/lamp glare (default 6.5). */
+    float glare_red_width;      /**< Billboard size multiplier for red siren glare (default 6.5). */
+    float glare_blue_width;     /**< Billboard size multiplier for blue siren glare (default 6.5). */
+    float glare_headlamp_alpha; /**< Glow texture intensity (vi) for white headlamp (default 1.0). */
+    float glare_red_alpha;      /**< Glow texture intensity (vi) for red siren (default 3.5). */
+    float glare_blue_alpha;     /**< Glow texture intensity (vi) for blue siren (default 5.5). */
+    /* Fire dynamic light ([firelight] section). Ground fires emit a flickering
+     * warm point light so they illuminate the floor and nearby objects — SW
+     * parity for the apply_full_light path the GL renderer otherwise misses
+     * (the flames' own billboards are self-lit and cast nothing). */
+    int   firelight_enable;     /**< 1 = fires cast dynamic ground light. */
+    float firelight_brightness; /**< RGB gain for fire light (default 1.6). */
+    float firelight_radius;     /**< Reach multiplier, 21 convention (default 11 ≈ 5.7 tiles). */
+    float firelight_flicker;    /**< Flicker depth, 0..1 (default 0.3). */
+    float firelight_cluster;    /**< Merge radius in tiles: flames within this of a
+                                     cluster join it, so one blaze (and neighbouring
+                                     fires) = one light instead of one-per-tile.
+                                     Default 3. Bigger = fewer, larger lights. */
+    int   firelight_min_flames; /**< A cluster needs at least this many flames to emit
+                                     a light — raise it to drop small/lone fires and
+                                     only light real blazes. Default 1 (light all). */
 } HwrLightDefaults;
 
 /** Reset every entry to white (1,1,1) at scale 1.0 and defaults to sane values. */

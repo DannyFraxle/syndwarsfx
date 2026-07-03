@@ -77,6 +77,12 @@ extern void (*lbScreenSwapHook)(void);
 extern SDL_Color lbPaletteColors[256];
 
 static TbBool hwr_glue_active = false;
+/* User-toggled (spacebar): true forces the software renderer even though the
+ * GL context stays up. Keeping the context alive avoids re-creating every
+ * phase module's lazily-allocated GL objects, and LbScreenSwap() has no
+ * software-surface fallback for a GL window, so presentation always goes
+ * through the GL blit path regardless of this flag. */
+static TbBool hwr_sw_forced = false;
 
 /* Set by hwrender_floor_gate() when the engine view was gated for 3D this
  * frame; tells the present path to render the 3D scene and key the overlay. */
@@ -112,7 +118,7 @@ static void glue_present(void)
         pal[c * 3 + 2] = lbPaletteColors[c].b;
     }
 
-    if (ingame.DisplayMode == DpM_ENGINEPLY) {
+    if (ingame.DisplayMode == DpM_ENGINEPLY && hwrender_active()) {
         /* In-game engine view: render the 3D scene, then composite the software
          * objects/sprites/HUD on top, discarding the key so the floor shows.
          * Driven by the display mode (not a per-frame flag) so skipped-redraw
@@ -190,7 +196,7 @@ TbBool hwrender_floor_gate(void)
     engine_hwr_suppress_sprites = 0;
     hwr_tgtbox_count = 0;
     hwr_pause_box_count = 0;
-    if (!hwr_glue_active)
+    if (!hwrender_active())
         return false;
     w = lbDisplay.GraphicsScreenWidth;
     h = lbDisplay.GraphicsScreenHeight;
@@ -229,7 +235,7 @@ TbBool hwrender_requested(void)
 
 TbBool hwrender_active(void)
 {
-    return hwr_glue_active;
+    return hwr_glue_active && !hwr_sw_forced;
 }
 
 TbBool hwrender_startup(int view_w, int view_h)
@@ -286,6 +292,14 @@ void hwrender_shutdown(void)
         hwr_shutdown();
         hwr_glue_active = false;
     }
+}
+
+void hwrender_toggle(void)
+{
+    if (!hwr_glue_active)
+        return;
+    hwr_sw_forced = !hwr_sw_forced;
+    LOGSYNC("FX3D: %s renderer active", hwr_sw_forced ? "software" : "hardware");
 }
 
 void hwrender_set_opaque_present(int on)

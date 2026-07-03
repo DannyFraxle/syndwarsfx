@@ -50,6 +50,19 @@ extern unsigned short render_area_a, render_area_b;
 extern int32_t        game_perspective;
 /* Sprite-suppression gate, set by hwrender_glue.c. */
 extern int            engine_hwr_suppress_sprites;
+/* Current game tick, advanced once per sim step; drives the water wobble
+ * animation phase identically to shpoint_compute_coord_y (lvdraw3d.c). Set
+ * from gameturn every frame (game.c). */
+extern uint32_t       render_anim_turn;
+/* Sine-like wobble lookup tables (32 entries each), from enginpeff.c.
+ * waft_table:  small flat per-frame offset (Flags&0x40, e.g. rope sway).
+ * waft_table2: spatial water wave terms (Flags&0x10). */
+extern const int16_t  waft_table[32];
+extern const int16_t  waft_table2[32];
+/* 32-bit bit-rotate helpers (bflibrary/bfendian.h), used by the water wobble
+ * per-tile phase offset (dvfactor), exactly matching shpoint_compute_coord_y. */
+extern uint32_t       bw_rotl32(uint32_t n, uint8_t c);
+extern uint32_t       bw_rotr32(uint32_t n, uint8_t c);
 /* Current 6-bit-per-channel palette (256 RGB triplets). */
 extern unsigned char  display_palette[768];
 /* 8-bit-per-channel palette (SDL_Color equivalent) for xBR RGBA conversion. */
@@ -181,6 +194,26 @@ extern struct HwrFaceTex  *game_face_textures;  /* == game_face_textures (face3)
 extern int32_t             face_textures_limit;
 extern unsigned char      *vec_tmap[HWR_TMAP_PAGES]; /* 256x256 indexed pages */
 
+/* Explosion face fragments (== ex_faces[], swrendersoft/enginfexpl.h
+ * struct ExplodeFace3, sizeof 46, packed): flying object debris plus the
+ * recursively-subdividing floor-crater shards. The game animates them each
+ * turn (position/rotation baked into the stored coords), so GL reads the array
+ * live and re-projects. Active entries have Timer != 0. */
+#pragma pack(push, 1)
+struct HwrExplodeFace {
+    uint16_t Texture;
+    uint16_t Flags;
+    uint8_t  Type;          /* 1/3/5 = textured tri, 2/4/6 = textured quad */
+    uint8_t  Col;
+    int16_t  X0, Y0, Z0, X1, Y1, Z1, X2, Y2, Z2, X3, Y3, Z3;
+    int16_t  PointOffset, Timer, X, Y, Z;
+    int8_t   DX, DY, DZ, AngleDX, AngleDY, AngleDZ;
+};
+#pragma pack(pop)
+#define HWR_EXPLODE_FACES_COUNT 1024
+extern struct HwrExplodeFace ex_faces[HWR_EXPLODE_FACES_COUNT];
+extern uint32_t              dont_bother_with_explode_faces;
+
 extern struct HwrObject     *game_objects;       /* == game_objects        */
 extern unsigned short        next_object;        /* count of objects        */
 extern struct HwrSinglePoint *game_object_points;/* == game_object_points   */
@@ -208,9 +241,11 @@ typedef struct { int32_t R[3][3]; } HwrM33;
 extern HwrM33    local_mats[100];
 extern uint16_t  next_local_mat;
 /* Byte-offset constants derived from struct Thing (sizeof=168, #pragma pack(1)).
- * Union U starts at byte 76; MatrixIndex (int16) is at union+8 = byte 84.   */
-#define HWR_THING_SIZEOF  168
-#define HWR_THING_MATX    84
+ * Union U starts at byte 76; MatrixIndex (int16) is at union+8 = byte 84.
+ * PassengerHead (int16) is at union+18 = byte 94 (follows MaxSpeed at pos=92). */
+#define HWR_THING_SIZEOF    168
+#define HWR_THING_MATX       84
+#define HWR_THING_PASSHEAD   94
 
 /* The palette index reserved as the composite key (set by the host glue). */
 int hwr_sw_key_index = 0;
@@ -254,6 +289,7 @@ static struct {
     int16_t  matx;         /* MatrixIndex, or <=0 for none                        */
     uint8_t  is_dynamic;   /* 1 = position from Thing + matrix (vehicle/turret/rotor) */
     uint8_t  is_vehicle;   /* 1 = TT_VEHICLE — also skip SW-drawn reflective faces    */
+    uint8_t  has_passengers; /* 1 = PassengerHead != 0 (vehicle is occupied)         */
 } obj_snap[HWR_MAX_SNAP_OBJS];
 static unsigned obj_snap_count = 0;   /* objects captured this frame */
 static int      obj_snap_valid = 0;
@@ -304,6 +340,7 @@ struct TbSprite {
 #define HWR_DI_SFrmPersB  0x1C
 #define HWR_DI_SFrmEfctV  0x1D
 #define HWR_DI_SpObFace4   0x0C
+#define HWR_DI_Unkn11      0x0B
 #define HWR_DI_SharpnlPoly 0x14
 #define HWR_DI_SFrmPhwoar  0x15
 #define HWR_DI_SFireFlame  0x19
@@ -324,9 +361,14 @@ struct HwrSpObFace4 {       /* == SingleObjectFace4, sizeof 40 */
     uint16_t FaceNormal, WalkHeader, UnknTringl1, UnknTringl2;
 };
 struct HwrSpecialPoint { int16_t X, Y, Z, PadTo8; };
+struct HwrSortLine {        /* == struct SortLine */
+    int16_t X1, Y1, X2, Y2;
+    uint8_t Col, Shade, Flags;
+};
 #pragma pack(pop)
 extern struct HwrSpObFace4    *game_special_obj_faces4;
 extern struct HwrSpecialPoint *game_screen_point_pool;
+extern struct HwrSortLine     *game_sort_lines;
 
 #define HWR_SMTT_DROPPED_ITEM 0x19   /* SimpleThing Type for a dropped (collectable) item */
 
@@ -410,6 +452,96 @@ static int          hwr_xbr_count = 0;
 static int          hwr_fire_seen = 0, hwr_fire_coll = 0;
 static int          hwr_phwoar_seen = 0, hwr_phwoar_coll = 0;
 static int          hwr_effect_badslot = 0;
+
+/* --- Fire dynamic lights ------------------------------------------------
+ * The SW renderer lights the ground/objects around a fire via apply_full_light
+ * (see ASM_process_napalm_flame / process_temp_light), a per-frame dynamic
+ * light path the GL renderer's sw_get_lights() (which only reads the static
+ * game_full_lights array) never sees. To reproduce it we accumulate the fire
+ * flames collected each frame — bucketed per map tile so a fire's ~20 flames
+ * collapse into one warm point light — and hand the result to sw_get_lights().
+ * Fire flame x/y/z are already in the same raw world space as the floor verts
+ * and game_full_lights (the billboard path uses them directly). */
+#define HWR_FIRELIGHT_MAX 48
+struct HwrFireLightAcc { long sx, sy, sz; int n; };
+static struct HwrFireLightAcc hwr_firelight_acc[HWR_FIRELIGHT_MAX];
+static int hwr_firelight_acc_count = 0;
+struct HwrFireLight { float x, y, z, strength; };
+static struct HwrFireLight hwr_firelights[HWR_FIRELIGHT_MAX];
+static int hwr_firelight_count = 0;
+/* Squared flame->cluster merge radius (world units²), refreshed each frame from
+ * the [firelight] cluster tunable at the top of hwr_sw_collect_effects. */
+static long hwr_firelight_merge2 = 768L * 768L;
+
+/* Cheap per-light flicker PRNG (LCG). Independent from the game RNG so it
+ * cannot perturb simulation; reseeds itself, one draw per light per frame. */
+static unsigned hwr_flick_seed = 0x1234567u;
+static float hwr_flick_rand(void)
+{
+    hwr_flick_seed = hwr_flick_seed * 1664525u + 1013904223u;
+    return (float)((hwr_flick_seed >> 8) & 0xFFFFu) / 65535.0f;
+}
+
+/* Add one collected fire flame to the light accumulator by PROXIMITY: it joins
+ * the nearest existing cluster within the merge radius, otherwise starts a new
+ * one. Grid bucketing split a single fire (whose ~20 flames spread up to ~2
+ * tiles) across several tile-lights; proximity merging keeps one blaze — and
+ * neighbouring fires within the radius — as a single light. */
+static void hwr_firelight_add(int x, int y, int z)
+{
+    int i, best = -1;
+    long best_d2 = 0;
+    for (i = 0; i < hwr_firelight_acc_count; i++) {
+        struct HwrFireLightAcc *a = &hwr_firelight_acc[i];
+        long cx = a->sx / a->n, cz = a->sz / a->n;   /* running centroid */
+        long dx = (long)x - cx, dz = (long)z - cz;
+        long d2 = dx*dx + dz*dz;
+        if (d2 <= hwr_firelight_merge2 && (best < 0 || d2 < best_d2)) {
+            best = i;
+            best_d2 = d2;
+        }
+    }
+    if (best >= 0) {
+        hwr_firelight_acc[best].sx += x;
+        hwr_firelight_acc[best].sy += y;
+        hwr_firelight_acc[best].sz += z;
+        hwr_firelight_acc[best].n++;
+        return;
+    }
+    if (hwr_firelight_acc_count >= HWR_FIRELIGHT_MAX)
+        return;
+    i = hwr_firelight_acc_count++;
+    hwr_firelight_acc[i].sx = x;
+    hwr_firelight_acc[i].sy = y;
+    hwr_firelight_acc[i].sz = z;
+    hwr_firelight_acc[i].n  = 1;
+}
+
+/* Collapse clusters into finalized fire lights: centroid position, strength
+ * that grows with flame count and saturates. Clusters with fewer than
+ * firelight_min_flames flames are dropped (suppresses small/lone fires). */
+static void hwr_firelight_finalize(void)
+{
+    int i;
+    int min_flames = hwr_lights_defaults().firelight_min_flames;
+    if (min_flames < 1) min_flames = 1;
+    hwr_firelight_count = 0;
+    for (i = 0; i < hwr_firelight_acc_count; i++) {
+        struct HwrFireLightAcc *a = &hwr_firelight_acc[i];
+        struct HwrFireLight *fo;
+        float strength;
+        if (a->n < min_flames)
+            continue;
+        fo = &hwr_firelights[hwr_firelight_count++];
+        fo->x = (float)(a->sx / a->n);
+        fo->y = (float)(a->sy / a->n);
+        fo->z = (float)(a->sz / a->n);
+        strength = (float)a->n / 10.0f;   /* a big fire has ~20 flames */
+        if (strength < 0.35f) strength = 0.35f;
+        if (strength > 1.25f) strength = 1.25f;
+        fo->strength = strength;
+    }
+}
 
 /* Screen-space overlay quads (shield/blast/lightning special faces), snapshotted
  * at gate time — the draw list and screen-point pool are reset/overwritten
@@ -578,6 +710,15 @@ static void hwr_sw_collect_effects(void)
     hwr_fire_seen = hwr_fire_coll = 0;
     hwr_phwoar_seen = hwr_phwoar_coll = 0;
     hwr_effect_badslot = 0;
+    hwr_firelight_acc_count = 0;
+    {
+        /* Flame->cluster merge radius, from the [firelight] cluster tunable
+         * (tiles -> world units, 256/tile). */
+        float ctiles = hwr_lights_defaults().firelight_cluster;
+        long merge = (long)(ctiles * 256.0f);
+        if (merge < 128) merge = 128;
+        hwr_firelight_merge2 = merge * merge;
+    }
 
     for (i = 1; i < next_draw_item && hwr_collected_count < HWR_MAX_COLLECTED; i++) {
         struct DrawItem *itm = &game_draw_list[i];
@@ -610,6 +751,11 @@ static void hwr_sw_collect_effects(void)
              * (big+128)/128 is 1.0 at big==0 so it works for the unscaled case too. */
             bigf = (float)((int)fl->big + 128) / 128.0f;
             if (bigf < 0.25f) bigf = 0.25f;
+            /* Feed the ground-light accumulator with the flame's raw world
+             * position (same space as the floor verts). Done before the atlas
+             * attempt so a fire still lights the ground even when its billboard
+             * falls back to the SW renderer. */
+            hwr_firelight_add((int)fl->x, (int)fl->y, (int)fl->z);
         } else {
             struct HwrPhwoar *ph;
             if (off >= 1024) continue;
@@ -638,6 +784,9 @@ static void hwr_sw_collect_effects(void)
             bb->flags = HWR_BILLBOARD_TRANSLUCENT | HWR_BILLBOARD_NOSHADOW
                       | (is_fire ? HWR_BILLBOARD_ADDITIVE : 0);
             if (sc <= 0.0f) sc = 256.0f;
+            /* Fire flames render about 20% too small versus the original SW
+             * proportions; boost them to match. */
+            if (is_fire) bigf *= 1.2f;
             if (rnorm > 0.001f && snap.D1C != 0) {
                 bb->half_size_x = (float)fw * 100663296.0f / (sc * rnorm) * 0.85f * res_scale * bigf;
                 bb->half_size_y = (float)fh * 100663296.0f / (sc * (float)snap.D1C) * 0.85f * res_scale * bigf;
@@ -655,6 +804,8 @@ static void hwr_sw_collect_effects(void)
         else
             hwr_phwoar_skip_mask[off >> 3] |= (uint8_t)(1 << (off & 7));
     }
+
+    hwr_firelight_finalize();
 }
 
 /* Emit the light glares (car headlights / street lamps) recorded by build_glare
@@ -666,6 +817,7 @@ static void hwr_sw_collect_glares(void)
 {
     int i;
     int slot_white, slot_red, slot_blue;
+    HwrLightDefaults gld = hwr_lights_defaults();
     /* Police siren flash phase: alternate red/blue every 250 ms (each colour
      * pulses twice a second). 0 = red side lit, 1 = blue side lit. */
     int phase = (int)((SDL_GetTicks() / 250u) & 1u);
@@ -698,11 +850,13 @@ static void hwr_sw_collect_glares(void)
         bb->shade = 48;   /* full brightness — self-lit glow */
         bb->flags = HWR_BILLBOARD_TRANSLUCENT | HWR_BILLBOARD_NOSHADOW
                   | HWR_BILLBOARD_ADDITIVE;
-        /* build_glare's screen radius is r*scale/256; the billboard half-size is
-         * in world units and the shader applies the same scale/perspective, so
-         * ~4*r reproduces roughly half that on-screen size (tunable). */
-        bb->half_size_x = r * 4.0f;
-        bb->half_size_y = r * 4.0f;
+        {
+            float w = (siren == 1) ? gld.glare_red_width
+                    : (siren == 2) ? gld.glare_blue_width
+                    : gld.glare_headlamp_width;
+            bb->half_size_x = r * w;
+            bb->half_size_y = r * w;
+        }
         hwr_collected_count++;
     }
 }
@@ -724,6 +878,40 @@ static void hwr_sw_collect_overlays(void)
         struct HwrSpObFace4 *fc;
         HwrOverlayQuad *q;
         int k, col;
+        /* Spark lines (DrIT_Unkn11/SortLine, enlist_draw_mapwho_vect in
+         * engindrwlstm_3d.c): used by build_spark() for the impact sparkle on
+         * e.g. the lightning weapon. Drawn as a thin opaque quad along the
+         * line since the overlay pipeline has no GL_LINES path. */
+        if (itm->Type == HWR_DI_Unkn11) {
+            struct HwrSortLine *ln;
+            float dx, dy, len, nx, ny;
+            const float half_w = 1.0f;
+            if (game_sort_lines == NULL)
+                continue;
+            ln = &game_sort_lines[itm->Offset];
+            dx = (float)(ln->X2 - ln->X1);
+            dy = (float)(ln->Y2 - ln->Y1);
+            len = sqrtf(dx * dx + dy * dy);
+            if (len < 0.001f) {
+                nx = half_w; ny = 0.0f;
+            } else {
+                nx = -dy / len * half_w;
+                ny =  dx / len * half_w;
+            }
+            q = &hwr_collected_overlays[hwr_collected_overlay_count];
+            q->x[0] = (float)ln->X1 + nx; q->y[0] = (float)ln->Y1 + ny;
+            q->x[1] = (float)ln->X2 + nx; q->y[1] = (float)ln->Y2 + ny;
+            q->x[2] = (float)ln->X2 - nx; q->y[2] = (float)ln->Y2 - ny;
+            q->x[3] = (float)ln->X1 - nx; q->y[3] = (float)ln->Y1 - ny;
+            col = ln->Col;
+            q->r = (float)lbPaletteColors[col].r / 255.0f;
+            q->g = (float)lbPaletteColors[col].g / 255.0f;
+            q->b = (float)lbPaletteColors[col].b / 255.0f;
+            q->a = 1.0f;   /* SortLine draws opaque (no TRANSPAR4 flag set) */
+            q->slot = -1;
+            hwr_collected_overlay_count++;
+            continue;
+        }
         if (itm->Type != HWR_DI_SpObFace4)
             continue;
         fc = &game_special_obj_faces4[itm->Offset];
@@ -732,10 +920,27 @@ static void hwr_sw_collect_overlays(void)
         if (fc->Flags != 15 && fc->Flags != 17)
             continue;
         q = &hwr_collected_overlays[hwr_collected_overlay_count];
-        for (k = 0; k < 4; k++) {
-            struct HwrSpecialPoint *sp = &game_screen_point_pool[(uint16_t)fc->PointNo[k]];
-            q->x[k] = (float)sp->X;
-            q->y[k] = (float)sp->Y;
+        if (fc->Flags == 15) {
+            /* Laser/lightning slices (build_polygon_slice, engindrwlstm_3d.c):
+             * PointNo is a "ladder" order {start+, start-, end+, end-}, not a
+             * perimeter walk. hwr_overlay_render's fixed {0,1,2,0,2,3} split
+             * assumes consecutive points trace the quad's perimeter (true for
+             * mode 17's fan order); applied to the ladder order it mixes
+             * triangles from both diagonals into a self-intersecting bowtie
+             * (the "shaded triangles" corruption). Remap to perimeter order
+             * start+ -> end+ -> end- -> start- here instead. */
+            static const int perim[4] = { 0, 2, 3, 1 };
+            for (k = 0; k < 4; k++) {
+                struct HwrSpecialPoint *sp = &game_screen_point_pool[(uint16_t)fc->PointNo[perim[k]]];
+                q->x[k] = (float)sp->X;
+                q->y[k] = (float)sp->Y;
+            }
+        } else {
+            for (k = 0; k < 4; k++) {
+                struct HwrSpecialPoint *sp = &game_screen_point_pool[(uint16_t)fc->PointNo[k]];
+                q->x[k] = (float)sp->X;
+                q->y[k] = (float)sp->Y;
+            }
         }
         col = fc->ExCol & 0xFF;
         q->r = (float)lbPaletteColors[col].r / 255.0f;
@@ -880,9 +1085,13 @@ void hwr_sw_collect_sprites(void)
             frv_arr[3] = (frv_pack >> 9) & 0x07;
             frv_arr[4] = (frv_pack >> 12) & 0x07;
 
-            /* Compute element bounding box (version check always — same as SW) */
+            /* Compute element bounding box (version check always — same as SW).
+             * Also detect whether any gun-overlay elements (frv_idx==4) are
+             * visible in this frame — those are baked at full brightness and must
+             * bypass scene lighting (see SW LbSpriteDraw path for frv_idx==4). */
             unsigned short el_idx;
             int off_x, off_y, max_x, max_y;
+            int has_gun_overlay = 0;
             off_x = 0x7FFFFFFF; off_y = 0x7FFFFFFF;
             max_x = -0x7FFFFFFF; max_y = -0x7FFFFFFF;
             for (el_idx = frm->FirstElement; el_idx > 0; ) {
@@ -898,6 +1107,7 @@ void hwr_sw_collect_sprites(void)
                         if (frv_idx >= 5) { el_idx = el->Next; continue; }
                         int frv_ver = (el->Flags >> 9) & 0x07;
                         if (frv_arr[frv_idx] != frv_ver) { el_idx = el->Next; continue; }
+                        if (frv_idx == 4) has_gun_overlay = 1;
                         int ex = (int)(el->X) >> 1;
                         int ey = (int)(el->Y) >> 1;
                         int sw = spr->SWidth;
@@ -1038,6 +1248,11 @@ void hwr_sw_collect_sprites(void)
                 int is_person = (itm->Type == HWR_DI_SFrmPersV
                               || itm->Type == HWR_DI_SFrmPersB);
                 int is_emitter = (!is_person && thing && thing->U_LightHead > 0);
+                /* State sits at the same offset in struct Thing and SimpleThing
+                 * (shared prefix), so it's safe to read here even for persons
+                 * (where `thing` is really a struct Thing). PerSt_DEAD == 0xD
+                 * (people.h) — corpses shouldn't cast a standing blob shadow. */
+                int is_dead_body = (is_person && thing && thing->State == 0xD);
                 /* Sprites bake at a fixed brightness (above); apply the per-instance
                  * Brightness here as the draw-time shade, including the angle-gated
                  * +15 bonus.  Because this is per frame (not baked), identical
@@ -1052,7 +1267,15 @@ void hwr_sw_collect_sprites(void)
                 }
                 /* NOSHADOW (light emitters don't cast blob shadows) is a separate
                  * shadow-casting concern, unrelated to brightness. */
-                bb->flags = is_emitter ? HWR_BILLBOARD_NOSHADOW : 0;
+                bb->flags = (is_emitter || is_dead_body) ? HWR_BILLBOARD_NOSHADOW : 0;
+                /* Gun/weapon overlay (frv_idx==4) elements are baked at full
+                 * brightness; set shade=48 and UNLIT so the shader floors lighting
+                 * at 1.0 — character is always full bright, external lights overbright.
+                 * Must be set AFTER the bb->flags= assignment above or it is wiped. */
+                if (has_gun_overlay) {
+                    bb->shade = 48;
+                    bb->flags |= HWR_BILLBOARD_UNLIT;
+                }
                 /* The effect-versioned frames (DrIT_SFrmEfctV) are the person
                  * shield bubble — a translucent energy overlay, not a solid
                  * sprite. Route it through the blended pass (alpha) and don't let
@@ -1072,24 +1295,51 @@ void hwr_sw_collect_sprites(void)
                 }
                 /* Dropped items sit at the same spot as the dead body that
                  * dropped them; bias them toward the camera so they always draw
-                 * on top and stay easy to click. */
-                if (itm->Type == HWR_DI_SFrmStatc && thing->Type == HWR_SMTT_DROPPED_ITEM)
-                    bb->flags |= HWR_BILLBOARD_ONTOP;
+                 * on top and stay easy to click. Full brightness and unlit so
+                 * they stay clearly visible/readable regardless of scene shade
+                 * (dark alleys, building shadows) — matches the gun-overlay
+                 * treatment above. */
+                if (itm->Type == HWR_DI_SFrmStatc && thing->Type == HWR_SMTT_DROPPED_ITEM) {
+                    bb->flags |= HWR_BILLBOARD_ONTOP | HWR_BILLBOARD_UNLIT;
+                    bb->shade = 48;
+                }
                 {
                 float sc = (float)snap.scale;
                 if (sc <= 0.0f) sc = 256.0f;
                 float rnorm = sqrtf((float)snap.D14 * snap.D14 + (float)snap.D10 * snap.D10);
                 float res_scale = (sw_view_h > 0) ? (float)sw_view_h / 480.0f : 1.0f;
+                /* Streetlamp fixture props (thing_categories "street" owners) render
+                 * about 10% oversized versus the original SW proportions; scale them
+                 * down to match. */
+                float size_corr = (itm->Type == HWR_DI_SFrmStatc
+                    && hwr_thing_category_get(thing->Type, thing->SubType) == 3) ? 0.909f : 1.0f;
                 if (rnorm > 0.001f && snap.D1C != 0) {
-                    bb->half_size_x = (float)fw * 100663296.0f / (sc * rnorm) * 0.85f * res_scale;
-                    bb->half_size_y = (float)fh * 100663296.0f / (sc * (float)snap.D1C) * 0.85f * res_scale;
+                    bb->half_size_x = (float)fw * 100663296.0f / (sc * rnorm) * 0.85f * res_scale * size_corr;
+                    bb->half_size_y = (float)fh * 100663296.0f / (sc * (float)snap.D1C) * 0.85f * res_scale * size_corr;
                 } else {
-                    bb->half_size_x = (float)fw * 18.0f * 0.85f * res_scale;
-                    bb->half_size_y = (float)fh * 18.0f * 0.85f * res_scale;
+                    bb->half_size_x = (float)fw * 18.0f * 0.85f * res_scale * size_corr;
+                    bb->half_size_y = (float)fh * 18.0f * 0.85f * res_scale * size_corr;
                 }
-                /* Shift billboard up by half-height so feet (at comp bottom) align
-                 * with the thing's world Y (feet position), not the quad centre. */
-                bb->y += bb->half_size_y;
+                /* Horizontal anchor correction: element X=0 (world anchor) must
+                 * appear at bb->x. The atlas pixel for the anchor is at (-off_x)
+                 * from the left edge; shift the billboard centre to match. */
+                if (fw > 0 && rnorm > 0.001f) {
+                    float rx = (float)snap.D14 / rnorm;   /* cam right X (cos/norm) */
+                    float rz = -(float)snap.D10 / rnorm;  /* cam right Z (-sin/norm) */
+                    float cx_shift = ((float)off_x + (float)fw * 0.5f)
+                                     * 2.0f * bb->half_size_x / (float)fw;
+                    bb->x += cx_shift * rx;
+                    bb->z += cx_shift * rz;
+                }
+                /* Vertical anchor correction: element Y=0 (feet) must align with
+                 * the thing's world Y. Generalises the old += hh (which assumed
+                 * off_y == -fh, i.e. all elements strictly above the feet). */
+                if (fh > 0) {
+                    bb->y += bb->half_size_y;
+                    bb->y -= 2.0f * bb->half_size_y * (float)(fh + off_y) / (float)fh;
+                } else {
+                    bb->y += bb->half_size_y;
+                }
             }
             hwr_collected_count++;
                 hwr_sprite_skip_mask[ss_idx >> 3] |= (uint8_t)(1 << (ss_idx & 7));
@@ -1202,9 +1452,13 @@ void hwr_sw_capture(void)
                 obj_snap[o].matx = *(const int16_t *)((const char *)th + HWR_THING_MATX);
                 obj_snap[o].is_dynamic = 1;
                 obj_snap[o].is_vehicle = (uint8_t)is_veh;
+                obj_snap[o].has_passengers = is_veh
+                    ? (*(const int16_t *)((const char *)th + HWR_THING_PASSHEAD) != 0 ? 1 : 0)
+                    : 0;
             } else {
                 obj_snap[o].is_dynamic = 0;
                 obj_snap[o].is_vehicle = 0;
+                obj_snap[o].has_passengers = 0;
             }
         }
         obj_snap_count = o;
@@ -1310,6 +1564,42 @@ static int16_t corner_alt(int cx, int cz, int corner_gx, int corner_gz)
     return game_my_big_map[HWR_MAP_TILE_WIDTH * cgz + cgx].Alt;
 }
 
+/* Per-vertex water wobble, mirroring shpoint_compute_coord_y's Flags&0x10
+ * branch (lvdraw3d.c) exactly, mag=8 to match the floor tile scale (8*Alt).
+ * elcr_x/elcr_z are world units (tile<<8), same basis as the floor verts. */
+static int water_wobble_y(int elcr_x, int elcr_z)
+{
+    uint32_t turn = render_anim_turn;
+    int dvfactor = 140 + ((bw_rotl32(0x5D3BA6C3, (uint8_t)(elcr_z >> 8)) ^
+                            bw_rotr32(0xA7B4D8AC, (uint8_t)(elcr_x >> 8))) & 0x7F);
+    int wobble = (waft_table2[(turn + (uint32_t)(elcr_x >> 7)) & 0x1F]
+                + waft_table2[(turn + (uint32_t)(elcr_z >> 7)) & 0x1F]
+                + waft_table2[(32 * turn / (uint32_t)dvfactor) & 0x1F]) >> 3;
+    return 8 * wobble;
+}
+
+/* Y offset to add on top of 8*Alt for a grid corner, replicating
+ * shpoint_compute_coord_y's Flags branches. Uses the CORNER's own map
+ * element (falling back to the centre tile if the corner is a column/wall
+ * cell with no floor), matching corner_alt's fallback rule, since SW
+ * evaluates each grid point against its own map element. */
+static int corner_wave_y(int cx, int cz, int corner_gx, int corner_gz, int wx, int wz)
+{
+    int cgx = clampi(corner_gx, 0, HWR_MAP_TILE_WIDTH - 1);
+    int cgz = clampi(corner_gz, 0, HWR_MAP_TILE_WIDTH - 1);
+    struct HwrMapEl *cme = &game_my_big_map[HWR_MAP_TILE_WIDTH * cgz + cgx];
+    if (cme->Texture == 0) {
+        int tgx = clampi(cx, 0, HWR_MAP_TILE_WIDTH - 1);
+        int tgz = clampi(cz, 0, HWR_MAP_TILE_WIDTH - 1);
+        cme = &game_my_big_map[HWR_MAP_TILE_WIDTH * tgz + tgx];
+    }
+    if (cme->Flags & 0x10)
+        return water_wobble_y(wx, wz);
+    if (cme->Flags & 0x40)
+        return waft_table[render_anim_turn & 0x1F];
+    return 0;
+}
+
 /* Geometric ambient occlusion for a floor corner. The grid corner (cgx,cgz) is
  * shared by up to 4 cells; each one that is a building/column footprint
  * (Texture==0) is a vertical occluder. Returns an "openness" byte (255 = fully
@@ -1339,7 +1629,8 @@ static uint8_t corner_ao(int cgx, int cgz)
  * (8-connected) and copy its texture index and ShadeR. Returns 1 on success.
  * Column cells never have ShadeR set by the SW renderer, so inheriting prevents
  * them rendering as pitch-black even when geometry is correct. */
-static int nearest_floor_neighbour(int gx, int gz, int *out_texidx, uint8_t *out_shade)
+static int nearest_floor_neighbour(int gx, int gz, int *out_texidx, uint8_t *out_shade,
+    uint8_t *out_flags, uint16_t *out_ambient)
 {
     static const int offs[8][2] = {
         {-1,0},{1,0},{0,-1},{0,1},{-1,-1},{-1,1},{1,-1},{1,1}
@@ -1353,6 +1644,8 @@ static int nearest_floor_neighbour(int gx, int gz, int *out_texidx, uint8_t *out
         if (nm->Texture != 0 && !(nm->Texture & 0x8000) && ni < game_textures_limit) {
             *out_texidx = ni;
             *out_shade  = nm->ShadeR;
+            *out_flags  = nm->Flags;
+            *out_ambient = nm->Ambient;
             return 1;
         }
     }
@@ -1408,26 +1701,24 @@ static int sw_get_floor(void *ctx, HwrGeometryBatch *out)
             struct HwrFloorTex *tx;
             int texidx = me->Texture & 0x3FFF;   /* low bits = index, high = flags */
             uint8_t inherited_shade = me->ShadeR;
+            uint8_t tile_flags = me->Flags;
+            uint16_t tile_ambient = me->Ambient;
             HwrVertex *v;
             int base;
 
             if (texidx >= game_textures_limit)
                 continue;
-            /* True water/reflective tiles have both the 0x8000 transparent flag
-             * AND Flags&0x10 (the waft/wobble flag). Skip those — the SW blit
-             * renders water animation. Non-wobbling 0x8000 tiles (e.g. special
-             * ledge cells) fall through and render normally. */
-            if ((me->Texture & 0x8000) && (me->Flags & 0x10))
-                continue;
             if (floor_vert_count + 4 > HWR_FLOOR_MAX_TILES * 4)
                 break;
 
             /* Column/building cells have Texture==0 (no floor surface). Borrow
-             * texture AND shade from the nearest valid floor neighbour so the
-             * cell fills correctly (ShadeR is never set for column cells). */
+             * texture, shade, flags AND ambient from the nearest valid floor
+             * neighbour so the cell fills correctly (ShadeR is never set for
+             * column cells, and its own Flags/Ambient don't describe a real
+             * floor surface). */
             if (me->Texture == 0) {
                 int ni;
-                if (!nearest_floor_neighbour(gx, gz, &ni, &inherited_shade)) continue;
+                if (!nearest_floor_neighbour(gx, gz, &ni, &inherited_shade, &tile_flags, &tile_ambient)) continue;
                 texidx = ni;
             }
             tx = &game_textures[texidx];
@@ -1436,10 +1727,18 @@ static int sw_get_floor(void *ctx, HwrGeometryBatch *out)
             v = &floor_verts[base];
             /* Corner positions: v[0]=(gx,gz), v[1]=(gx+1,gz),
              *                   v[2]=(gx+1,gz+1), v[3]=(gx,gz+1) */
-            v[0].x = (float)(gx << 8);     v[0].z = (float)(gz << 8);     v[0].y = (float)(8 * corner_alt(gx, gz, gx,   gz));
-            v[1].x = (float)((gx+1) << 8); v[1].z = (float)(gz << 8);     v[1].y = (float)(8 * corner_alt(gx, gz, gx+1, gz));
-            v[2].x = (float)((gx+1) << 8); v[2].z = (float)((gz+1) << 8); v[2].y = (float)(8 * corner_alt(gx, gz, gx+1, gz+1));
-            v[3].x = (float)(gx << 8);     v[3].z = (float)((gz+1) << 8); v[3].y = (float)(8 * corner_alt(gx, gz, gx,   gz+1));
+            v[0].x = (float)(gx << 8);     v[0].z = (float)(gz << 8);
+            v[1].x = (float)((gx+1) << 8); v[1].z = (float)(gz << 8);
+            v[2].x = (float)((gx+1) << 8); v[2].z = (float)((gz+1) << 8);
+            v[3].x = (float)(gx << 8);     v[3].z = (float)((gz+1) << 8);
+            v[0].y = (float)(8 * corner_alt(gx, gz, gx,   gz)
+                + corner_wave_y(gx, gz, gx,   gz,   (int)v[0].x, (int)v[0].z));
+            v[1].y = (float)(8 * corner_alt(gx, gz, gx+1, gz)
+                + corner_wave_y(gx, gz, gx+1, gz,   (int)v[1].x, (int)v[1].z));
+            v[2].y = (float)(8 * corner_alt(gx, gz, gx+1, gz+1)
+                + corner_wave_y(gx, gz, gx+1, gz+1, (int)v[2].x, (int)v[2].z));
+            v[3].y = (float)(8 * corner_alt(gx, gz, gx,   gz+1)
+                + corner_wave_y(gx, gz, gx,   gz+1, (int)v[3].x, (int)v[3].z));
             /* Per-vertex linear depth (no perspective clamp), matching the face
              * pass so floor and buildings share one monotonic z-buffer scale.
              * Per-corner (not per-tile-centre) so a tile's far edge reports its
@@ -1466,6 +1765,25 @@ static int sw_get_floor(void *ctx, HwrGeometryBatch *out)
             v[1].light = corner_ao(gx + 1, gz);
             v[2].light = corner_ao(gx + 1, gz + 1);
             v[3].light = corner_ao(gx,     gz + 1);
+            /* Mirrors lvdraw3d.c's floor mode pick: Flags&0x20 selects glass
+             * mode 21 (unshaded, like object window glass) over the normal
+             * dynamically-shaded mode 5; Flags&0x01 separately forces the SW
+             * tile to max brightness (Shade=0x3F00) regardless of mode.
+             * Ambient (shpoint_compute_shade: (Ambient<<7) baked into the SW
+             * tile's shade ahead of dynamic lights/AO) is map-authored, e.g.
+             * road markings/crossings painted brighter than the surrounding
+             * asphalt - fold it in the same way so it isn't lost to GL's
+             * geometric AO + dynamic sun/shadow. */
+            {
+                uint8_t floor_em = 0;
+                if (tile_flags & 0x20)
+                    floor_em = 255;
+                if (tile_flags & 0x01)
+                    floor_em = 255;
+                if (tile_ambient > floor_em)
+                    floor_em = (tile_ambient > 255) ? 255 : (uint8_t)tile_ambient;
+                v[0].emissive = v[1].emissive = v[2].emissive = v[3].emissive = floor_em;
+            }
             floor_vert_count += 4;
 
             /* Triangle split matches SW draw_floor_tile1a: diagonal (v[3]→v[1])
@@ -1504,24 +1822,46 @@ static float face_scrd(float wx, float wy, float wz)
 
 /* Emit one face vertex. */
 static void face_emit_vert(int wx, int wy, int wz, uint8_t u, uint8_t v,
-    uint8_t page, uint8_t light, float depth)
+    uint8_t page, uint8_t light, float depth, uint8_t emissive)
 {
     HwrVertex *o = &face_verts[face_vert_count++];
     o->x = (float)wx; o->y = (float)wy; o->z = (float)wz;
     o->u = u; o->v = v;
     o->page = page; o->light = light;
     o->tile_depth = depth;
+    o->emissive = emissive;
 }
 
 /* Emit one transparent (blended) face vertex into the transparent batch. */
 static void trans_emit_vert(int wx, int wy, int wz, uint8_t u, uint8_t v,
-    uint8_t page, uint8_t light, float depth)
+    uint8_t page, uint8_t light, float depth, uint8_t emissive)
 {
     HwrVertex *o = &trans_verts[trans_vert_count++];
     o->x = (float)wx; o->y = (float)wy; o->z = (float)wz;
     o->u = u; o->v = v;
     o->page = page; o->light = light;
     o->tile_depth = depth;
+    o->emissive = emissive;
+}
+
+/* Face/tile Flags double as the SW rasterizer's RendVec_mode (vec_mode = ...
+ * ->Flags directly in engindrwlstx_fac.c). Modes 2/3 are a raw texture blit
+ * with no fade/shade term of any kind, and 21/25 are the window-glass modes
+ * (fade_table + ghost_table blend) - all four render at a fixed brightness in
+ * SW, completely untouched by scene lighting, so mirror that with full
+ * emissive. Other unshaded-looking modes (7-13/18/19/22/23) still run their
+ * texture through SW's fade_table, which reacts to the level's overall
+ * lighting/palette state, so they must NOT be bypassed here or normal walls
+ * lose their shading (regressed to fully lit in testing - only the truly
+ * lighting-independent modes belong in this set). */
+static int hwr_mode_is_emissive(int mode)
+{
+    switch (mode) {
+        case 2: case 3: case 21: case 25:
+            return 1;
+        default:
+            return 0;
+    }
 }
 
 /* Rotate an object-space normal by the object matrix (or identity) and return a
@@ -1619,6 +1959,205 @@ static void hwr_reduce_tilt(const HwrM33 *in, HwrM33 *out, float factor)
 #define FACE_OBJ_WORLDX(obj, pt) ((int)(uint16_t)(obj)->MapX + (int)(pt)->X)
 #define FACE_OBJ_WORLDZ(obj, pt) ((int)(uint16_t)(obj)->MapZ + (int)(pt)->Z)
 #define FACE_OBJ_WORLDY(obj, pt) ((int)(obj)->OffsetY + (int)(pt)->Y)
+
+/* --- Explosion crater decals + shatter fragments ---------------------------
+ * Both are appended to the opaque face batch (face_verts/face_index) at the end
+ * of sw_get_faces, so they share the face pass's index-0 cutout, depth-write and
+ * scene lighting. Sources: set_floor_texture_uv_damaged_ground (crater decals)
+ * and enginfexpl.c / draw_ex_face (shatter fragments). */
+
+#define HWR_DAMAGE_PAGE 4          /* == HWR_TMAP_ANIM_PAGE0: animated/decal page */
+/* Depth bias (scrd units) nudging the flat crater decal a hair toward the camera
+ * so it wins GL_LESS against the coincident opaque floor tile beneath it, without
+ * poking through walls that stand on the same tile. */
+#define HWR_DECAL_DEPTH_BIAS 48.0f
+
+/* Damaged-ground decal UVs on page 4, transcribed verbatim from
+ * set_floor_texture_uv_damaged_ground (engindrwlstx_fac.c): one 32x32 sub-tile
+ * per neighbour code 1..12 (directional edge/corner/centre crater pieces), in
+ * the SW point1..point4 order. Returns 1 if nb is a valid damage code. */
+static int hwr_damaged_ground_uv(int nb, uint8_t u[4], uint8_t v[4])
+{
+    static const uint8_t tbl[12][8] = {
+        /* {u1,v1, u2,v2, u3,v3, u4,v4} */
+        {160,64, 160,95, 191,64, 191,95}, /* 1  */
+        {159,64, 159,95, 128,64, 128,95}, /* 2  */
+        {223,64, 223,95, 192,64, 192,95}, /* 3  */
+        {160,95, 191,95, 160,64, 191,64}, /* 4  */
+        {159,95, 159,64, 128,95, 128,64}, /* 5  */
+        {223,95, 223,64, 192,95, 192,64}, /* 6  */
+        {191,95, 191,64, 160,95, 160,64}, /* 7  */
+        {128,95, 128,64, 159,95, 159,64}, /* 8  */
+        {192,95, 192,64, 223,95, 223,64}, /* 9  */
+        {191,64, 160,64, 191,95, 160,95}, /* 10 */
+        {128,64, 128,95, 159,64, 159,95}, /* 11 */
+        {192,64, 192,95, 223,64, 223,95}, /* 12 */
+    };
+    const uint8_t *t;
+    if (nb < 1 || nb > 12)
+        return 0;
+    t = tbl[nb - 1];
+    u[0]=t[0]; v[0]=t[1]; u[1]=t[2]; v[1]=t[3];
+    u[2]=t[4]; v[2]=t[5]; u[3]=t[6]; v[3]=t[7];
+    return 1;
+}
+
+/* Walk the camera window (same bounds/geometry as sw_get_floor) and append a
+ * blended crater-decal overlay quad for every tile whose damage code (top nibble
+ * of ColumnHead, 1..12) is set - mirrors draw_floor_tile1a's second "damage
+ * overlays" pass (engindrwlstx_fac.c:1164). Corner positions match sw_get_floor
+ * exactly so the decal lands flush on its floor tile. */
+static void emit_floor_damage_decals(void)
+{
+    int cx, cz, ra, rb, x0, x1, z0, z1, gx, gz;
+
+    if (game_my_big_map == NULL || !snap.valid)
+        return;
+
+    cx = snap.xc >> 8;
+    cz = snap.zc >> 8;
+    ra = snap.ra ? snap.ra + 2 : 24;
+    rb = snap.rb ? snap.rb + 2 : 24;
+    x0 = clampi(cx - ra, 0, HWR_MAP_TILE_WIDTH - 2);
+    x1 = clampi(cx + ra, 0, HWR_MAP_TILE_WIDTH - 2);
+    z0 = clampi(cz - rb, 0, HWR_MAP_TILE_WIDTH - 2);
+    z1 = clampi(cz + rb, 0, HWR_MAP_TILE_WIDTH - 2);
+
+    for (gz = z0; gz <= z1; gz++) {
+        for (gx = x0; gx <= x1; gx++) {
+            struct HwrMapEl *me = &game_my_big_map[HWR_MAP_TILE_WIDTH * gz + gx];
+            int nb = (me->ColumnHead >> 12) & 0xF;
+            uint8_t du[4], dv[4], lt[4];
+            float wx[4], wy[4], wz[4], dep[4];
+            int base, c;
+
+            if (!hwr_damaged_ground_uv(nb, du, dv))
+                continue;
+            if (face_vert_count + 4 > HWR_FACE_MAX_VERTS ||
+                face_index_count + 6 > HWR_FACE_MAX_INDEX)
+                return;
+
+            /* Corners v0=(gx,gz) v1=(gx+1,gz) v2=(gx+1,gz+1) v3=(gx,gz+1). */
+            wx[0]=(float)(gx<<8);     wz[0]=(float)(gz<<8);
+            wx[1]=(float)((gx+1)<<8); wz[1]=(float)(gz<<8);
+            wx[2]=(float)((gx+1)<<8); wz[2]=(float)((gz+1)<<8);
+            wx[3]=(float)(gx<<8);     wz[3]=(float)((gz+1)<<8);
+            wy[0]=(float)(8*corner_alt(gx,gz, gx,   gz)   + corner_wave_y(gx,gz, gx,   gz,   (int)wx[0],(int)wz[0]));
+            wy[1]=(float)(8*corner_alt(gx,gz, gx+1, gz)   + corner_wave_y(gx,gz, gx+1, gz,   (int)wx[1],(int)wz[1]));
+            wy[2]=(float)(8*corner_alt(gx,gz, gx+1, gz+1) + corner_wave_y(gx,gz, gx+1, gz+1, (int)wx[2],(int)wz[2]));
+            wy[3]=(float)(8*corner_alt(gx,gz, gx,   gz+1) + corner_wave_y(gx,gz, gx,   gz+1, (int)wx[3],(int)wz[3]));
+            lt[0]=corner_ao(gx,gz);     lt[1]=corner_ao(gx+1,gz);
+            lt[2]=corner_ao(gx+1,gz+1); lt[3]=corner_ao(gx,gz+1);
+            for (c = 0; c < 4; c++)
+                dep[c] = face_scrd(wx[c], wy[c], wz[c]) - HWR_DECAL_DEPTH_BIAS;
+
+            /* SW damaged-ground point order maps to grid corners as
+             *   point1=(gx,gz) point2=(gx,gz+1) point3=(gx+1,gz) point4=(gx+1,gz+1)
+             * -> GL corner->UV: v0=UV1, v1=UV3, v2=UV4, v3=UV2. */
+            base = face_vert_count;
+            face_emit_vert((int)wx[0],(int)wy[0],(int)wz[0], du[0],dv[0], HWR_DAMAGE_PAGE, lt[0], dep[0], 0);
+            face_emit_vert((int)wx[1],(int)wy[1],(int)wz[1], du[2],dv[2], HWR_DAMAGE_PAGE, lt[1], dep[1], 0);
+            face_emit_vert((int)wx[2],(int)wy[2],(int)wz[2], du[3],dv[3], HWR_DAMAGE_PAGE, lt[2], dep[2], 0);
+            face_emit_vert((int)wx[3],(int)wy[3],(int)wz[3], du[1],dv[1], HWR_DAMAGE_PAGE, lt[3], dep[3], 0);
+            /* triangles (v0,v3,v1)+(v1,v3,v2), same split as the floor tile. */
+            face_index[face_index_count++] = base + 0;
+            face_index[face_index_count++] = base + 3;
+            face_index[face_index_count++] = base + 1;
+            face_index[face_index_count++] = base + 1;
+            face_index[face_index_count++] = base + 3;
+            face_index[face_index_count++] = base + 2;
+        }
+    }
+}
+
+/* Append active explosion fragments (ex_faces[], DrIT_Unkn5 / draw_ex_face) to
+ * the opaque face batch. Types 3/4 store absolute world coords; 1/2/5/6 store a
+ * base (X,Y,Z) plus per-corner offsets. Odd types are textured tris indexing
+ * game_face_textures; even types are textured quads indexing game_textures. The
+ * SW draw feeds transform_shpoint a vertical delta of (worldY - yc) - 8*yc, so
+ * the GL world Y carries the extra -snap.yc (same quirk as the fire collector,
+ * see the effects loop above). Fragments are drawn full-bright (SW fixes their
+ * point shade to 0x100000). */
+static void emit_explode_faces(void)
+{
+    int i;
+
+    if (dont_bother_with_explode_faces || !snap.valid ||
+        game_textures == NULL || game_face_textures == NULL)
+        return;
+
+    for (i = 1; i < HWR_EXPLODE_FACES_COUNT; i++) {
+        struct HwrExplodeFace *ef = &ex_faces[i];
+        int type = ef->Type;
+        int quad = (type == 2 || type == 4 || type == 6);
+        int absolute = (type == 3 || type == 4);
+        int npt = quad ? 4 : 3;
+        int cxs[4], cys[4], czs[4], k, base;
+        uint8_t cu[4], cv[4], page = 0;
+
+        if (ef->Timer == 0 || type < 1 || type > 6)
+            continue;
+        if (face_vert_count + npt > HWR_FACE_MAX_VERTS ||
+            face_index_count + (quad ? 6 : 3) > HWR_FACE_MAX_INDEX)
+            return;
+
+        {
+            int ox[4] = { ef->X0, ef->X1, ef->X2, ef->X3 };
+            int oy[4] = { ef->Y0, ef->Y1, ef->Y2, ef->Y3 };
+            int oz[4] = { ef->Z0, ef->Z1, ef->Z2, ef->Z3 };
+            int bx = absolute ? 0 : ef->X;
+            int by = absolute ? 0 : ef->Y;
+            int bz = absolute ? 0 : ef->Z;
+            for (k = 0; k < npt; k++) {
+                cxs[k] = bx + ox[k];
+                cys[k] = by + oy[k] - snap.yc;   /* extra -yc: see note above */
+                czs[k] = bz + oz[k];
+            }
+        }
+
+        if (quad) {
+            int idx = ef->Texture;
+            struct HwrFloorTex *tx;
+            if (idx < 0 || idx >= game_textures_limit) idx = 0;
+            tx = &game_textures[idx];
+            page = tx->Page;
+            /* set_floor_texture_uv: corner c_n <- TMap(n+1). */
+            cu[0]=tx->TMapX1; cv[0]=tx->TMapY1;
+            cu[1]=tx->TMapX2; cv[1]=tx->TMapY2;
+            cu[2]=tx->TMapX3; cv[2]=tx->TMapY3;
+            cu[3]=tx->TMapX4; cv[3]=tx->TMapY4;
+        } else {
+            int idx = ef->Texture;
+            struct HwrFaceTex *tx;
+            if (idx < 0 || idx >= face_textures_limit) idx = 0;
+            tx = &game_face_textures[idx];
+            page = tx->Page;
+            /* draw_ex_face odd types: c0<-TMap1, c1<-TMap2, c2<-TMap3. */
+            cu[0]=tx->TMapX1; cv[0]=tx->TMapY1;
+            cu[1]=tx->TMapX2; cv[1]=tx->TMapY2;
+            cu[2]=tx->TMapX3; cv[2]=tx->TMapY3;
+        }
+
+        base = face_vert_count;
+        for (k = 0; k < npt; k++)
+            face_emit_vert(cxs[k], cys[k], czs[k], cu[k], cv[k], page, 255,
+                face_scrd((float)cxs[k], (float)cys[k], (float)czs[k]), 0);
+
+        if (quad) {
+            /* two tris (c0,c1,c2)+(c1,c2,c3), matching draw_ex_face's quad. */
+            face_index[face_index_count++] = base + 0;
+            face_index[face_index_count++] = base + 1;
+            face_index[face_index_count++] = base + 2;
+            face_index[face_index_count++] = base + 1;
+            face_index[face_index_count++] = base + 2;
+            face_index[face_index_count++] = base + 3;
+        } else {
+            face_index[face_index_count++] = base + 0;
+            face_index[face_index_count++] = base + 1;
+            face_index[face_index_count++] = base + 2;
+        }
+    }
+}
 
 static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
 {
@@ -1840,6 +2379,13 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
                 sd[k] = face_scrd((float)wx[k], (float)wy[k], (float)wz[k]);
             }
 
+            /* Full emissive for face modes SW renders at fixed brightness
+             * regardless of scene lighting (window glass + raw texture
+             * blits - see hwr_mode_is_emissive). */
+            uint8_t em[4] = {0, 0, 0, 0};
+            if (hwr_mode_is_emissive(fc->Flags))
+                em[0] = em[1] = em[2] = em[3] = 255;
+
             /* Quad diagonal is PN1-PN2, matching draw_object_face4d_textrd:
              * triangles (PN0,PN2,PN1) + (PN3,PN1,PN2). A naive (0,1,2)+(0,2,3)
              * fan splits the wrong diagonal and leaves triangular gaps. */
@@ -1849,10 +2395,10 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
                  * stay textured. */
                 uint8_t epg = obj_transp ? (uint8_t)254 : pg;
                 base = trans_vert_count;
-                trans_emit_vert(wx[0], wy[0], wz[0], u0, v0c, epg, 200, sd[0]);
-                trans_emit_vert(wx[1], wy[1], wz[1], u1, v1c, epg, 200, sd[1]);
-                trans_emit_vert(wx[2], wy[2], wz[2], u2, v2c, epg, 200, sd[2]);
-                trans_emit_vert(wx[3], wy[3], wz[3], u3, v3c, epg, 200, sd[3]);
+                trans_emit_vert(wx[0], wy[0], wz[0], u0, v0c, epg, 200, sd[0], em[0]);
+                trans_emit_vert(wx[1], wy[1], wz[1], u1, v1c, epg, 200, sd[1], em[1]);
+                trans_emit_vert(wx[2], wy[2], wz[2], u2, v2c, epg, 200, sd[2], em[2]);
+                trans_emit_vert(wx[3], wy[3], wz[3], u3, v3c, epg, 200, sd[3], em[3]);
                 trans_index[trans_index_count++] = base + 0;
                 trans_index[trans_index_count++] = base + 2;
                 trans_index[trans_index_count++] = base + 1;
@@ -1861,10 +2407,10 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
                 trans_index[trans_index_count++] = base + 2;
             } else {
                 base = face_vert_count;
-                face_emit_vert(wx[0], wy[0], wz[0], u0, v0c, pg, 200, sd[0]);
-                face_emit_vert(wx[1], wy[1], wz[1], u1, v1c, pg, 200, sd[1]);
-                face_emit_vert(wx[2], wy[2], wz[2], u2, v2c, pg, 200, sd[2]);
-                face_emit_vert(wx[3], wy[3], wz[3], u3, v3c, pg, 200, sd[3]);
+                face_emit_vert(wx[0], wy[0], wz[0], u0, v0c, pg, 200, sd[0], em[0]);
+                face_emit_vert(wx[1], wy[1], wz[1], u1, v1c, pg, 200, sd[1], em[1]);
+                face_emit_vert(wx[2], wy[2], wz[2], u2, v2c, pg, 200, sd[2], em[2]);
+                face_emit_vert(wx[3], wy[3], wz[3], u3, v3c, pg, 200, sd[3], em[3]);
                 face_index[face_index_count++] = base + 0;
                 face_index[face_index_count++] = base + 2;
                 face_index[face_index_count++] = base + 1;
@@ -1977,20 +2523,25 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
                 sd[k] = face_scrd((float)wx[k], (float)wy[k], (float)wz[k]);
             }
 
+            /* See the face4 loop above / hwr_mode_is_emissive. */
+            uint8_t em3[3] = {0, 0, 0};
+            if (hwr_mode_is_emissive(fc->Flags))
+                em3[0] = em3[1] = em3[2] = 255;
+
             if (is_transp) {
                 uint8_t epg = obj_transp ? (uint8_t)254 : pg;
                 base = trans_vert_count;
-                trans_emit_vert(wx[0], wy[0], wz[0], u0, v0c, epg, 200, sd[0]);
-                trans_emit_vert(wx[1], wy[1], wz[1], u1, v1c, epg, 200, sd[1]);
-                trans_emit_vert(wx[2], wy[2], wz[2], u2, v2c, epg, 200, sd[2]);
+                trans_emit_vert(wx[0], wy[0], wz[0], u0, v0c, epg, 200, sd[0], em3[0]);
+                trans_emit_vert(wx[1], wy[1], wz[1], u1, v1c, epg, 200, sd[1], em3[1]);
+                trans_emit_vert(wx[2], wy[2], wz[2], u2, v2c, epg, 200, sd[2], em3[2]);
                 trans_index[trans_index_count++] = base + 0;
                 trans_index[trans_index_count++] = base + 1;
                 trans_index[trans_index_count++] = base + 2;
             } else {
                 base = face_vert_count;
-                face_emit_vert(wx[0], wy[0], wz[0], u0, v0c, pg, 200, sd[0]);
-                face_emit_vert(wx[1], wy[1], wz[1], u1, v1c, pg, 200, sd[1]);
-                face_emit_vert(wx[2], wy[2], wz[2], u2, v2c, pg, 200, sd[2]);
+                face_emit_vert(wx[0], wy[0], wz[0], u0, v0c, pg, 200, sd[0], em3[0]);
+                face_emit_vert(wx[1], wy[1], wz[1], u1, v1c, pg, 200, sd[1], em3[1]);
+                face_emit_vert(wx[2], wy[2], wz[2], u2, v2c, pg, 200, sd[2], em3[2]);
                 face_index[face_index_count++] = base + 0;
                 face_index[face_index_count++] = base + 1;
                 face_index[face_index_count++] = base + 2;
@@ -2002,6 +2553,12 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
      * times per frame (sun shadow pass + main face pass), so clearing here would
      * leave later calls with an empty mask -> flicker. It is cleared once per
      * frame at the top of process_engine_unk3() (game.c), before the build. */
+
+    /* Explosion crater decals + shatter fragments ride the opaque face batch
+     * (index-0 cutout, depth-write, scene lighting). Appended last so they
+     * overlay the base floor/faces already emitted this pass. */
+    emit_floor_damage_decals();
+    emit_explode_faces();
 
     out->verts = face_verts;
     out->vert_count = face_vert_count;
@@ -2121,6 +2678,7 @@ static int sw_get_lights(void *ctx, HwrLight *out, int max)
             for (o = 1; o < obj_snap_count; o++) {
                 long ddx, ddz;
                 if (!obj_snap[o].is_vehicle) continue;
+                if (!obj_snap[o].has_passengers) continue;  /* empty cars get no lights */
                 ddx = (long)obj_snap[o].tx - veh_cull_cx;
                 ddz = (long)obj_snap[o].tz - veh_cull_cz;
                 if (ddx*ddx + ddz*ddz <= VEH_CULL_RANGE2) nv++;
@@ -2128,6 +2686,27 @@ static int sw_get_lights(void *ctx, HwrLight *out, int max)
             veh_reserve = nv * 4;                      /* 2 headlights + 2 tails per car */
             if (veh_reserve > 32) veh_reserve = 32;    /* cap: ~8 nearest cars */
         }
+    }
+
+    /* Reserve slots for nearby fire lights so the dense map lights don't fill
+     * all 64 and starve them. Same idea as veh_reserve.
+     *
+     * Use the SAME forward-shifted cull disc as the vehicles (veh_cull_cx/cz,
+     * VEH_CULL_RANGE2), NOT a small disc around snap.xc/zc: the camera is
+     * angled and looks forward, so the visible ground extends far beyond a few
+     * tiles from the eye. A tight disc centred on the eye culls the fires in
+     * the far half of the screen — they'd pop in only as you moved toward them.
+     * The shifted disc covers the whole visible play area (near edge at the
+     * viewer, reaching well into the scene). */
+    int fire_reserve = 0;
+    {
+        int fi;
+        for (fi = 0; fi < hwr_firelight_count; fi++) {
+            long ddx = (long)hwr_firelights[fi].x - veh_cull_cx;
+            long ddz = (long)hwr_firelights[fi].z - veh_cull_cz;
+            if (ddx*ddx + ddz*ddz <= VEH_CULL_RANGE2) fire_reserve++;
+        }
+        if (fire_reserve > 16) fire_reserve = 16;      /* cap */
     }
 
     /* --- Debug: dump all light IDs when light_debug is enabled --- */
@@ -2254,19 +2833,51 @@ static int sw_get_lights(void *ctx, HwrLight *out, int max)
     for (i = 1; i < (int)next_full_light; i++) {
         struct HwrFullLight *fl = &game_full_lights[i];
         int dx, dz, d2, worst;
-        /* Use TrueIntensity (stable, pre-animation) for selection so lights
-         * don't pop in/out of the 64-slot uniform when ASM_unkn_update_lights
-         * oscillates their animated Intensity.  The output loop below sets
-         * radius=0 when Intensity==0 so the shader silently skips dimmed lights. */
+        /* Intensity==0 is the engine's live on/off signal (a destroyed lamp's
+         * Command sets it to 0 immediately; see hwr_debug.c's light-label
+         * overlay, which uses the same check). TrueIntensity is a separate
+         * stable pre-animation baseline used below for radius/brightness so
+         * flicker doesn't pop lights in/out of the 64-slot uniform frame to
+         * frame — but it is NOT necessarily zeroed by destruction, so relying
+         * on it alone let dead lamps keep rendering at full baseline
+         * brightness forever. Check both. */
+        if (fl->Intensity == 0)
+            continue;
         if (fl->TrueIntensity == 0)
             continue;
         if (fl->TrueIntensity < 0 && sstr <= 0.0f)
             continue;
+
+        /* Some lamp fixtures chain two FullLight records at (almost) the exact
+         * same position (see the LightHead->NextFull traversal above — a lamp
+         * Thing can own more than one light in its chain). Rendering both as
+         * separate point lights doubles the brightness at one spot, which
+         * reads as "two overlapping lights" on a single lamp — most visible
+         * now that building_radius is tight enough to show the doubled core
+         * distinctly instead of blending into a wide pool. Skip a light if an
+         * already-selected one sits within ~1/8 tile (32 PRC units) of it in
+         * all three axes; only the first (closer-processed) one is kept. */
+        {
+            int dup = 0;
+            for (j = 0; j < nnearest; j++) {
+                struct HwrFullLight *ofl = &game_full_lights[nearest[j].idx];
+                int odx = (int)fl->X - (int)ofl->X;
+                int ody = (int)fl->Y - (int)ofl->Y;
+                int odz = (int)fl->Z - (int)ofl->Z;
+                if (odx > -32 && odx < 32 && ody > -32 && ody < 32 &&
+                    odz > -32 && odz < 32) {
+                    dup = 1;
+                    break;
+                }
+            }
+            if (dup) continue;
+        }
+
         dx = (int)fl->X - cx;
         dz = (int)fl->Z - cz;
         d2 = dx*dx + dz*dz;
 
-        if (nnearest < max - veh_reserve) {
+        if (nnearest < max - veh_reserve - fire_reserve) {
             nearest[nnearest].idx   = i;
             nearest[nnearest].dist2 = d2;
             nnearest++;
@@ -2384,8 +2995,8 @@ static int sw_get_lights(void *ctx, HwrLight *out, int max)
             float tx, ty, tz;
             long ddx, ddz;
             int s;
-            if (!obj_snap[o].is_vehicle)
-                continue;
+            if (!obj_snap[o].is_vehicle || !obj_snap[o].has_passengers)
+                continue;   /* no lights for non-vehicles or empty vehicles */
             ddx = (long)obj_snap[o].tx - veh_cull_cx;
             ddz = (long)obj_snap[o].tz - veh_cull_cz;
             if (ddx*ddx + ddz*ddz > VEH_CULL_RANGE2)
@@ -2444,6 +3055,43 @@ static int sw_get_lights(void *ctx, HwrLight *out, int max)
         hwr_sw_vehicle_lights = nnearest - veh_light_start;
     }
 
+    /* --- Fire dynamic lights ----------------------------------------------
+     * A warm, flickering round pool per burning tile (see hwr_firelight_*).
+     * Reproduces the SW apply_full_light ground glow that the static
+     * game_full_lights scan above cannot see. Distance-culled to the same
+     * forward-shifted disc used for the reserve count (covers the visible
+     * play area — see the reserve comment above). */
+    {
+        HwrLightDefaults fld = hwr_lights_defaults();
+        if (fld.firelight_enable) {
+            float radius_scale = fld.firelight_radius / 21.0f;
+            float base_dist2   = 4194304.0f * radius_scale;
+            int fi;
+            for (fi = 0; fi < hwr_firelight_count && nnearest < max; fi++) {
+                struct HwrFireLight *fli = &hwr_firelights[fi];
+                long ddx = (long)fli->x - veh_cull_cx;
+                long ddz = (long)fli->z - veh_cull_cz;
+                float flick, b;
+                if (ddx*ddx + ddz*ddz > VEH_CULL_RANGE2)
+                    continue;
+                /* Per-light flicker: independent random dim each frame. */
+                flick = 1.0f - fld.firelight_flicker * hwr_flick_rand();
+                b = fld.firelight_brightness * fli->strength * flick;
+                out[nnearest].x = fli->x;
+                out[nnearest].y = fli->y;
+                out[nnearest].z = fli->z;
+                out[nnearest].r = 1.00f * b;   /* warm orange */
+                out[nnearest].g = 0.55f * b;
+                out[nnearest].b = 0.18f * b;
+                out[nnearest].radius = 1.0f;   /* >0 = positive round light */
+                out[nnearest].fdx = 0.0f; out[nnearest].fdz = 0.0f;
+                /* Bigger fires reach a little further; small ones stay tight. */
+                out[nnearest].max_dist2 = base_dist2 * (0.65f + 0.35f * fli->strength);
+                nnearest++;
+            }
+        }
+    }
+
     return nnearest;
 }
 
@@ -2462,13 +3110,19 @@ static const uint8_t *sw_get_palette(void *ctx)
     return (const uint8_t *)display_palette;
 }
 
+/* Pages 4 and 5 host FLIC-animated content (billboard / equipment / cyborg
+ * playback, see anim_type_get_output_buffer in game.c) and are redecoded into
+ * vec_tmap[] every game tick, unlike the other 16 pages of static art. */
+#define HWR_TMAP_ANIM_PAGE0 4
+#define HWR_TMAP_ANIM_PAGE1 5
+
 static int sw_get_texture_pages(void *ctx, HwrTexturePages *out)
 {
     int p;
     (void)ctx;
     if (out == NULL)
         return -1;
-    /* Pack the 18 indexed pages contiguously once; they are static art. */
+    /* Pack the 18 indexed pages contiguously once; most are static art. */
     if (!floor_pages_ready) {
         int any = 0;
         for (p = 0; p < HWR_TMAP_PAGES; p++) {
@@ -2482,6 +3136,15 @@ static int sw_get_texture_pages(void *ctx, HwrTexturePages *out)
         }
         if (any)
             floor_pages_ready = 1;
+    } else {
+        /* Refresh the animated pages every frame so FLIC playback reaches
+         * the GPU texture array (see fl_upload_pages' sub-image refresh). */
+        if (vec_tmap[HWR_TMAP_ANIM_PAGE0] != NULL)
+            memcpy(floor_pages + HWR_TMAP_ANIM_PAGE0 * (HWR_TMAP_DIM * HWR_TMAP_DIM),
+                vec_tmap[HWR_TMAP_ANIM_PAGE0], HWR_TMAP_DIM * HWR_TMAP_DIM);
+        if (vec_tmap[HWR_TMAP_ANIM_PAGE1] != NULL)
+            memcpy(floor_pages + HWR_TMAP_ANIM_PAGE1 * (HWR_TMAP_DIM * HWR_TMAP_DIM),
+                vec_tmap[HWR_TMAP_ANIM_PAGE1], HWR_TMAP_DIM * HWR_TMAP_DIM);
     }
     if (!floor_pages_ready)
         return -1;       /* art not loaded yet; try again next frame */

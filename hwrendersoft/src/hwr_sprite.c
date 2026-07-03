@@ -471,7 +471,10 @@ int hwr_atlas_glow_slot(int variant)
         float cb = (variant == 2) ? 1.0f : (variant == 1 ? 0.15f : 1.0f);
         /* Siren glows brighter than the plain white glow; blue is pushed harder
          * than red since it reads perceptually dimmer and washes out additively. */
-        float vi = (variant == 0) ? 1.0f : (variant == 2 ? 3.5f : 2.0f);
+        HwrLightDefaults gld = hwr_lights_defaults();
+        float vi = (variant == 0) ? gld.glare_headlamp_alpha
+                 : (variant == 2) ? gld.glare_blue_alpha
+                 : gld.glare_red_alpha;
         if (px == NULL)
             return -1;
         for (y = 0; y < GW; y++) {
@@ -646,6 +649,13 @@ static const char *spr_frag_src =
     "    }\n"
     "    light_col = light_col * uGain * uTint + base;\n"
     "    light_col *= clamp(1.0 - shadow, 0.0, 1.0);\n"
+    "    /* Opaque solid sprites (characters, uUnlit==0) and firing sprites\n"
+    "     * (uUnlit==2) floor light_col at 1.0: the SW renderer draws them at their\n"
+    "     * intrinsic per-thing Brightness (delivered here as vShade) WITHOUT\n"
+    "     * multiplying by the dim ground/sun base, so doing so here crushed them\n"
+    "     * far darker than SW. Flooring at 1.0 renders them at c*vShade (SW parity)\n"
+    "     * while point lights / sun still add on top for overbright near lamps. */\n"
+    "    light_col = max(light_col, vec3(1.0));\n"
     "    frag = vec4(c * max(light_col, 0.0) * vShade, uAlpha);\n"
     "}\n";
 
@@ -668,6 +678,7 @@ static const char *shadow_vert_src =
     "    float fb = (uD10*dx + uD14*dz) / 65536.0;\n"
     "    float fc = (uD1C*dy - uD18*fb) / 65536.0;\n"
     "    float scrd = (uD18*dy + uD1C*fb) / 65536.0;\n"
+    "    float scrd_raw = scrd;\n"  /* raw depth, matches CPU face_scrd() */
     "    if (uPersp == 5 && scrd > 1024.0)\n"
     "        scrd = 16384.0*scrd/(scrd + 16384.0);\n"
     "    float shx = uScale*fa / 2048.0;\n"
@@ -676,7 +687,12 @@ static const char *shadow_vert_src =
     "        shx = shx*(16384.0 - scrd) / 16384.0;\n"
     "        shy = shy*(16384.0 - scrd) / 16384.0;\n"
     "    }\n"
-    "    gl_Position = vec4((uCentre.x + shx)/uCentre.x - 1.0, 1.0 - (uCentre.y - shy)/uCentre.y, 0.0, 1.0);\n"
+    "    float ndc_z = clamp(scrd_raw / 16384.0 - 0.01, -1.0, 1.0);\n"  /* bias so it
+                                        reliably beats the floor's own depth despite
+                                        per-frame animation jitter in the sprite's
+                                        reported y/height (ground_y wobbles a little
+                                        each walk-cycle frame even with a still camera) */
+    "    gl_Position = vec4((uCentre.x + shx)/uCentre.x - 1.0, 1.0 - (uCentre.y - shy)/uCentre.y, ndc_z, 1.0);\n"
     "    vUV = aUV;\n"
     "}\n";
 
@@ -713,6 +729,7 @@ static const char *psh_vert_src =
     "    float fb = (uD10*dx + uD14*dz) / 65536.0;\n"
     "    float fc = (uD1C*dy - uD18*fb) / 65536.0;\n"
     "    float scrd = (uD18*dy + uD1C*fb) / 65536.0;\n"
+    "    float scrd_raw = scrd;\n"  /* raw depth, matches CPU face_scrd() */
     "    if (uPersp == 5 && scrd > 1024.0)\n"
     "        scrd = 16384.0*scrd/(scrd + 16384.0);\n"
     "    float shx = uScale*fa / 2048.0;\n"
@@ -721,7 +738,12 @@ static const char *psh_vert_src =
     "        shx = shx*(16384.0 - scrd) / 16384.0;\n"
     "        shy = shy*(16384.0 - scrd) / 16384.0;\n"
     "    }\n"
-    "    gl_Position = vec4((uCentre.x + shx)/uCentre.x - 1.0, 1.0 - (uCentre.y - shy)/uCentre.y, 0.0, 1.0);\n"
+    "    float ndc_z = clamp(scrd_raw / 16384.0 - 0.01, -1.0, 1.0);\n"  /* bias so it
+                                        reliably beats the floor's own depth despite
+                                        per-frame animation jitter in the sprite's
+                                        reported y/height (ground_y wobbles a little
+                                        each walk-cycle frame even with a still camera) */
+    "    gl_Position = vec4((uCentre.x + shx)/uCentre.x - 1.0, 1.0 - (uCentre.y - shy)/uCentre.y, ndc_z, 1.0);\n"
     "    vUV = aUV;\n"
     "    vOpacity = aOpacity;\n"
     "}\n";
@@ -1082,7 +1104,7 @@ static void spr_setup_program(const HwrCamera *cam,
  * flagged HWR_BILLBOARD_TRANSLUCENT). Shared by the opaque and translucent
  * sprite passes so they stay in sync. */
 static void spr_build(HwrBillboard *billboards, int nbill, const HwrCamera *camp,
-    int want_translucent, int want_additive)
+    int want_translucent, int want_additive, int want_unlit)
 {
     HwrCamera cam = *camp;
     int i;
@@ -1106,6 +1128,11 @@ static void spr_build(HwrBillboard *billboards, int nbill, const HwrCamera *camp
         if (want_additive >= 0 &&
             ((bb->flags & HWR_BILLBOARD_ADDITIVE) != 0) != want_additive)
             continue;
+        /* want_unlit: -1 = don't care, 0 = scene-lit only, 1 = unlit only.
+         * Used to split the opaque pass so firing sprites bypass lighting. */
+        if (want_unlit >= 0 &&
+            ((bb->flags & HWR_BILLBOARD_UNLIT) != 0) != want_unlit)
+            continue;
 
         hwr_atlas_uv(bb->sprite, &u0, &v0, &u1, &v1);
         hwr_atlas_size(bb->sprite, &sw, &sh);
@@ -1126,11 +1153,12 @@ static void spr_build(HwrBillboard *billboards, int nbill, const HwrCamera *camp
 
         shade = (float)bb->shade / 48.0f;
         if (shade > 1.0f) shade = 1.0f;
-        /* Opaque sprites keep a 0.15 floor so people/objects never go pitch
-         * black; translucent effects may fade all the way to 0 (smoke fade-out,
-         * where shade drives the alpha). */
-        if (shade < 0.15f && !(bb->flags & HWR_BILLBOARD_TRANSLUCENT))
-            shade = 0.15f;
+        /* Opaque sprites keep a floor so characters in shaded areas still pick up
+         * the scene's dynamic ambient/sun light instead of being crushed down to
+         * the legacy SW renderer's own (much darker) minimum. Translucent effects
+         * may still fade all the way to 0 (smoke fade-out, alpha-driven). */
+        if (shade < 0.45f && !(bb->flags & HWR_BILLBOARD_TRANSLUCENT))
+            shade = 0.45f;
         if (shade < 0.0f) shade = 0.0f;
 
         {
@@ -1206,28 +1234,46 @@ int hwr_sprites_render(const unsigned char *pal8, int filter_linear)
         return 0;
     }
 
-    /* Build the opaque billboards (translucent ones go to the Phase 8 pass);
-     * when that pass is disabled, draw everything here so nothing vanishes. */
+    /* Opaque pass — two sub-passes so scene lighting doesn't darken sprites
+     * with HWR_BILLBOARD_UNLIT (e.g. character firing frames with muzzle flash).
+     * When the translucent pass is disabled, draw everything in one call (-1). */
     (void)i;
-    spr_build(billboards, nbill, &cam, spr_tr_enable ? 0 : -1, -1);
-
-    if (spr_vcount <= 0)
-        return 0;
-
-    /* Upload VBO/EBO */
-    glBindVertexArray(spr_vao);
-    glBindBuffer(GL_ARRAY_BUFFER, spr_vbo);
-    glBufferData(GL_ARRAY_BUFFER,
-        (GLsizeiptr)spr_vcount * SPR_VERT_STRIDE, spr_vbuf, GL_STREAM_DRAW);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, spr_ebo);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
-        (GLsizeiptr)spr_icount * sizeof(uint32_t), spr_ibuf, GL_STREAM_DRAW);
-
-    /* Setup program and draw */
     spr_setup_program(&cam, s);
-    glDrawElements(GL_TRIANGLES, spr_icount, GL_UNSIGNED_INT, (void *)0);
-    glBindVertexArray(0);
+    glBindVertexArray(spr_vao);
 
+    if (!spr_tr_enable) {
+        /* All sprites, unlit=0 (legacy path — translucent pass disabled). */
+        spr_build(billboards, nbill, &cam, -1, -1, -1);
+        if (spr_vcount > 0) {
+            glBindBuffer(GL_ARRAY_BUFFER, spr_vbo);
+            glBufferData(GL_ARRAY_BUFFER,
+                (GLsizeiptr)spr_vcount * SPR_VERT_STRIDE, spr_vbuf, GL_STREAM_DRAW);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, spr_ebo);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                (GLsizeiptr)spr_icount * sizeof(uint32_t), spr_ibuf, GL_STREAM_DRAW);
+            glDrawElements(GL_TRIANGLES, spr_icount, GL_UNSIGNED_INT, (void *)0);
+        }
+    } else {
+        int sub;
+        for (sub = 0; sub < 2; sub++) {
+            /* sub 0: scene-lit (unlit=0), sub 1: self-lit (unlit=1, firing/muzzle) */
+            spr_build(billboards, nbill, &cam, 0, -1, sub);
+            if (spr_vcount <= 0) continue;
+            /* sub 0 → scene-lit (uUnlit=0); sub 1 → firing full-bright (uUnlit=2).
+             * uUnlit=1 is reserved for translucent effects (shade drives alpha). */
+            glUniform1i(spr_loc_unlit, sub == 1 ? 2 : 0);
+            glBindBuffer(GL_ARRAY_BUFFER, spr_vbo);
+            glBufferData(GL_ARRAY_BUFFER,
+                (GLsizeiptr)spr_vcount * SPR_VERT_STRIDE, spr_vbuf, GL_STREAM_DRAW);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, spr_ebo);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                (GLsizeiptr)spr_icount * sizeof(uint32_t), spr_ibuf, GL_STREAM_DRAW);
+            glDrawElements(GL_TRIANGLES, spr_icount, GL_UNSIGNED_INT, (void *)0);
+        }
+        glUniform1i(spr_loc_unlit, 0);   /* restore for safety */
+    }
+
+    glBindVertexArray(0);
     hwr_gl_check("hwr_sprites_render");
     return 1;
 }
@@ -1298,7 +1344,7 @@ int hwr_sprites_trans_render(const unsigned char *pal8, int filter_linear)
          * for its blend-mode subset. */
         for (pass = 0; pass < 2; pass++) {
             int want_additive = pass;   /* 0 = alpha-over, 1 = additive */
-            spr_build(billboards, nbill, &cam, 1, want_additive);
+            spr_build(billboards, nbill, &cam, 1, want_additive, -1);
             if (spr_vcount <= 0)
                 continue;
 
@@ -1366,7 +1412,13 @@ int hwr_shadows_render(void)
     {
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glDepthFunc(0x0207); /* GL_ALWAYS — draws on floor, occluded by buildings */
+        /* GL_LEQUAL (not GL_ALWAYS): the floor pass already wrote depth for every
+         * elevation it drew, including upper floors/roofs. Without testing here a
+         * ground-level shadow blob draws through any higher floor slab nearer the
+         * camera at that screen pixel, since nothing stops it from painting over
+         * already-resolved closer geometry. depthMask stays off so the shadow
+         * itself still doesn't occlude anything drawn after it. */
+        glDepthFunc(0x0203); /* GL_LEQUAL */
         glDepthMask(GL_FALSE);
         glUseProgram(shd_prog);
         glUniform1f(shd_loc_d10, cam.d10);
@@ -1587,7 +1639,7 @@ int hwr_shadows_render(void)
         if (psh_vc > 0) {
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            glDepthFunc(0x0207); /* GL_ALWAYS */
+            glDepthFunc(0x0203); /* GL_LEQUAL — see blob shadow pass above */
             glDepthMask(GL_FALSE);
             glUseProgram(psh_prog);
             glUniform1f(psh_loc_d10, cam.d10);
