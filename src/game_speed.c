@@ -281,6 +281,16 @@ void draw_fps_counter(void)
         return;
     snprintf(msg, sizeof(msg), "FPS %d  TPS %d", fps_display_val, fps_logic_val);
     draw_text(8, 8, msg, colour_lookup[ColLU_WHITE]);
+    {
+        /* Report the most recent building whose Thing Y moved (hovering/animating
+         * or collapsing) so we can identify the subtype to make dynamic. */
+        extern int hwr_dbg_hover_sub, hwr_dbg_hover_state, hwr_dbg_hover_y;
+        if (hwr_dbg_hover_sub >= 0) {
+            snprintf(msg, sizeof(msg), "MOVING BLD SUB=%d ST=%d Y=%d",
+                hwr_dbg_hover_sub, hwr_dbg_hover_state, hwr_dbg_hover_y);
+            draw_text(8, 20, msg, colour_lookup[ColLU_WHITE]);
+        }
+    }
 }
 
 /**

@@ -39,6 +39,7 @@ extern int fx3d_filter_sprites;
 extern int fx3d_target_fps;
 extern int fx3d_vsync;
 extern int fx3d_show_fps;
+extern int fx3d_debug_things;
 
 /** Command-line overrides; -1 means "not set on the command line", so rules.ini
  *  provides the value. The CLI parser sets these; fx3d_config_finalize() applies

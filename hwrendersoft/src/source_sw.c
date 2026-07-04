@@ -59,6 +59,11 @@ extern uint32_t       render_anim_turn;
  * waft_table2: spatial water wave terms (Flags&0x10). */
 extern const int16_t  waft_table[32];
 extern const int16_t  waft_table2[32];
+/* Render floor flags (enginprops.c); bit 0x02 = RendFlrF_WobblyTerrain: the SW
+ * engine adds waft_table[render_anim_turn&0x1F]>>3 to every vertex Y (whole level
+ * bobs). Mirrored in the HW camera below. */
+extern uint32_t       render_floor_flags;
+#define HWR_RENDFLR_WOBBLY 0x02
 /* 32-bit bit-rotate helpers (bflibrary/bfendian.h), used by the water wobble
  * per-tile phase offset (dvfactor), exactly matching shpoint_compute_coord_y. */
 extern uint32_t       bw_rotl32(uint32_t n, uint8_t c);
@@ -311,6 +316,15 @@ static int      obj_snap_valid = 0;
 static int      obj_snap_prev_valid = 0;
 static HwrM33   snap_local_mats[100]; /* local_mats copy at capture time */
 static HwrM33   snap_local_mats_prev[100]; /* previous turn, for rotation interp */
+
+/* Debug: detect buildings whose Thing Y changes per turn (hovering/animating or
+ * collapsing) and report the most recent one, so we can identify the subtype
+ * that needs the dynamic (Thing-tracked) render path. Shown by draw_fps_counter. */
+int hwr_dbg_hover_sub = -1;
+int hwr_dbg_hover_state = -1;
+int hwr_dbg_hover_y = 0;
+static int32_t hover_lasty[HWR_MAX_SNAP_OBJS];
+static int hover_lasty_valid = 0;
 
 /* Manual struct definitions matching the game's SortSprite / DrawItem / Frame /
  * Element / TbSprite layouts (packed 1-byte, matching the game's headers).
@@ -1459,6 +1473,15 @@ void hwr_sw_capture(void)
                 th = (const struct HwrThingMini *)(things +
                     (int)(uint16_t)obj->ThingNo * HWR_THING_SIZEOF);
             }
+            /* Debug: flag any building whose Thing Y moved since last turn. */
+            if (th != NULL && th->Type == HWR_TT_BUILDING) {
+                if (hover_lasty_valid && hover_lasty[o] != th->Y) {
+                    hwr_dbg_hover_sub = th->SubType;
+                    hwr_dbg_hover_state = th->State;
+                    hwr_dbg_hover_y = th->Y >> 8;
+                }
+                hover_lasty[o] = th->Y;
+            }
             /* Decide which objects are positioned dynamically (Thing pos +
              * rotation matrix) vs the cached MapX/OffsetY/MapZ path. The engine
              * draws these via draw_rot_object/2 from the live Thing position:
@@ -1504,6 +1527,7 @@ void hwr_sw_capture(void)
         }
         obj_snap_count = o;
         obj_snap_valid = 1;
+        hover_lasty_valid = 1;
     }
 
     /* Snapshot explosion/collapse fragments so emit_explode_faces() can
@@ -1752,6 +1776,18 @@ static int sw_get_camera(void *ctx, HwrCamera *out)
         out->cy8 = 8.0f * HWR_LERP_F(p->yc, c->yc);
         out->cz  = HWR_LERP_F(p->zc, c->zc);
 #undef HWR_LERP_F
+        /* Wobbly-terrain levels: the SW engine bobs the whole scene by
+         * waft_table[render_anim_turn&0x1F]>>3 in world Y. Reproduce it here as a
+         * camera Y shift (moves floor+faces+sprites together) and interpolate it
+         * between turns so it's smooth. Scale is tunable. */
+        if (render_floor_flags & HWR_RENDFLR_WOBBLY) {
+            int ic = (int)(render_anim_turn & 0x1F);
+            int ip = (int)((render_anim_turn - 1) & 0x1F);
+            float wc = (float)(waft_table[ic] >> 3);
+            float wp = (float)(waft_table[ip] >> 3);
+            float wob = wp + (wc - wp) * a;
+            out->cy8 -= 8.0f * wob;
+        }
     }
     out->perspective = snap.persp;
     out->view_w = sw_view_w;
@@ -2415,6 +2451,21 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
                     obj_tz = obj_snap_prev[o].tz + (int)((float)dtz * a);
                 }
             }
+        }
+
+        /* Per-object floating bob: SingleObject.field_1C & 0x0100 makes the SW
+         * engine add waft_table[gameturn&0x1F] to the object Y (draw_object_faces).
+         * Reproduce it here (interpolated) so flagged objects (e.g. floating
+         * buildings) hover smoothly. Full waft value, matching the object path. */
+        if ((obj->field_1C & 0x0100) != 0) {
+            int ic = (int)(render_anim_turn & 0x1F);
+            int ip = (int)((render_anim_turn - 1) & 0x1F);
+            float a2 = g_interp_alpha;
+            float wob;
+            if (a2 < 0.0f) a2 = 0.0f;
+            if (a2 > 1.0f) a2 = 1.0f;
+            wob = (float)waft_table[ip] + ((float)waft_table[ic] - (float)waft_table[ip]) * a2;
+            obj_ty += (int)wob;
         }
 
         /* One object can be referenced by several map columns; emit once. */

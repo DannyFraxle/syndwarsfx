@@ -29,6 +29,7 @@ int fx3d_filter_sprites = 0;
 int fx3d_target_fps = 60;
 int fx3d_vsync = 1;
 int fx3d_show_fps = 0;
+int fx3d_debug_things = 0;
 
 int fx3d_cli_aa = -1;
 int fx3d_cli_filter_ground = -1;
@@ -50,6 +51,10 @@ void fx3d_config_finalize(void)
         if (fx3d_target_fps < 0) fx3d_target_fps = 0;
         target_fps = (unsigned short)fx3d_target_fps;
         show_fps_counter = fx3d_show_fps;
+    }
+    {
+        extern TbBool debug_hud_things;   /* thing_debug.c */
+        debug_hud_things = fx3d_debug_things ? true : false;
     }
 #if defined(HAVE_HWRENDER)
     {

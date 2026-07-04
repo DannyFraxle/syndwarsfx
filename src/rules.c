@@ -103,6 +103,7 @@ enum RulesFx3dConfigCmd {
     RFx3dCmd_TargetFPS,
     RFx3dCmd_VSync,
     RFx3dCmd_ShowFPS,
+    RFx3dCmd_DebugThings,
 };
 
 const struct TbNamedEnum rules_conf_fx3d_cmnds[] = {
@@ -113,6 +114,7 @@ const struct TbNamedEnum rules_conf_fx3d_cmnds[] = {
   {"TargetFPS",				RFx3dCmd_TargetFPS},
   {"VSync",					RFx3dCmd_VSync},
   {"ShowFPS",				RFx3dCmd_ShowFPS},
+  {"DebugThings",			RFx3dCmd_DebugThings},
   {NULL,					0},
 };
 
@@ -463,6 +465,11 @@ TbBool read_rules_file(void)
             i = LbIniValueGetNamedEnum(&parser, rules_conf_any_bool);
             if (i <= 0) { CONFWRNLOG("Could not recognize \"%s\" command parameter.", COMMAND_TEXT(cmd_num)); break; }
             fx3d_show_fps = (i == 1);
+            break;
+        case RFx3dCmd_DebugThings:
+            i = LbIniValueGetNamedEnum(&parser, rules_conf_any_bool);
+            if (i <= 0) { CONFWRNLOG("Could not recognize \"%s\" command parameter.", COMMAND_TEXT(cmd_num)); break; }
+            fx3d_debug_things = (i == 1);
             break;
         case 0: // comment
             break;

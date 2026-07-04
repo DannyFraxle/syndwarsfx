@@ -755,6 +755,18 @@ void things_debug_hud(void)
         }
         draw_text(scr_x, scr_y, locstr, colour_lookup[ColLU_WHITE]);
 
+        /* FX3D: prominent Type/SubType/State + live position line, to identify
+         * animated subtypes (e.g. hovering buildings) and whether their Thing Y
+         * moves per turn. Drawn just above the property dump. */
+        {
+            char idstr[96];
+            snprintf(idstr, sizeof(idstr), "TY=%d SUB=%d ST=%d  X=%d Y=%d Z=%d",
+              (int)p_track_thing->Type, (int)p_track_thing->SubType,
+              (int)p_track_thing->State,
+              (int)p_track_thing->X, (int)p_track_thing->Y, (int)p_track_thing->Z);
+            draw_text(scr_x, scr_y - ln, idstr, colour_lookup[ColLU_WHITE]);
+        }
+
         switch (p_track_thing->Type)
         {
         case TT_VEHICLE:
