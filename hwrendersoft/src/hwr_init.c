@@ -30,7 +30,7 @@ const HwrSceneSource *hwr_source = NULL;
 
 static char hwr_error_buf[256] = "no error";
 static int  hwr_ready = 0;
-static HwrConfig hwr_cfg = { 0, 1, 1, 0 };
+static HwrConfig hwr_cfg = { 0, 1, 1, 0, 1 };
 
 void hwr_set_config(const HwrConfig *cfg)
 {
@@ -105,8 +105,8 @@ int hwr_init(void *sdl_window)
         return HWR_ERROR;
     }
 
-    /* Vsync; ignore failure (some drivers reject it). */
-    SDL_GL_SetSwapInterval(1);
+    /* Vsync per config; ignore failure (some drivers reject it). */
+    SDL_GL_SetSwapInterval(hwr_cfg.vsync ? 1 : 0);
 
     glDisable(GL_CULL_FACE);   /* mesh winding is inconsistent in the data */
     glEnable(GL_DEPTH_TEST);

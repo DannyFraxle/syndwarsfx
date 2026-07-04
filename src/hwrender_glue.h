@@ -34,6 +34,12 @@ extern int fx3d_filter_ground;
 extern int fx3d_filter_objects;
 extern int fx3d_filter_sprites;
 
+/** Display frame-rate target (0 = uncapped), vsync on/off, and the FPS overlay
+ *  toggle. Applied by fx3d_config_finalize(). */
+extern int fx3d_target_fps;
+extern int fx3d_vsync;
+extern int fx3d_show_fps;
+
 /** Command-line overrides; -1 means "not set on the command line", so rules.ini
  *  provides the value. The CLI parser sets these; fx3d_config_finalize() applies
  *  them over whatever rules.ini set. */

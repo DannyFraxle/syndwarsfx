@@ -25,6 +25,11 @@ int fx3d_filter_ground = 1;
 int fx3d_filter_objects = 1;
 int fx3d_filter_sprites = 0;
 
+/* Frame-rate: default 60fps target, vsync on, FPS overlay off. */
+int fx3d_target_fps = 60;
+int fx3d_vsync = 1;
+int fx3d_show_fps = 0;
+
 int fx3d_cli_aa = -1;
 int fx3d_cli_filter_ground = -1;
 int fx3d_cli_filter_objects = -1;
@@ -37,6 +42,15 @@ void fx3d_config_finalize(void)
     if (fx3d_cli_filter_ground >= 0)  fx3d_filter_ground = fx3d_cli_filter_ground;
     if (fx3d_cli_filter_objects >= 0) fx3d_filter_objects = fx3d_cli_filter_objects;
     if (fx3d_cli_filter_sprites >= 0) fx3d_filter_sprites = fx3d_cli_filter_sprites;
+
+    /* Publish frame-rate settings to the game-speed layer. */
+    {
+        extern unsigned short target_fps;   /* game_speed.c */
+        extern int show_fps_counter;        /* game_speed.c */
+        if (fx3d_target_fps < 0) fx3d_target_fps = 0;
+        target_fps = (unsigned short)fx3d_target_fps;
+        show_fps_counter = fx3d_show_fps;
+    }
 #if defined(HAVE_HWRENDER)
     {
         /* Publish the MSAA sample count so the GL window is created with a
@@ -252,6 +266,7 @@ TbBool hwrender_startup(int view_w, int view_h)
         cfg.filter_ground  = fx3d_filter_ground;
         cfg.filter_objects = fx3d_filter_objects;
         cfg.filter_sprites = fx3d_filter_sprites;
+        cfg.vsync          = fx3d_vsync;
         hwr_set_config(&cfg);
     }
     if (hwr_init(lbWindow) != HWR_OK) {

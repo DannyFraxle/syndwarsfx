@@ -7179,6 +7179,7 @@ void game_process(void)
         {
             gameturn_animation_advance = true;
             draw_game();
+            draw_fps_counter();
             gameturn_animation_advance = false;
             debug_trace_turn_bound(gameturn);
             update_unkn_changing_colors();

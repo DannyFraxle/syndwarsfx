@@ -19,9 +19,16 @@
 #include "game_speed.h"
 
 #include <assert.h>
+#include <math.h>
+#include <stdio.h>
 #include "bfkeybd.h"
+#include "bfscreen.h"
 #include "bftime.h"
 #include "game.h"
+#include "game_options.h"
+#include "hwrender_glue.h"
+#include "drawtext.h"
+#include "engincolour.h"
 #include "keyboard.h"
 #include "swlog.h"
 
@@ -29,10 +36,47 @@
 
 short frameskip = 0;
 
-// TODO implement separate turns per second, when drawing frames will get separated from game loop
+// Base simulation-tuning rate: all per-turn game values are authored against
+// this rate (16 turns/sec). It does NOT change when the display runs faster;
+// instead the sim is advanced in fractions of a turn (world_dt) - see below.
 ushort game_num_fps = 16;
 
 ushort fifties_per_gameturn = 3;
+
+/* Frame-rate decoupling (FX3D).
+ * target_fps  - desired display/present rate, from the [fx3d] ini (0 = uncapped).
+ * world_dt    - fraction of a base 16Hz turn advanced this sub-tick; continuous
+ *               quantities (movement etc.) scale by this in Phase 1.
+ * dt_units    - whole logical turns elapsed this sub-tick (0 or 1); discrete
+ *               per-turn counters and gameturn advance by this.
+ * bullet_time - global slow-motion multiplier (1.0 = normal), used for the
+ *               explosion bullet-time effect.
+ * These implement "keep the float, round to int handed to the game": world_accum
+ * carries the fraction, dt_units is the integer the game logic consumes. */
+ushort target_fps = 60;
+float  world_dt = 1.0f;
+int    dt_units = 1;
+float  bullet_time = 1.0f;
+
+static float       world_accum = 0.0f;
+static TbClockMSec sim_last_time = 0;
+
+/* Runtime FPS/TPS readout (for the [fx3d] ShowFPS overlay). */
+int  show_fps_counter = 0;
+static int         fps_present_count = 0;
+static int         fps_logic_count = 0;
+static TbClockMSec fps_report_time = 0;
+static int         fps_display_val = 0;
+static int         fps_logic_val = 0;
+
+/* True when the sim should run decoupled from the 16Hz cap: in-engine gameplay
+ * under the HW renderer with a target above the base rate (0 = uncapped). */
+static TbBool sim_fast_mode(void)
+{
+    return hwrender_active()
+        && (ingame.DisplayMode == DpM_ENGINEPLY)
+        && (target_fps == 0 || target_fps > game_num_fps);
+}
 
 /******************************************************************************/
 
@@ -110,16 +154,116 @@ void wait_next_gameturn(void)
 
 TbBool is_game_turn_due(void)
 {
-    // Simulation and display frames are not yet decoupled; advance the sim on
-    // every loop iteration, matching the rate enforced by wait_next_gameturn().
-    return true;
+    // In the classic (non-decoupled) path every loop iteration is a turn; pacing
+    // is handled by wait_next_gameturn(). Preserve that exactly for menus, the
+    // software renderer, pause/loading, etc.
+    if (!sim_fast_mode())
+    {
+        sim_last_time = 0;
+        world_accum = 0.0f;
+        world_dt = bullet_time;
+        dt_units = 1;
+        return true;
+    }
+
+    // Decoupled path: the loop spins at the display rate. Measure real elapsed
+    // time and advance the world by that fraction of a base turn, so gameplay
+    // speed stays identical regardless of the present rate. A whole logical turn
+    // (dt_units) is due only when the accumulator crosses 1.0.
+    {
+        TbClockMSec now = LbTimerClock();
+        long elapsed = (sim_last_time == 0) ? 0 : (long)(now - sim_last_time);
+        float turn_ms = 1000.0f / (float)game_num_fps;
+        sim_last_time = now;
+        if (elapsed < 0)
+            elapsed = 0;
+        if (elapsed > 250)          // hitch guard: never advance more than ~4 turns
+            elapsed = 250;
+        world_dt = ((float)elapsed / turn_ms) * bullet_time;
+        world_accum += world_dt;
+        dt_units = (int)world_accum;
+        world_accum -= (float)dt_units;
+        if (dt_units > 0)
+            fps_logic_count += dt_units;
+    }
+    // Phase 0: run the (unscaled) sim only on whole logical turns, so gameplay
+    // speed is unchanged while presentation runs faster. Phase 1 will move the
+    // sim to every sub-tick and scale it by world_dt.
+    return (dt_units > 0);
 }
 
 void wait_next_displayframe(void)
 {
-    // Until frames are separated from sim turns, pacing the display frame is
-    // the same as pacing the game turn.
-    wait_next_gameturn();
+    ushort fps;
+    static TbClockMSec last_frame = 0;
+    TbClockMSec now, sleep_end, frame_ms;
+
+    // Count every presented frame for the FPS readout.
+    fps_present_count++;
+    now = LbTimerClock();
+    if (fps_report_time == 0)
+        fps_report_time = now;
+    if ((long)(now - fps_report_time) >= 1000)
+    {
+        fps_display_val = fps_present_count;
+        fps_logic_val = fps_logic_count;
+        fps_present_count = 0;
+        fps_logic_count = 0;
+        fps_report_time = now;
+    }
+
+    if (!sim_fast_mode())
+    {
+        // Classic pacing (menus, software renderer, pause, loading).
+        last_frame = 0;
+        wait_next_gameturn();
+        return;
+    }
+
+    // Pacing in fast mode.
+    // When vsync is on, the buffer swap (SDL_GL_SwapWindow) blocks precisely to
+    // the monitor refresh - that IS the frame pace. Adding a software sleep on
+    // top only fights the coarse OS timer (LbTimerClock/LbSleepUntil resolve to
+    // ~15ms), which quantises the frame time and locks the game to ~30fps even
+    // when the GPU is nearly idle. So with vsync on we do not sleep at all and
+    // let the swap set the rate (monitor refresh, e.g. 60/120/144).
+    if (fx3d_vsync)
+    {
+        last_frame = 0;
+        return;
+    }
+
+    // Vsync off: the render rate is the natural limiter. Only software-pace when
+    // an explicit sub-render cap is requested (TargetFPS > 0); 0 = run free.
+    fps = target_fps;
+    if (fps == 0)
+    {
+        last_frame = 0;
+        return;
+    }
+    frame_ms = 1000 / fps;
+    sleep_end = last_frame + frame_ms;
+    // If we missed the target (slowdown), reset and do not sleep.
+    if ((sleep_end < now) || (sleep_end > now + frame_ms))
+        sleep_end = now;
+    LbSleepUntil(sleep_end);
+    last_frame = sleep_end;
+}
+
+/** Draw the FPS/TPS overlay (called from the draw path when ShowFPS is on). */
+void draw_fps_counter(void)
+{
+    char msg[64];
+    if (!show_fps_counter)
+        return;
+    /* Only draw where the engine WScreen/fonts/colours are known valid (same
+     * context as the debug HUD); avoids touching WScreen in menu/intro modes. */
+    if (ingame.DisplayMode != DpM_ENGINEPLY)
+        return;
+    if (lbDisplay.WScreen == NULL)
+        return;
+    snprintf(msg, sizeof(msg), "FPS %d  TPS %d", fps_display_val, fps_logic_val);
+    draw_text(8, 8, msg, colour_lookup[ColLU_WHITE]);
 }
 
 /**

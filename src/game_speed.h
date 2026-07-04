@@ -35,9 +35,23 @@ extern GameTurn prev_gameturn;
 extern ulong turns_delta;
 extern ushort fifties_per_gameturn;
 
-/** Amount of frames per second drawn by the game, and also aount of game
- * turns per second. */
+/** Base simulation-tuning rate (turns/sec) that per-turn game values are
+ * authored against. Stays fixed even when the display runs faster. */
 extern ushort game_num_fps;
+
+/** Desired display/present rate (FX3D), from the [fx3d] ini; 0 = uncapped. */
+extern ushort target_fps;
+/** Fraction of a base 16Hz turn advanced this sub-tick (continuous scaling). */
+extern float world_dt;
+/** Whole logical turns elapsed this sub-tick (discrete per-turn scaling). */
+extern int dt_units;
+/** Global slow-motion multiplier (1.0 = normal); drives explosion bullet-time. */
+extern float bullet_time;
+/** When set, draw the on-screen FPS/TPS readout ([fx3d] ShowFPS). */
+extern int show_fps_counter;
+
+/** Draw the FPS/TPS overlay; no-op unless show_fps_counter is set. */
+void draw_fps_counter(void);
 
 /**
  * Handles game speed control inputs.

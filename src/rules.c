@@ -100,6 +100,9 @@ enum RulesFx3dConfigCmd {
     RFx3dCmd_GroundTextureFilter,
     RFx3dCmd_ObjectTextureFilter,
     RFx3dCmd_SpriteTextureFilter,
+    RFx3dCmd_TargetFPS,
+    RFx3dCmd_VSync,
+    RFx3dCmd_ShowFPS,
 };
 
 const struct TbNamedEnum rules_conf_fx3d_cmnds[] = {
@@ -107,6 +110,9 @@ const struct TbNamedEnum rules_conf_fx3d_cmnds[] = {
   {"GroundTextureFilter",	RFx3dCmd_GroundTextureFilter},
   {"ObjectTextureFilter",	RFx3dCmd_ObjectTextureFilter},
   {"SpriteTextureFilter",	RFx3dCmd_SpriteTextureFilter},
+  {"TargetFPS",				RFx3dCmd_TargetFPS},
+  {"VSync",					RFx3dCmd_VSync},
+  {"ShowFPS",				RFx3dCmd_ShowFPS},
   {NULL,					0},
 };
 
@@ -438,6 +444,25 @@ TbBool read_rules_file(void)
             i = LbIniValueGetNamedEnum(&parser, rules_conf_any_bool);
             if (i <= 0) { CONFWRNLOG("Could not recognize \"%s\" command parameter.", COMMAND_TEXT(cmd_num)); break; }
             fx3d_filter_sprites = (i == 1);
+            break;
+        case RFx3dCmd_TargetFPS:
+            i = LbIniValueGetLongInt(&parser, &k);
+            if (i <= 0) {
+                CONFWRNLOG("Could not read \"%s\" command parameter.", COMMAND_TEXT(cmd_num));
+                break;
+            }
+            fx3d_target_fps = (k >= 0) ? (int)k : 0;
+            CONFDBGLOG("%s %d", COMMAND_TEXT(cmd_num), fx3d_target_fps);
+            break;
+        case RFx3dCmd_VSync:
+            i = LbIniValueGetNamedEnum(&parser, rules_conf_any_bool);
+            if (i <= 0) { CONFWRNLOG("Could not recognize \"%s\" command parameter.", COMMAND_TEXT(cmd_num)); break; }
+            fx3d_vsync = (i == 1);
+            break;
+        case RFx3dCmd_ShowFPS:
+            i = LbIniValueGetNamedEnum(&parser, rules_conf_any_bool);
+            if (i <= 0) { CONFWRNLOG("Could not recognize \"%s\" command parameter.", COMMAND_TEXT(cmd_num)); break; }
+            fx3d_show_fps = (i == 1);
             break;
         case 0: // comment
             break;

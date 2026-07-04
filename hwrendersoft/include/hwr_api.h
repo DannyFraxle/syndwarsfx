@@ -38,6 +38,7 @@ typedef struct {
     int filter_ground;
     int filter_objects;
     int filter_sprites;
+    int vsync;          /* 1 = swap synced to refresh, 0 = off */
 } HwrConfig;
 
 /** Store the renderer configuration. Call before hwr_init() so the MSAA sample
