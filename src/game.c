@@ -7132,9 +7132,15 @@ void game_process(void)
 
     while ( !exit_game )
     {
-        TbBool do_gameturn = is_game_turn_due();
+        // is_game_turn_due() returns true every presented frame in fast mode and
+        // sets new_logical_turn=1 only when a whole 16Hz sim turn is due. The
+        // sim (process_things) and the frame draw run every frame so movement can
+        // be sub-stepped smoothly; input, packets, gameturn and animation stay on
+        // the 16Hz cadence (new_logical_turn) to keep gameplay speed and RNG/event
+        // timing identical.
+        is_game_turn_due();
 
-        if (do_gameturn)
+        if (new_logical_turn)
         {
             process_sound_heap();
             navi2_unkn_counter -= 2;
@@ -7154,10 +7160,17 @@ void game_process(void)
               ((ingame.Flags & GamF_ThermalView) != 0) )
                 LbPaletteSet(display_palette);
             active_flags_general_unkn01 = ingame.Flags;
-            if ((ingame.DisplayMode == DpM_ENGINEPLY)
-              || (ingame.DisplayMode == DpM_UNKN_1)
-              || (ingame.DisplayMode == DpM_UNKN_3B))
-                process_things();
+        }
+
+        // Sim every presented frame; process_things() gates its own discrete
+        // (per-turn) work to new_logical_turn and sub-steps movement by world_dt.
+        if ((ingame.DisplayMode == DpM_ENGINEPLY)
+          || (ingame.DisplayMode == DpM_UNKN_1)
+          || (ingame.DisplayMode == DpM_UNKN_3B))
+            process_things();
+
+        if (new_logical_turn)
+        {
             if (debug_hud_things)
                 things_debug_hud();
             if (ingame.DisplayMode != DpM_PURPLEMNU)
@@ -7165,9 +7178,6 @@ void game_process(void)
             joy_input();
         }
 
-        // Swap before draw_game() so every 60fps presentation fires at a
-        // uniform 16.7 ms interval.  draw_game()'s cost is absorbed by
-        // wait_next_displayframe() rather than pushing the swap deadline.
         display_unlock();
         game_handle_sdl_events();
         display_lock();
@@ -7175,7 +7185,12 @@ void game_process(void)
         if (!skip_redraw_this_turn())
             swap_wscreen();
 
-        if (do_gameturn)
+        // The full software engine draw (draw_game) must run only on a logical
+        // turn: running it every frame makes the building face pass flicker (it
+        // rebuilds the engine draw list / face-suppress capture each call).
+        // Per-frame smoothness will instead come from a lightweight position
+        // recapture between turns (next step), not from re-running draw_game.
+        if (new_logical_turn)
         {
             gameturn_animation_advance = true;
             draw_game();

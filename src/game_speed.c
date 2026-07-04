@@ -56,6 +56,7 @@ ushort fifties_per_gameturn = 3;
 ushort target_fps = 60;
 float  world_dt = 1.0f;
 int    dt_units = 1;
+int    new_logical_turn = 1;
 float  bullet_time = 1.0f;
 
 static float       world_accum = 0.0f;
@@ -163,6 +164,7 @@ TbBool is_game_turn_due(void)
         world_accum = 0.0f;
         world_dt = bullet_time;
         dt_units = 1;
+        new_logical_turn = 1;
         return true;
     }
 
@@ -186,10 +188,12 @@ TbBool is_game_turn_due(void)
         if (dt_units > 0)
             fps_logic_count += dt_units;
     }
-    // Phase 0: run the (unscaled) sim only on whole logical turns, so gameplay
-    // speed is unchanged while presentation runs faster. Phase 1 will move the
-    // sim to every sub-tick and scale it by world_dt.
-    return (dt_units > 0);
+    // Phase 1: the sim runs every presented frame. Continuous quantities scale by
+    // world_dt (the fraction of a base turn elapsed); discrete per-turn logic
+    // (timers, RNG events, gameturn-mask blocks, animation) runs only when a
+    // whole logical turn is due, flagged by new_logical_turn.
+    new_logical_turn = (dt_units > 0);
+    return true;
 }
 
 void wait_next_displayframe(void)

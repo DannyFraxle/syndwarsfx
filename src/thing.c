@@ -1134,6 +1134,14 @@ void process_things(void)
     int i;
     ushort plyr;
 
+    // Frame-rate decoupling: the main loop calls this every presented frame, but
+    // the whole simulation (movement, timers, AI, RNG, gameturn-mask events) is
+    // authored per 16Hz turn. Until per-mover sub-stepping is wired up, run the
+    // entire sim only on a logical turn so gameplay speed and RNG/event timing
+    // stay identical; the extra frames just re-present the same world state.
+    if (!new_logical_turn)
+        return;
+
     for (plyr = 0; plyr < PLAYERS_LIMIT; plyr++)
     {
         PlayerInfo *p_player;

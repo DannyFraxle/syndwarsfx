@@ -45,6 +45,9 @@ extern ushort target_fps;
 extern float world_dt;
 /** Whole logical turns elapsed this sub-tick (discrete per-turn scaling). */
 extern int dt_units;
+/** 1 on frames where a whole logical (16Hz) turn is due: discrete per-turn logic
+ * (timers, RNG events, gameturn-mask blocks, animation) runs only on these. */
+extern int new_logical_turn;
 /** Global slow-motion multiplier (1.0 = normal); drives explosion bullet-time. */
 extern float bullet_time;
 /** When set, draw the on-screen FPS/TPS readout ([fx3d] ShowFPS). */
