@@ -50,6 +50,8 @@ extern int dt_units;
 extern int new_logical_turn;
 /** Global slow-motion multiplier (1.0 = normal); drives explosion bullet-time. */
 extern float bullet_time;
+/** Fraction [0..1] into the current 16Hz turn; renderer interpolation factor. */
+extern float g_interp_alpha;
 /** When set, draw the on-screen FPS/TPS readout ([fx3d] ShowFPS). */
 extern int show_fps_counter;
 

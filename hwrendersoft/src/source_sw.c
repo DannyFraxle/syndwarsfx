@@ -260,14 +260,18 @@ int hwr_sw_vehicle_lights = 0;
 /* Camera snapshot, captured at floor-draw time (when the projection globals hold
  * the engine-view values). Reading the live globals at present time is unsafe -
  * later sub-renders (BAT/billboard) overwrite them. */
-static struct {
+static struct HwrCamSnap {
     int32_t xc, yc, zc;
     int32_t D10, D14, D18, D1C, D3C, D40;
     int32_t scale;
     int     ra, rb;
     int     persp;
     int     valid;
-} snap;
+} snap, snap_prev;   /* snap = latest turn, snap_prev = the turn before it */
+
+/* Renderer interpolation factor [0..1] from game_speed.c: fraction of the way
+ * from snap_prev to snap for the frame being presented. */
+extern float g_interp_alpha;
 
 /* Per-object snapshot of moving-Thing state (position + rotation matrix index),
  * captured at floor-draw time together with the camera so that vehicle faces
@@ -1400,6 +1404,12 @@ void hwr_sw_collect_sprites(void)
 
 void hwr_sw_capture(void)
 {
+    /* Keep the previous turn's camera so the present path can interpolate the
+     * view toward the current one across the frames until the next capture. On
+     * the very first capture there is no prior turn, so mirror the current one. */
+    if (snap.valid)
+        snap_prev = snap;
+
     snap.xc = engn_xc; snap.yc = engn_yc; snap.zc = engn_zc;
     snap.D10 = dword_176D10; snap.D14 = dword_176D14;
     snap.D18 = dword_176D18; snap.D1C = dword_176D1C;
@@ -1408,6 +1418,8 @@ void hwr_sw_capture(void)
     snap.ra = render_area_a; snap.rb = render_area_b;
     snap.persp = game_perspective;
     snap.valid = 1;
+    if (!snap_prev.valid)
+        snap_prev = snap;   /* first turn: no motion to interpolate */
 
     /* Snapshot moving-Thing object state on the same tick as the camera, so the
      * vehicle faces built later (at present time) match this camera frame. */
@@ -1471,11 +1483,31 @@ int hwr_sw_camera_snapshot(int32_t *xc, int32_t *yc, int32_t *zc,
     int32_t *d3c, int32_t *d40, int32_t *scale, int32_t *persp)
 {
     if (!snap.valid) return 0;
-    *xc = snap.xc; *yc = snap.yc; *zc = snap.zc;
-    *d10 = snap.D10; *d14 = snap.D14; *d18 = snap.D18; *d1c = snap.D1C;
-    *d3c = snap.D3C; *d40 = snap.D40;
-    *scale = snap.scale;
-    *persp = snap.persp;
+    {
+        /* Interpolate the view from the previous turn's camera to the current
+         * one by the fraction of the turn elapsed, so scrolling/rotating/zooming
+         * is smooth at the display rate even though the sim updates at 16Hz.
+         * The camera is view-only, so this cannot affect gameplay/determinism. */
+        float a = g_interp_alpha;
+        const struct HwrCamSnap *p = &snap_prev;
+        const struct HwrCamSnap *c = &snap;
+        if (a < 0.0f) a = 0.0f;
+        if (a > 1.0f) a = 1.0f;
+        if (!p->valid) a = 1.0f;
+#define HWR_LERP_I(pv, cv) ((int32_t)((pv) + (int32_t)(((cv) - (pv)) * a)))
+        *xc = HWR_LERP_I(p->xc, c->xc);
+        *yc = HWR_LERP_I(p->yc, c->yc);
+        *zc = HWR_LERP_I(p->zc, c->zc);
+        *d10 = HWR_LERP_I(p->D10, c->D10);
+        *d14 = HWR_LERP_I(p->D14, c->D14);
+        *d18 = HWR_LERP_I(p->D18, c->D18);
+        *d1c = HWR_LERP_I(p->D1C, c->D1C);
+        *d3c = HWR_LERP_I(p->D3C, c->D3C);
+        *d40 = HWR_LERP_I(p->D40, c->D40);
+        *scale = HWR_LERP_I(p->scale, c->scale);
+#undef HWR_LERP_I
+        *persp = snap.persp;
+    }
     return 1;
 }
 
@@ -1659,14 +1691,29 @@ static int sw_get_camera(void *ctx, HwrCamera *out)
     (void)ctx;
     if (out == NULL || !snap.valid || snap.D3C == 0 || snap.D40 == 0)
         return -1;
-    out->d10 = (float)snap.D10; out->d14 = (float)snap.D14;
-    out->d18 = (float)snap.D18; out->d1c = (float)snap.D1C;
-    out->scale    = (float)snap.scale;
-    out->centre_x = (float)snap.D3C;
-    out->centre_y = (float)snap.D40;
-    out->cx  = (float)snap.xc;
-    out->cy8 = (float)(8 * snap.yc);
-    out->cz  = (float)snap.zc;
+    {
+        /* Interpolate the view between the previous turn's camera and the current
+         * one by the fraction of the turn elapsed (g_interp_alpha), so the whole
+         * scene scrolls/rotates/zooms smoothly at the display rate while the sim
+         * stays at 16Hz. The shader transforms world-space floor/face/sprite
+         * geometry by this camera, so smoothing it here smooths everything. The
+         * camera is view-only: no gameplay/determinism impact. */
+        float a = g_interp_alpha;
+        const struct HwrCamSnap *p = snap_prev.valid ? &snap_prev : &snap;
+        const struct HwrCamSnap *c = &snap;
+        if (a < 0.0f) a = 0.0f;
+        if (a > 1.0f) a = 1.0f;
+#define HWR_LERP_F(pv, cv) ((float)(pv) + ((float)(cv) - (float)(pv)) * a)
+        out->d10 = HWR_LERP_F(p->D10, c->D10); out->d14 = HWR_LERP_F(p->D14, c->D14);
+        out->d18 = HWR_LERP_F(p->D18, c->D18); out->d1c = HWR_LERP_F(p->D1C, c->D1C);
+        out->scale    = HWR_LERP_F(p->scale, c->scale);
+        out->centre_x = HWR_LERP_F(p->D3C, c->D3C);
+        out->centre_y = HWR_LERP_F(p->D40, c->D40);
+        out->cx  = HWR_LERP_F(p->xc, c->xc);
+        out->cy8 = 8.0f * HWR_LERP_F(p->yc, c->yc);
+        out->cz  = HWR_LERP_F(p->zc, c->zc);
+#undef HWR_LERP_F
+    }
     out->perspective = snap.persp;
     out->view_w = sw_view_w;
     out->view_h = sw_view_h;

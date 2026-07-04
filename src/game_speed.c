@@ -58,6 +58,11 @@ float  world_dt = 1.0f;
 int    dt_units = 1;
 int    new_logical_turn = 1;
 float  bullet_time = 1.0f;
+/* Fraction [0..1] of the way through the current 16Hz turn, advanced every
+ * presented frame. The hardware renderer uses this to interpolate the camera
+ * (and later objects) between the two most recent turn snapshots for smooth
+ * motion at the display rate. 1.0 = no interpolation (snap to latest). */
+float  g_interp_alpha = 1.0f;
 
 static float       world_accum = 0.0f;
 static TbClockMSec sim_last_time = 0;
@@ -165,6 +170,7 @@ TbBool is_game_turn_due(void)
         world_dt = bullet_time;
         dt_units = 1;
         new_logical_turn = 1;
+        g_interp_alpha = 1.0f;
         return true;
     }
 
@@ -183,6 +189,13 @@ TbBool is_game_turn_due(void)
             elapsed = 250;
         world_dt = ((float)elapsed / turn_ms) * bullet_time;
         world_accum += world_dt;
+        // Interpolation fraction is taken BEFORE consuming whole turns: on a
+        // frame where a turn completes, the render runs before the new snapshot
+        // is captured, so alpha must read ~1.0 (end of the current interval)
+        // rather than resetting to ~0 (which would jerk the view backward).
+        g_interp_alpha = world_accum;
+        if (g_interp_alpha > 1.0f) g_interp_alpha = 1.0f;
+        if (g_interp_alpha < 0.0f) g_interp_alpha = 0.0f;
         dt_units = (int)world_accum;
         world_accum -= (float)dt_units;
         if (dt_units > 0)
