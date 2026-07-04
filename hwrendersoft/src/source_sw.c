@@ -288,16 +288,23 @@ extern float g_interp_alpha;
 #define HWR_TT_BUILDING         0x9    /* enum ThingType TT_BUILDING */
 #define HWR_SubTT_BLD_MGUN      0x20   /* stationary turret (mounted gun) */
 #define HWR_SubTT_BLD_MOVN_ROTOR 0x36  /* rotating machinery part         */
-static struct {
+struct HwrObjSnap {
     int32_t  tx, ty, tz;   /* world position (X>>8, Y>>5 or >>8, Z>>8) at capture */
     int16_t  matx;         /* MatrixIndex, or <=0 for none                        */
     uint8_t  is_dynamic;   /* 1 = position from Thing + matrix (vehicle/turret/rotor) */
     uint8_t  is_vehicle;   /* 1 = TT_VEHICLE — also skip SW-drawn reflective faces    */
     uint8_t  has_passengers; /* 1 = PassengerHead != 0 (vehicle is occupied)         */
-} obj_snap[HWR_MAX_SNAP_OBJS];
+};
+static struct HwrObjSnap obj_snap[HWR_MAX_SNAP_OBJS];
+/* Previous turn's object snapshot, for interpolating dynamic-object (vehicle/
+ * turret/rotor) positions to the display rate. Indexed by object id like above. */
+static struct HwrObjSnap obj_snap_prev[HWR_MAX_SNAP_OBJS];
 static unsigned obj_snap_count = 0;   /* objects captured this frame */
+static unsigned obj_snap_prev_count = 0;
 static int      obj_snap_valid = 0;
+static int      obj_snap_prev_valid = 0;
 static HwrM33   snap_local_mats[100]; /* local_mats copy at capture time */
+static HwrM33   snap_local_mats_prev[100]; /* previous turn, for rotation interp */
 
 /* Manual struct definitions matching the game's SortSprite / DrawItem / Frame /
  * Element / TbSprite layouts (packed 1-byte, matching the game's headers).
@@ -1423,6 +1430,15 @@ void hwr_sw_capture(void)
 
     /* Snapshot moving-Thing object state on the same tick as the camera, so the
      * vehicle faces built later (at present time) match this camera frame. */
+    /* Shift the last snapshot to prev first, so dynamic-object positions can be
+     * interpolated to the display rate between the two most recent turns. */
+    if (obj_snap_valid) {
+        memcpy(obj_snap_prev, obj_snap,
+            (size_t)obj_snap_count * sizeof(obj_snap[0]));
+        memcpy(snap_local_mats_prev, snap_local_mats, sizeof(snap_local_mats));
+        obj_snap_prev_count = obj_snap_count;
+        obj_snap_prev_valid = 1;
+    }
     obj_snap_valid = 0;
     obj_snap_count = 0;
     if (game_objects != NULL && things != NULL) {
@@ -2259,16 +2275,60 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
             obj_tx = obj_snap[o].tx;
             obj_ty = obj_snap[o].ty;
             obj_tz = obj_snap[o].tz;
+            /* Interpolate the position between the previous turn and this one so
+             * vehicles/turrets/rotors move smoothly at the display rate. Rotation
+             * still steps at 16Hz (kept at the current matrix). Skip when there is
+             * no prior snapshot for this object (new/respawned) or when the jump is
+             * too large to be real motion (teleport) - snap in those cases. */
+            if (obj_snap_prev_valid && o < obj_snap_prev_count &&
+                obj_snap_prev[o].is_dynamic && g_interp_alpha < 1.0f) {
+                int dtx = obj_tx - obj_snap_prev[o].tx;
+                int dty = obj_ty - obj_snap_prev[o].ty;
+                int dtz = obj_tz - obj_snap_prev[o].tz;
+                if (abs(dtx) < (2 << 8) && abs(dty) < (2 << 8) && abs(dtz) < (2 << 8)) {
+                    float a = g_interp_alpha;
+                    obj_tx = obj_snap_prev[o].tx + (int)((float)dtx * a);
+                    obj_ty = obj_snap_prev[o].ty + (int)((float)dty * a);
+                    obj_tz = obj_snap_prev[o].tz + (int)((float)dtz * a);
+                }
+            }
             /* Cull by captured tile position. */
             if ((obj_tx >> 8) < x0 || (obj_tx >> 8) > x1 ||
                 (obj_tz >> 8) < z0 || (obj_tz >> 8) > z1)
                 continue;
             if (matx_idx > 0 && matx_idx < (int16_t)next_local_mat) {
-                obj_mat = &snap_local_mats[matx_idx];
+                const HwrM33 *src = &snap_local_mats[matx_idx];
+                HwrM33 mlerp;
+                int did_lerp = 0;
+                /* Interpolate the rotation between the previous turn's matrix and
+                 * this one so cornering is smooth at the display rate. Element-wise
+                 * lerp of the two basis matrices (small per-turn angles) followed by
+                 * the Gram-Schmidt re-orthonormalise inside hwr_reduce_tilt keeps it
+                 * a clean rotation. */
+                if (obj_snap_prev_valid && o < obj_snap_prev_count &&
+                    obj_snap_prev[o].is_dynamic && g_interp_alpha < 1.0f) {
+                    int16_t pmatx = obj_snap_prev[o].matx;
+                    if (pmatx > 0 && pmatx < 100) {
+                        const HwrM33 *pm = &snap_local_mats_prev[pmatx];
+                        float a = g_interp_alpha;
+                        int r, c;
+                        for (r = 0; r < 3; r++)
+                            for (c = 0; c < 3; c++)
+                                mlerp.R[r][c] = (int32_t)((float)pm->R[r][c] +
+                                    ((float)src->R[r][c] - (float)pm->R[r][c]) * a);
+                        src = &mlerp;
+                        did_lerp = 1;
+                    }
+                }
+                obj_mat = src;
                 /* Halve the cornering lean for actual vehicles (not turrets/
-                 * rotors, which don't bank). */
+                 * rotors, which don't bank); this also re-orthonormalises. For
+                 * turrets/rotors, re-orthonormalise the interpolated matrix too. */
                 if (obj_snap[o].is_vehicle) {
-                    hwr_reduce_tilt(obj_mat, &obj_mat_lvl, 0.5f);
+                    hwr_reduce_tilt(src, &obj_mat_lvl, 0.5f);
+                    obj_mat = &obj_mat_lvl;
+                } else if (did_lerp) {
+                    hwr_reduce_tilt(src, &obj_mat_lvl, 1.0f);
                     obj_mat = &obj_mat_lvl;
                 }
             }
