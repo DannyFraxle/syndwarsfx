@@ -213,6 +213,12 @@ struct HwrExplodeFace {
 #define HWR_EXPLODE_FACES_COUNT 1024
 extern struct HwrExplodeFace ex_faces[HWR_EXPLODE_FACES_COUNT];
 extern uint32_t              dont_bother_with_explode_faces;
+/* Snapshots of ex_faces[] for interpolating flying debris / collapse shards to
+ * the display rate: _cap = last captured turn, _prev = the turn before it. */
+static struct HwrExplodeFace ex_faces_cap[HWR_EXPLODE_FACES_COUNT];
+static struct HwrExplodeFace ex_faces_prev[HWR_EXPLODE_FACES_COUNT];
+static int ex_faces_cap_valid = 0;
+static int ex_faces_prev_valid = 0;
 
 extern struct HwrObject     *game_objects;       /* == game_objects        */
 extern unsigned short        next_object;        /* count of objects        */
@@ -1484,6 +1490,13 @@ void hwr_sw_capture(void)
                     ? (*(const int16_t *)((const char *)th + HWR_THING_PASSHEAD) != 0 ? 1 : 0)
                     : 0;
             } else {
+                /* Static object (building/gate/etc.): capture the cached
+                 * MapX/OffsetY/MapZ too so collapsing/animating buildings can be
+                 * interpolated to the display rate the same way. */
+                obj_snap[o].tx = (int32_t)(uint16_t)obj->MapX;
+                obj_snap[o].ty = (int32_t)obj->OffsetY;
+                obj_snap[o].tz = (int32_t)(uint16_t)obj->MapZ;
+                obj_snap[o].matx = 0;
                 obj_snap[o].is_dynamic = 0;
                 obj_snap[o].is_vehicle = 0;
                 obj_snap[o].has_passengers = 0;
@@ -1492,6 +1505,16 @@ void hwr_sw_capture(void)
         obj_snap_count = o;
         obj_snap_valid = 1;
     }
+
+    /* Snapshot explosion/collapse fragments so emit_explode_faces() can
+     * interpolate them to the display rate. Shift the last capture to prev,
+     * then copy the live array into cap. */
+    if (ex_faces_cap_valid) {
+        memcpy(ex_faces_prev, ex_faces_cap, sizeof(ex_faces_prev));
+        ex_faces_prev_valid = 1;
+    }
+    memcpy(ex_faces_cap, ex_faces, sizeof(ex_faces_cap));
+    ex_faces_cap_valid = 1;
 }
 
 int hwr_sw_camera_snapshot(int32_t *xc, int32_t *yc, int32_t *zc,
@@ -2171,10 +2194,40 @@ static void emit_explode_faces(void)
             int bx = absolute ? 0 : ef->X;
             int by = absolute ? 0 : ef->Y;
             int bz = absolute ? 0 : ef->Z;
+            /* Interpolate the fragment's corners between the previous turn and
+             * this one so flying debris / collapsing building shards move
+             * smoothly at the display rate. Same slot must hold the same
+             * fragment (matched by Type + a still-counting-down Timer); a reused
+             * slot or a fresh fragment snaps. */
+            struct HwrExplodeFace *pf = &ex_faces_prev[i];
+            int interp = (ex_faces_prev_valid && g_interp_alpha < 1.0f &&
+                pf->Type == ef->Type && pf->Timer != 0 && pf->Timer > ef->Timer);
+            int pbx = 0, pby = 0, pbz = 0;
+            int pox[4], poy[4], poz[4];
+            float a = g_interp_alpha;
+            if (interp) {
+                pbx = absolute ? 0 : pf->X;
+                pby = absolute ? 0 : pf->Y;
+                pbz = absolute ? 0 : pf->Z;
+                pox[0]=pf->X0; pox[1]=pf->X1; pox[2]=pf->X2; pox[3]=pf->X3;
+                poy[0]=pf->Y0; poy[1]=pf->Y1; poy[2]=pf->Y2; poy[3]=pf->Y3;
+                poz[0]=pf->Z0; poz[1]=pf->Z1; poz[2]=pf->Z2; poz[3]=pf->Z3;
+            }
             for (k = 0; k < npt; k++) {
-                cxs[k] = bx + ox[k];
-                cys[k] = by + oy[k] - snap.yc;   /* extra -yc: see note above */
-                czs[k] = bz + oz[k];
+                int ccx = bx + ox[k];
+                int ccy = by + oy[k];
+                int ccz = bz + oz[k];
+                if (interp) {
+                    int pcx = pbx + pox[k];
+                    int pcy = pby + poy[k];
+                    int pcz = pbz + poz[k];
+                    ccx = pcx + (int)((float)(ccx - pcx) * a);
+                    ccy = pcy + (int)((float)(ccy - pcy) * a);
+                    ccz = pcz + (int)((float)(ccz - pcz) * a);
+                }
+                cxs[k] = ccx;
+                cys[k] = ccy - snap.yc;   /* extra -yc: see note above */
+                czs[k] = ccz;
             }
         }
 
@@ -2347,6 +2400,21 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
             obj_tx = (int)(uint16_t)obj->MapX;
             obj_ty = (int)obj->OffsetY;
             obj_tz = (int)(uint16_t)obj->MapZ;
+            /* Interpolate static-object position too, so collapsing/hovering
+             * buildings move smoothly at the display rate. Only when the prior
+             * snapshot for this object was also static; a large jump snaps. */
+            if (obj_snap_prev_valid && o < obj_snap_prev_count &&
+                !obj_snap_prev[o].is_dynamic && g_interp_alpha < 1.0f) {
+                int dtx = obj_tx - obj_snap_prev[o].tx;
+                int dty = obj_ty - obj_snap_prev[o].ty;
+                int dtz = obj_tz - obj_snap_prev[o].tz;
+                if (abs(dtx) < (2 << 8) && abs(dty) < (2 << 8) && abs(dtz) < (2 << 8)) {
+                    float a = g_interp_alpha;
+                    obj_tx = obj_snap_prev[o].tx + (int)((float)dtx * a);
+                    obj_ty = obj_snap_prev[o].ty + (int)((float)dty * a);
+                    obj_tz = obj_snap_prev[o].tz + (int)((float)dtz * a);
+                }
+            }
         }
 
         /* One object can be referenced by several map columns; emit once. */
