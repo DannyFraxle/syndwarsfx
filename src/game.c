@@ -1854,6 +1854,10 @@ void process_engine_unk3(void)
     /* FX3D: reset the light-glare list; build_glare repopulates it during the
      * build, the FX3D renderer draws them as additive glow billboards. */
     hwr_glare_count = 0;
+    /* FX3D: reset the object-model shadow decal list; draw_object_model_shadow
+     * repopulates it during the build (angled building/vehicle ground shadows),
+     * the FX3D renderer draws them as blended dark decals. */
+    hwr_model_shadow_count = 0;
 
     reset_drawlist();
     ingame.NextRocket = 0;
@@ -7179,17 +7183,23 @@ void game_process(void)
         }
 
         display_unlock();
+        // Pump SDL events, but suppress the screen-refresh idle handler's own
+        // present: this loop presents explicitly below, and a second swap here
+        // would be a second vsync-blocked SwapWindow, halving the frame rate to
+        // the monitor refresh / 2. Sound and other idle handlers still run.
+        screen_idle_swap_enabled = 0;
         game_handle_sdl_events();
+        screen_idle_swap_enabled = 1;
         display_lock();
-
-        if (!skip_redraw_this_turn())
-            swap_wscreen();
 
         // The full software engine draw (draw_game) must run only on a logical
         // turn: running it every frame makes the building face pass flicker (it
         // rebuilds the engine draw list / face-suppress capture each call).
-        // Per-frame smoothness will instead come from a lightweight position
-        // recapture between turns (next step), not from re-running draw_game.
+        // It runs BEFORE the present so that on turn frames the renderer's
+        // snapshot pair is fresh: g_interp_alpha then carries the true leftover
+        // fraction into the new turn instead of clamping at 1.0, which stalled
+        // motion for part of a frame and jumped it the next - a micro-hitch
+        // beating at ~4Hz against 60fps (60Hz vs 16Hz turn boundaries).
         if (new_logical_turn)
         {
             gameturn_animation_advance = true;
@@ -7203,6 +7213,9 @@ void game_process(void)
             render_anim_turn = gameturn;
             scene_post_effect_prepare();
         }
+
+        if (!skip_redraw_this_turn())
+            swap_wscreen();
 
         wait_next_displayframe();
     }

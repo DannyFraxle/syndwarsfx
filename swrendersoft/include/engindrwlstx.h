@@ -128,6 +128,11 @@ extern int engine_hwr_suppress_faces;
 extern int engine_hwr_suppress_sprites;
 extern unsigned char hwr_sprite_skip_mask[512];
 
+/* When nonzero, the SW pixel-block rain/snow post-effect (enginpeff.c) is
+ * skipped so the FX3D hardware renderer can draw weather as its own
+ * alpha-blended GL overlay instead of opaque WScreen pixels. */
+extern int engine_hwr_suppress_rain;
+
 /* FX3D Phase 8: bitset of object indices flagged semi-transparent (deep-radar
  * see-through) this frame. Set during drawlist build in draw_object(); read by
  * the FX3D scene source to route those objects' faces into the blended
@@ -157,6 +162,19 @@ extern int hwr_glare_count;
 extern int hwr_glare_flag_seq[HWR_GLARE_FLAG_MAX];
 extern int hwr_glare_flag_n;
 extern int hwr_glare_flag_pos;
+
+/* FX3D: object-model ground-shadow decals (draw_object_model_shadow - the
+ * angled silhouette shadows cast by matrix'd objects: buildings/temples,
+ * vehicles). Captured during the drawlist build as world-space quads with
+ * their page-4 shadow-texture rect; the FX3D renderer draws them as blended
+ * dark decals on the floor. Corners are a ring (1,2,3,4). */
+#define HWR_MODEL_SHADOW_MAX 128
+struct HwrModelShadow {
+    int x[4], y[4], z[4];          /* absolute world corners (y = 8*alt space) */
+    unsigned char u1, v1, u2, v2;  /* page-4 texture rect (X1,Y1)-(X2,Y2) */
+};
+extern struct HwrModelShadow hwr_model_shadow_list[HWR_MODEL_SHADOW_MAX];
+extern int hwr_model_shadow_count;
 
 extern short word_1A5834;
 extern short word_1A5836;

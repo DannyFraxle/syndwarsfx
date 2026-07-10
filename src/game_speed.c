@@ -21,6 +21,7 @@
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
+#include <SDL.h>
 #include "bfkeybd.h"
 #include "bfscreen.h"
 #include "bftime.h"
@@ -65,7 +66,26 @@ float  bullet_time = 1.0f;
 float  g_interp_alpha = 1.0f;
 
 static float       world_accum = 0.0f;
-static TbClockMSec sim_last_time = 0;
+/* High-resolution timestamp (milliseconds) of the previous sim tick. 0 = not
+ * yet sampled / reset. Deliberately a double driven by the SDL performance
+ * counter, NOT LbTimerClock: the latter is backed by C clock() which resolves
+ * to ~15ms on Windows - far too coarse to measure a sub-frame interval at
+ * 60fps+ (10-16ms). A coarse elapsed makes world_dt (and thus the interpolation
+ * alpha) step in lumps of 0 / 15 / 31 ms, which is exactly the "unsteady and
+ * glitchy" judder seen at high present rates. */
+static double      sim_last_ms = 0.0;
+
+/* Monotonic high-resolution wall clock in milliseconds. Sub-microsecond
+ * precision, so a single frame interval is measured accurately. */
+static double hires_now_ms(void)
+{
+    static Uint64 freq = 0;
+    if (freq == 0)
+        freq = SDL_GetPerformanceFrequency();
+    if (freq == 0)              /* pathological: fall back to the coarse clock */
+        return (double)LbTimerClock();
+    return (double)SDL_GetPerformanceCounter() * 1000.0 / (double)freq;
+}
 
 /* Runtime FPS/TPS readout (for the [fx3d] ShowFPS overlay). */
 int  show_fps_counter = 0;
@@ -74,6 +94,15 @@ static int         fps_logic_count = 0;
 static TbClockMSec fps_report_time = 0;
 static int         fps_display_val = 0;
 static int         fps_logic_val = 0;
+/* Frame-pacing diagnostics (published to the ShowFPS overlay). Measured with the
+ * hi-res clock so we can see jitter directly: worst is the longest present
+ * interval in the last second (a value >> 1000/refresh means a frame blew the
+ * vblank budget - e.g. the heavy 16Hz draw_game turn-frame), avg is the mean. */
+static double      frame_prev_ms = 0.0;
+static double      frame_worst_ms = 0.0;
+static double      frame_sum_ms = 0.0;
+static int         frame_worst_val = 0;   /* published: worst frame ms (rounded) */
+static int         frame_avg_val = 0;     /* published: avg frame ms (rounded) */
 
 /* True when the sim should run decoupled from the 16Hz cap: in-engine gameplay
  * under the HW renderer with a target above the base rate (0 = uncapped). */
@@ -165,7 +194,7 @@ TbBool is_game_turn_due(void)
     // software renderer, pause/loading, etc.
     if (!sim_fast_mode())
     {
-        sim_last_time = 0;
+        sim_last_ms = 0.0;
         world_accum = 0.0f;
         world_dt = bullet_time;
         dt_units = 1;
@@ -179,25 +208,27 @@ TbBool is_game_turn_due(void)
     // speed stays identical regardless of the present rate. A whole logical turn
     // (dt_units) is due only when the accumulator crosses 1.0.
     {
-        TbClockMSec now = LbTimerClock();
-        long elapsed = (sim_last_time == 0) ? 0 : (long)(now - sim_last_time);
+        double now = hires_now_ms();
+        double elapsed = (sim_last_ms == 0.0) ? 0.0 : (now - sim_last_ms);
         float turn_ms = 1000.0f / (float)game_num_fps;
-        sim_last_time = now;
-        if (elapsed < 0)
-            elapsed = 0;
-        if (elapsed > 250)          // hitch guard: never advance more than ~4 turns
-            elapsed = 250;
+        sim_last_ms = now;
+        if (elapsed < 0.0)
+            elapsed = 0.0;
+        if (elapsed > 250.0)        // hitch guard: never advance more than ~4 turns
+            elapsed = 250.0;
         world_dt = ((float)elapsed / turn_ms) * bullet_time;
         world_accum += world_dt;
-        // Interpolation fraction is taken BEFORE consuming whole turns: on a
-        // frame where a turn completes, the render runs before the new snapshot
-        // is captured, so alpha must read ~1.0 (end of the current interval)
-        // rather than resetting to ~0 (which would jerk the view backward).
+        dt_units = (int)world_accum;
+        world_accum -= (float)dt_units;
+        // Interpolation fraction is the leftover AFTER consuming whole turns.
+        // The main loop runs draw_game (which captures the new renderer
+        // snapshot) before the present on turn frames, so the leftover maps
+        // onto the fresh snapshot pair. The previous scheme (alpha taken
+        // pre-consume, clamped to 1.0) discarded the overshoot fraction every
+        // turn boundary - motion stalled then jumped, a ~4Hz micro-hitch.
         g_interp_alpha = world_accum;
         if (g_interp_alpha > 1.0f) g_interp_alpha = 1.0f;
         if (g_interp_alpha < 0.0f) g_interp_alpha = 0.0f;
-        dt_units = (int)world_accum;
-        world_accum -= (float)dt_units;
         if (dt_units > 0)
             fps_logic_count += dt_units;
     }
@@ -218,12 +249,34 @@ void wait_next_displayframe(void)
     // Count every presented frame for the FPS readout.
     fps_present_count++;
     now = LbTimerClock();
+    // Per-frame interval via the hi-res clock, so the overlay can expose pacing
+    // jitter that the coarse 1s counter hides. This is called once per presented
+    // frame, so consecutive samples are the true present interval.
+    {
+        double hnow = hires_now_ms();
+        if (frame_prev_ms != 0.0)
+        {
+            double dms = hnow - frame_prev_ms;
+            if (dms > 0.0 && dms < 1000.0)   // ignore first sample / long stalls
+            {
+                if (dms > frame_worst_ms)
+                    frame_worst_ms = dms;
+                frame_sum_ms += dms;
+            }
+        }
+        frame_prev_ms = hnow;
+    }
     if (fps_report_time == 0)
         fps_report_time = now;
     if ((long)(now - fps_report_time) >= 1000)
     {
         fps_display_val = fps_present_count;
         fps_logic_val = fps_logic_count;
+        frame_worst_val = (int)(frame_worst_ms + 0.5);
+        frame_avg_val = (fps_present_count > 0)
+            ? (int)(frame_sum_ms / (double)fps_present_count + 0.5) : 0;
+        frame_worst_ms = 0.0;
+        frame_sum_ms = 0.0;
         fps_present_count = 0;
         fps_logic_count = 0;
         fps_report_time = now;
@@ -279,7 +332,8 @@ void draw_fps_counter(void)
         return;
     if (lbDisplay.WScreen == NULL)
         return;
-    snprintf(msg, sizeof(msg), "FPS %d  TPS %d", fps_display_val, fps_logic_val);
+    snprintf(msg, sizeof(msg), "FPS %d  TPS %d  ms avg %d worst %d",
+        fps_display_val, fps_logic_val, frame_avg_val, frame_worst_val);
     draw_text(8, 8, msg, colour_lookup[ColLU_WHITE]);
     {
         /* Report the most recent building whose Thing Y moved (hovering/animating

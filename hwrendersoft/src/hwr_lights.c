@@ -39,9 +39,10 @@ static HwrLightDefaults hwr_defaults = {
     21.0f,           /* radius (21 = exact SW inverse-square constant at 34019) */
     2.0f,           /* shadow_strength (heavy anti-light darkening) */
     0.0f,           /* falloff (unused with inverse-square model, kept for compat) */
-    0.0f,           /* ambient — zero: only sun provides base fill */
+    0.55f,          /* ambient — daylight base fill (sun off by default; the
+                     * smoothed baked-Ambient floor shade modulates this) */
     1.0f, 1.0f, 1.0f, /* tint */
-    1.0f,           /* ao (per-vertex geometric occlusion) */
+    1.0f,           /* ao — full strength: applies the baked floor shade/shadows */
     4194304.0f,     /* max_light_dist2 (8 tiles squared in PRCCOORD) */
     0,              /* ssao_enable — off by default (less GPU, no G-buffer) */
     0.016f,         /* ssao_radius (UV) */
@@ -50,10 +51,12 @@ static HwrLightDefaults hwr_defaults = {
     64.0f,          /* ssao_bias (min occluder height, world units) */
     0,              /* ssao_debug */
     /* --- sun (visible highlights, subtle shadows) --- */
-    1,              /* sun_enable */
+    0,              /* sun_enable — OFF by default; baked-Ambient floor shade is
+                     * the default shadow system. Set 1 to use the GL sun shadow map. */
     0.10f,          /* sun_bright */
     0.02f,          /* sun_ambient */
     315.0f,         /* sun_azimuth (NW) */
+    0,              /* sun_auto_azimuth (per-level derive from baked shading; unreliable, off) */
     35.0f,          /* sun_elevation */
     2,              /* sun_pcf (5x5) */
     0.0005f,        /* sun_bias */
@@ -94,6 +97,23 @@ static HwrLightDefaults hwr_defaults = {
     0.30f,          /* firelight_flicker */
     3.0f,           /* firelight_cluster (merge radius, tiles) */
     1,              /* firelight_min_flames (light all clusters) */
+    1.0f,           /* face_ao (1.0 = SW-linear building shade, >1 = darker curve) */
+    0.6f,           /* shade_sat (shadow saturation boost; 0 = plain linear) */
+    1.6f,           /* shadow_depth (baked floor-shadow gamma; 1 = linear SW) */
+    0.3f,           /* sprite_persp_strength (0=distance-flat, 1=full 3D
+                     * perspective; see hwr_billboard_dist_scale in
+                     * hwr_sprite.c). Tune live via [sprites] persp_strength. */
+    468.0f,         /* sprite_persp_zoom_ref (zoom/scale at which sprite size is
+                     * nominal; size ∝ scale/ref. <=0 disables zoom scaling.
+                     * Tune live via [sprites] persp_zoom_ref). */
+    /* --- procedural rain overlay --- */
+    1,              /* rain_enable */
+    0.35f,          /* rain_alpha (translucent) */
+    600.0f,         /* rain_density (columns per screen-height of width) */
+    2.5f,           /* rain_speed (screen-heights/second) */
+    0.6f,           /* rain_width (very thin streaks, pixels) */
+    0.05f,          /* rain_length (fraction of screen height) */
+    0.0f,           /* rain_angle (degrees, 0 = straight down) */
 };
 
 static void table_defaults(void)
@@ -119,7 +139,7 @@ void hwr_lights_clear(void)
 }
 
 /* Section ids for the simple line-by-line parser. */
-enum { SEC_NONE = 0, SEC_LIGHTS, SEC_DEFAULTS, SEC_SSAO, SEC_SUN, SEC_CATEGORIES, SEC_SPRITES, SEC_TRANSP, SEC_GLARE, SEC_FIRELIGHT };
+enum { SEC_NONE = 0, SEC_LIGHTS, SEC_DEFAULTS, SEC_SSAO, SEC_SUN, SEC_CATEGORIES, SEC_SPRITES, SEC_TRANSP, SEC_GLARE, SEC_FIRELIGHT, SEC_RAIN };
 
 static void parse_transp_line(const char *p)
 {
@@ -191,6 +211,34 @@ static void parse_firelight_line(const char *p)
     }
 }
 
+static void parse_rain_line(const char *p)
+{
+    float fv;
+    int iv;
+    if (sscanf(p, "enable = %d", &iv) == 1) {
+        hwr_defaults.rain_enable = (iv != 0) ? 1 : 0;
+    } else if (sscanf(p, "alpha = %f", &fv) == 1) {
+        if (fv < 0.0f) fv = 0.0f;
+        if (fv > 1.0f) fv = 1.0f;
+        hwr_defaults.rain_alpha = fv;
+    } else if (sscanf(p, "density = %f", &fv) == 1) {
+        if (fv < 1.0f) fv = 1.0f;
+        hwr_defaults.rain_density = fv;
+    } else if (sscanf(p, "speed = %f", &fv) == 1) {
+        if (fv < 0.0f) fv = 0.0f;
+        hwr_defaults.rain_speed = fv;
+    } else if (sscanf(p, "width = %f", &fv) == 1) {
+        if (fv < 0.1f) fv = 0.1f;
+        hwr_defaults.rain_width = fv;
+    } else if (sscanf(p, "length = %f", &fv) == 1) {
+        if (fv < 0.0f) fv = 0.0f;
+        if (fv > 1.0f) fv = 1.0f;
+        hwr_defaults.rain_length = fv;
+    } else if (sscanf(p, "angle = %f", &fv) == 1) {
+        hwr_defaults.rain_angle = fv;
+    }
+}
+
 static void parse_sun_line(const char *p)
 {
     float fv;
@@ -207,6 +255,8 @@ static void parse_sun_line(const char *p)
         hwr_defaults.sun_ambient = fv;
     } else if (sscanf(p, "azimuth = %f", &fv) == 1) {
         hwr_defaults.sun_azimuth = fv;
+    } else if (sscanf(p, "auto_azimuth = %d", &iv) == 1) {
+        hwr_defaults.sun_auto_azimuth = (iv != 0);
     } else if (sscanf(p, "elevation = %f", &fv) == 1) {
         if (fv < 0.0f) fv = 0.0f;
         if (fv > 90.0f) fv = 90.0f;
@@ -280,10 +330,29 @@ static void parse_default_line(const char *p)
         hwr_defaults.tint_g = (float)g / 255.0f;
         hwr_defaults.tint_b = (float)b / 255.0f;
     } else if (sscanf(p, "ao = %f", &fv) == 1) {
-        /* 0..100 percent -> 0..1 strength. */
+        /* 0..100 percent -> 0..1 strength; above 100 (up to 300) the baked
+         * shade is raised to a power (darkening curve) for a deeper look. */
         if (fv < 0.0f) fv = 0.0f;
-        if (fv > 100.0f) fv = 100.0f;
+        if (fv > 300.0f) fv = 300.0f;
         hwr_defaults.ao = fv / 100.0f;
+    } else if (sscanf(p, "face_ao = %f", &fv) == 1) {
+        /* Building/object face shade strength: 100 = SW-linear, >100 = power
+         * curve (darker), independent of the floor ao. */
+        if (fv < 0.0f) fv = 0.0f;
+        if (fv > 300.0f) fv = 300.0f;
+        hwr_defaults.face_ao = fv / 100.0f;
+    } else if (sscanf(p, "shade_sat = %f", &fv) == 1) {
+        /* Shadow saturation boost, percent: 0 = plain linear shading,
+         * 60 = SW-like hue-rich darks, 200 = maximum. */
+        if (fv < 0.0f) fv = 0.0f;
+        if (fv > 200.0f) fv = 200.0f;
+        hwr_defaults.shade_sat = fv / 100.0f;
+    } else if (sscanf(p, "shadow_depth = %f", &fv) == 1) {
+        /* Baked floor-shadow gamma, percent: 100 = linear SW Ambient,
+         * >100 = deeper shadows (lit ground unchanged). */
+        if (fv < 50.0f)  fv = 50.0f;
+        if (fv > 400.0f) fv = 400.0f;
+        hwr_defaults.shadow_depth = fv / 100.0f;
     } else if (sscanf(p, "filler_brightness = %f", &fv) == 1) {
         if (fv < 0.0f) fv = 0.0f;
         if (fv > 2.0f) fv = 2.0f;
@@ -335,6 +404,7 @@ static void parse_categories_line(const char *p)
 static void parse_sprites_line(const char *p)
 {
     int iv;
+    float fv;
     if (sscanf(p, "sprite_debug = %d", &iv) == 1) {
         hwr_defaults.sprite_debug = (iv != 0) ? 1 : 0;
     } else if (sscanf(p, "xbr_scale = %d", &iv) == 1) {
@@ -342,6 +412,11 @@ static void parse_sprites_line(const char *p)
         if (iv == 1) iv = 0;
         if (iv > 4) iv = 4;
         hwr_defaults.xbr_scale = iv;
+    } else if (sscanf(p, "persp_strength = %f", &fv) == 1) {
+        if (fv < 0.0f) fv = 0.0f;
+        hwr_defaults.sprite_persp_strength = fv;
+    } else if (sscanf(p, "persp_zoom_ref = %f", &fv) == 1) {
+        hwr_defaults.sprite_persp_zoom_ref = fv;
     }
 }
 
@@ -462,6 +537,8 @@ void hwr_lights_load(const char *path)
                 section = SEC_GLARE;
             else if (strncmp(p, "[firelight]", 11) == 0)
                 section = SEC_FIRELIGHT;
+            else if (strncmp(p, "[rain]", 6) == 0)
+                section = SEC_RAIN;
             else
                 section = SEC_NONE;
             continue;
@@ -496,6 +573,8 @@ void hwr_lights_load(const char *path)
             parse_glare_line(p);
         } else if (section == SEC_FIRELIGHT) {
             parse_firelight_line(p);
+        } else if (section == SEC_RAIN) {
+            parse_rain_line(p);
         }
     }
     fclose(f);
@@ -523,6 +602,9 @@ static void write_defaults(FILE *out)
         "ambient            = %.2f\n"
         "tint               = %d %d %d\n"
         "ao                 = %.0f\n"
+        "face_ao            = %.0f\n"
+        "shade_sat          = %.0f\n"
+        "shadow_depth       = %.0f\n"
         "max_light_dist     = %.0f\n"
         "filler_brightness  = %.2f\n"
         "building_brightness = %.2f\n"
@@ -541,6 +623,9 @@ static void write_defaults(FILE *out)
         (int)(hwr_defaults.tint_g * 255.0f),
         (int)(hwr_defaults.tint_b * 255.0f),
         hwr_defaults.ao * 100.0f,
+        hwr_defaults.face_ao * 100.0f,
+        hwr_defaults.shade_sat * 100.0f,
+        hwr_defaults.shadow_depth * 100.0f,
         (double)(sqrtf(hwr_defaults.max_light_dist2) / 256.0f),
         hwr_defaults.filler_brightness,
         hwr_defaults.building_brightness,
@@ -579,6 +664,7 @@ static void write_sun(FILE *out)
         "brightness = %.2f\n"
         "ambient    = %.2f\n"
         "azimuth    = %.0f\n"
+        "auto_azimuth = %d\n"
         "elevation  = %.0f\n"
         "softness   = %d\n"
         "bias       = %.4f\n"
@@ -590,6 +676,7 @@ static void write_sun(FILE *out)
         hwr_defaults.sun_bright,
         hwr_defaults.sun_ambient,
         hwr_defaults.sun_azimuth,
+        hwr_defaults.sun_auto_azimuth,
         hwr_defaults.sun_elevation,
         hwr_defaults.sun_pcf,
         hwr_defaults.sun_bias,

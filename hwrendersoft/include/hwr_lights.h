@@ -45,6 +45,7 @@ typedef struct {
     float sun_bright;       /**< Lit-ground brightness (replaces ambient when enabled). */
     float sun_ambient;      /**< Floor brightness inside shadow (dark floor). */
     float sun_azimuth;      /**< Compass bearing of sun, degrees (0=N, 90=E, 180=S, 270=W). */
+    int   sun_auto_azimuth; /**< 1 = override sun_azimuth with the per-level angle auto-derived from the baked SW floor shading. */
     float sun_elevation;    /**< Sun angle above horizon, degrees. */
     int   sun_pcf;          /**< PCF kernel half-radius in texels (0=no PCF, 1=3x3, ..., 12=25x25). */
     float sun_bias;         /**< Constant depth bias in shadow shader (small, post-offset). */
@@ -95,6 +96,51 @@ typedef struct {
     int   firelight_min_flames; /**< A cluster needs at least this many flames to emit
                                      a light — raise it to drop small/lone fires and
                                      only light real blazes. Default 1 (light all). */
+    float face_ao;              /**< Building/object face baked-shade strength:
+                                     1.0 = SW-linear, >1 = power curve (darker),
+                                     independent of the floor ao. */
+    float shade_sat;            /**< Shadow saturation boost (0 = plain linear
+                                     shading, ~0.6 = SW-like hue-rich darks). */
+    float shadow_depth;         /**< Baked floor-shadow gamma: 1 = linear SW
+                                     Ambient, >1 = deeper shadows (lit ground
+                                     unchanged). */
+    /* Sprite/effects billboard perspective strength ([sprites] section).
+     * Billboard corners go through the same true-3D per-vertex correction as
+     * floor/face vertices, which is fine for them (their world size is always
+     * correct - a tile really is 256 units), but sprite billboards also have a
+     * CPU-computed reference world-size on top, meant to be depth-independent
+     * - so the SAME shader term ends up scaling that reference size far more
+     * than intended (measured ~0.49x-1.75x across a typical street view). A
+     * flat CPU-side size multiplier can't compensate: it scales both ends of
+     * that range equally, so fixing one distance makes another look wrong. */
+    float sprite_persp_strength; /**< 0 = no per-object distance foreshortening
+                                     (flat with DISTANCE, but still scales with
+                                     zoom — see sprite_persp_zoom_ref); 1 = full
+                                     uncancelled 3D perspective. Dampens between.
+                                     Default 0.3. */
+    /* Sprite billboard zoom reference. Billboard on-screen size is made
+     * proportional to camera zoom (scale) — lockstep with the floor/world, as
+     * the original SW blit did — via a scale/persp_zoom_ref multiplier. This
+     * ref is the zoom (scale) value at which the multiplier is 1.0, i.e. the
+     * zoom at which the sprites' calibrated ("fit") size is exact; other zooms
+     * scale proportionally from there. Set it to your usual in-game zoom's
+     * scale. Without this the CPU base size's 1/scale term exactly cancels the
+     * shader's uScale, leaving sprites zoom-INDEPENDENT (they never shrank when
+     * zooming out). */
+    float sprite_persp_zoom_ref; /**< Zoom (scale) at which sprite size is
+                                     nominal; size ∝ scale/this. <=0 disables
+                                     the zoom scaling (old zoom-independent
+                                     behaviour). Default 468. */
+    /* Procedural rain overlay ([rain] section). Replaces the SW pixel-block
+     * rain (which the GL keyed composite could only draw fully opaque) with a
+     * genuine alpha-blended fullscreen shader pass. */
+    int   rain_enable;          /**< 1 = draw the GL rain overlay when raining. */
+    float rain_alpha;           /**< Streak opacity, 0..1 (default 0.35). */
+    float rain_density;         /**< Streak columns per screen-height of width (default 60). */
+    float rain_speed;           /**< Fall speed, screen-heights/second (default 0.6). */
+    float rain_width;           /**< Streak thickness in pixels (default 1.5). */
+    float rain_length;          /**< Streak length, fraction of screen height (default 0.10). */
+    float rain_angle;           /**< Wind slant in degrees, 0 = straight down (default 0). */
 } HwrLightDefaults;
 
 /** Reset every entry to white (1,1,1) at scale 1.0 and defaults to sane values. */

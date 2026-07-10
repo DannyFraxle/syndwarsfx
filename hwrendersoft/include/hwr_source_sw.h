@@ -45,6 +45,29 @@ extern unsigned char hwr_sprite_skip_mask[512];
  *  engine view (before BAT/billboard sub-renders overwrite them). */
 void hwr_sw_capture(void);
 
+/** Result of the per-level sun-direction scan of the baked SW floor shading.
+ *  The scan measures the darkness-weighted brightness gradient of the floor
+ *  shading (dark/shadowed tiles point toward the lit sun side), independently
+ *  for the per-tile Ambient and Shade fields, and picks whichever shows a real,
+ *  coherent direction. */
+typedef struct {
+    float azimuth;      /**< Chosen sun bearing (deg), or <0 if no clear direction. */
+    float coherence;    /**< 0..1 directional agreement of the chosen field.        */
+    int   field;        /**< Field used: 0=none, 1=Ambient, 2=Shade.                */
+    /* Per-field diagnostics (so we can see which field carries the signal). */
+    float amb_std, amb_az, amb_coh;   /**< Ambient: std-dev, gradient bearing, coherence. */
+    float shd_std, shd_az, shd_coh;   /**< Shade:   std-dev, gradient bearing, coherence. */
+    long  nfloor;       /**< Floor cells scanned (Texture!=0).                      */
+    int   map_null;     /**< 1 = game_my_big_map was NULL when scanned (no level).  */
+    int   fresh;        /**< 1 = recomputed this call (map/level changed).          */
+} HwrSunHint;
+
+/** Estimate the per-level sun azimuth from the level's baked floor shading.
+ *  Recomputed only when the map (level) changes; fills *out with the result and
+ *  full diagnostics. azimuth < 0 means the caller should keep its configured
+ *  bearing. */
+void hwr_sw_sun_hint(HwrSunHint *out);
+
 /******************************************************************************/
 #ifdef __cplusplus
 }

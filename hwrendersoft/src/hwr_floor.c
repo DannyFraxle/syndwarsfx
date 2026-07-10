@@ -36,6 +36,13 @@
  * fragment shader can mirror the same per-pixel exemption. */
 extern unsigned char fade_unaffected_colours[];
 
+/* SW's palette fade table (bfgentab.h struct TbColorTables; fade_table is the
+ * FIRST member, 64 rows x 256 palette indices, row 32 = identity). Uploaded as
+ * a GL texture so the fragment shader darkens colours EXACTLY like the software
+ * renderer: through the palette-quantized fade rows (hue-rich hand-made dark
+ * shades) instead of linear RGB multiplication (which drifts grey/washed). */
+extern unsigned char pixmap[];   /* first 64*256 bytes = fade_table */
+
 /* Reproduces transform_shpoint() per-vertex, including the mode-5 perspective
  * foreshortening (which no single matrix can express). */
 static const char *floor_vert_src =
@@ -125,11 +132,19 @@ static const char *floor_frag_src =
     "uniform int uFilter;                // 0 = nearest, 1 = palette-correct bilinear\n"
     "uniform float uAlpha;               // output alpha (1 = opaque; <1 = blended transparency)\n"
     "uniform int uDeepRadarIdx;          // palette index for deep-radar tint (page sentinel 254)\n"
+    "uniform sampler2D uFadeTab;          // R8 256x64: SW palette fade table (row 32 = identity)\n"
+    "uniform float uShadeSat;             // shadow saturation boost (0 = plain linear)\n"
     "vec3 pal_lookup(int idx) {\n"
     "    return texture(uPalette, vec2((float(idx) + 0.5) / 256.0, 0.5)).rgb;\n"
     "}\n"
     "float selflit_lookup(int idx) {\n"
     "    return texture(uSelfLit, vec2((float(idx) + 0.5) / 256.0, 0.5)).r;\n"
+    "}\n"
+    "// SW colour pipeline: darken/brighten a palette index through the real\n"
+    "// fade table (palette-quantized, exactly the software renderer's colours).\n"
+    "int fade_lookup(int idx, float frow) {\n"
+    "    return int(texture(uFadeTab,\n"
+    "        vec2((float(idx) + 0.5) / 256.0, frow)).r * 255.0 + 0.5);\n"
     "}\n"
     "void main(){\n"
     "    fragPos = vec4(vWorldPos, vScrd);   // G-buffer attachment 1\n"
@@ -168,7 +183,9 @@ static const char *floor_frag_src =
     "        else\n"
     "            shadow += uLightRgb[i].x * brightness;            // anti-light: fake shadow\n"
     "    }\n"
-    "    float ao = mix(1.0, vAO, uAO);\n"
+    "    // Baked-shade strength: uAO in 0..1 blends it in; above 1 it becomes a\n"
+    "    // power (darkening curve) so shadows can go deeper than the SW-linear look.\n"
+    "    float ao = (uAO <= 1.0) ? mix(1.0, vAO, uAO) : pow(vAO, uAO);\n"
     "    // --- Sun base lighting ---\n"
     "    float base = uAmbient;\n"
     "    if (uSunEnable == 1) {\n"
@@ -199,8 +216,14 @@ static const char *floor_frag_src =
     "        if (uSunDebug == 1) { frag = vec4(vec3(lit), 1.0); return; }\n"
     "        base += uSunAmbient + uSunBright * lit;\n"
     "    }\n"
-    "    light_col = light_col * uGain * uTint + base;\n"
-    "    light_col *= ao;\n"
+    "    // SW model: dynamic lamp light is ADDED on top of the baked shade\n"
+    "    // (shpoint_compute_shade / quicklights), it is not modulated by it -\n"
+    "    // so streetlight pools stay bright on baked-dark ground. Only the base\n"
+    "    // (ambient) is scaled by the baked shade.\n"
+    "    light_col = light_col * uGain * uTint + base * ao;\n"
+    "    // SW caps the total shade at index 63 ~= 2x identity (0x7E00 clamp in\n"
+    "    // shpoint_compute_shade) - stops lamp pools burning out to white.\n"
+    "    light_col = min(light_col, vec3(1.97));\n"
     "    light_col *= clamp(1.0 - shadow, 0.0, 1.0);\n"
     "    light_col = max(light_col, 0.0);              // allow >1.0 for overbright glow\n"
     "    light_col = max(light_col, vec3(vEmissive)); // SW baked emissive (lit windows)\n"
@@ -208,6 +231,13 @@ static const char *floor_frag_src =
     "        frag = vec4(vec3(0.15) * light_col, uAlpha);\n"
     "        return;\n"
     "    }\n"
+    "    // Saturation-compensated shading: SW's palette fade rows keep dark\n"
+    "    // colours hue-rich (hand-quantized dark palette entries), while a plain\n"
+    "    // linear multiply reads washed-out/grey. Mimic the table smoothly:\n"
+    "    // shade linearly, then boost saturation as the light level drops.\n"
+    "    // uShadeSat = strength (0 = plain linear, ~0.6 = SW-like depth).\n"
+    "    float lv = clamp(dot(light_col, vec3(0.299, 0.587, 0.114)), 0.0, 1.97);\n"
+    "    float sboost = 1.0 + uShadeSat * clamp(1.0 - lv, 0.0, 1.0);\n"
     "    // Nearest: single texel with GL_NEAREST.\n"
     "    int idx = int(texture(uTex, vUV).r * 255.0 + 0.5);\n"
     "    if (uFilter == 1) {\n"
@@ -239,28 +269,32 @@ static const char *floor_frag_src =
     "        float cov = w00 + w10 + w01 + w11;\n"
     "        if (uTransKey >= 0 && cov < 0.5)\n"
     "            discard;\n"
+    "        // Palette-correct bilinear blend, self-lit texels kept bright, then\n"
+    "        // linear shade + saturation compensation.\n"
     "        vec3 c = (pal_lookup(i00)*w00 + pal_lookup(i10)*w10\n"
     "                + pal_lookup(i01)*w01 + pal_lookup(i11)*w11) / max(cov, 1e-4);\n"
-    "        // SW's fade_unaffected_colours never darken at any shade level (baked\n"
-    "        // window/road-marking paint sharing an otherwise normally-shaded\n"
-    "        // texture) - blend the same way as the colour so a self-lit texel\n"
-    "        // doesn't dim under bilinear filtering either.\n"
     "        float sl = (selflit_lookup(i00)*w00 + selflit_lookup(i10)*w10\n"
     "                  + selflit_lookup(i01)*w01 + selflit_lookup(i11)*w11) / max(cov, 1e-4);\n"
-    "        frag = vec4(c * max(light_col, vec3(sl)), uAlpha);\n"
+    "        vec3 lin = c * max(light_col, vec3(sl));\n"
+    "        float g = dot(lin, vec3(0.299, 0.587, 0.114));\n"
+    "        frag = vec4(max(mix(vec3(g), lin, sboost), 0.0), uAlpha);\n"
     "    } else {\n"
     "        if (uTransKey >= 0 && idx == uTransKey)\n"
     "            discard;\n"
     "        vec3 c = pal_lookup(idx);\n"
     "        float sl = selflit_lookup(idx);\n"
-    "        frag = vec4(c * max(light_col, vec3(sl)), uAlpha);\n"
+    "        vec3 lin = c * max(light_col, vec3(sl));\n"
+    "        float g = dot(lin, vec3(0.299, 0.587, 0.114));\n"
+    "        frag = vec4(max(mix(vec3(g), lin, sboost), 0.0), uAlpha);\n"
     "    }\n"
     "}\n";
 
 static GLuint fl_prog = 0;
 static GLuint fl_vao = 0, fl_vbo = 0, fl_ebo = 0;
-static GLuint fl_tex = 0, fl_pal = 0, fl_selflit = 0;
+static GLuint fl_tex = 0, fl_pal = 0, fl_selflit = 0, fl_fade = 0;
 static GLint  fl_loc_tex = -1, fl_loc_pal = -1, fl_loc_selflit = -1, fl_loc_transkey = -1;
+static GLint  fl_loc_fadetab = -1;
+static GLint  fl_loc_shadesat = -1;
 static GLint  fl_loc_d10 = -1, fl_loc_d14 = -1, fl_loc_d18 = -1, fl_loc_d1c = -1;
 static GLint  fl_loc_scale = -1, fl_loc_centre = -1, fl_loc_ctr = -1, fl_loc_persp = -1;
 static GLint  fl_loc_lpos_base = -1;
@@ -331,6 +365,8 @@ static int fl_init(void)
     fl_loc_tex    = glGetUniformLocation(fl_prog, "uTex");
     fl_loc_pal    = glGetUniformLocation(fl_prog, "uPalette");
     fl_loc_selflit = glGetUniformLocation(fl_prog, "uSelfLit");
+    fl_loc_fadetab = glGetUniformLocation(fl_prog, "uFadeTab");
+    fl_loc_shadesat = glGetUniformLocation(fl_prog, "uShadeSat");
     fl_loc_transkey = glGetUniformLocation(fl_prog, "uTransKey");
     fl_loc_d10    = glGetUniformLocation(fl_prog, "uD10");
     fl_loc_d14    = glGetUniformLocation(fl_prog, "uD14");
@@ -402,6 +438,13 @@ static int fl_init(void)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
+    glGenTextures(1, &fl_fade);
+    glBindTexture(GL_TEXTURE_2D, fl_fade);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
     glGenTextures(1, &fl_selflit);
     glBindTexture(GL_TEXTURE_2D, fl_selflit);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -443,8 +486,14 @@ static void fl_upload_pages(const HwrTexturePages *pg, int filter_linear)
     } else if (fl_pages_uploaded && pg != NULL && pg->texels != NULL) {
         /* Pages 4/5 hold FLIC-animated content (billboards/equipment/cyborg
          * playback) that source_sw.c re-decodes into the source buffer every
-         * frame; the rest of the array is static art uploaded once above. */
+         * frame; page 0 gets rain ripple/splash pixels painted into it by
+         * water_droplets_on_floor while it's raining. The rest of the array
+         * is static art uploaded once above. */
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        if (0 < pg->count)
+            glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, 0,
+                pg->width, pg->height, 1, GL_RED, GL_UNSIGNED_BYTE,
+                pg->texels);
         if (4 < pg->count)
             glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, 4,
                 pg->width, pg->height, 1, GL_RED, GL_UNSIGNED_BYTE,
@@ -525,11 +574,19 @@ static void fl_setup_program(const HwrCamera *cam, const unsigned char *pal8,
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, 256, 1, 0, GL_RGB,
             GL_UNSIGNED_BYTE, pal8);
+        /* SW fade table (64 rows x 256 indices; regenerated with the palette).
+         * Re-uploaded with it so shader colour shading always matches. */
+        glActiveTexture(GL_TEXTURE5);
+        glBindTexture(GL_TEXTURE_2D, fl_fade);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, 256, 64, 0, GL_RED,
+            GL_UNSIGNED_BYTE, pixmap);
     }
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D_ARRAY, fl_tex);
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, fl_selflit);
+    glActiveTexture(GL_TEXTURE5);
+    glBindTexture(GL_TEXTURE_2D, fl_fade);
     glActiveTexture(GL_TEXTURE0);   /* restore default active unit */
 
     glEnable(GL_DEPTH_TEST);
@@ -545,6 +602,8 @@ static void fl_setup_program(const HwrCamera *cam, const unsigned char *pal8,
     glUniform1i(fl_loc_tex, 0);
     glUniform1i(fl_loc_pal, 1);
     glUniform1i(fl_loc_selflit, 2);
+    glUniform1i(fl_loc_fadetab, 5);
+    glUniform1f(fl_loc_shadesat, hwr_lights_defaults().shade_sat);
     glUniform1i(fl_loc_transkey, trans_key);
     glUniform1f(fl_loc_alpha, 1.0f);    /* opaque by default; transparent pass overrides */
 
@@ -623,10 +682,27 @@ int hwr_floor_render(const unsigned char *pal8, int filter_linear)
     fl_setup_program(&cam, pal8, -1);   /* floor tiles are fully opaque */
     glUniform1i(fl_loc_filter, filter_linear);
     {
+        /* The floor's per-vertex shade (vAO) is the COMPLETE static SW light
+         * (Ambient + every map lamp + anti-light shadows, from the engine's
+         * per-tile quicklight data - see corner_baked_shade). So:
+         *  - upload only DYNAMIC lights (headlights/fires); static ones are
+         *    already inside the vertex shade - uploading them double-counts;
+         *  - reconstruct SW's absolute level as base*ao = (2*ambient)*vAO:
+         *    vertex byte 128 = SW identity -> 1.0 at ambient=1.0, up to ~2x
+         *    overbright. ambient stays as a master brightness scale. */
         HwrLight lights[HWR_MAX_LIGHTS];
         int nlight = (s->get_lights != NULL)
             ? s->get_lights(s->ctx, lights, HWR_MAX_LIGHTS) : 0;
-        fl_upload_lights(lights, nlight < 0 ? 0 : nlight);
+        int i, nd = 0;
+        for (i = 0; i < nlight; i++)
+            if (lights[i].dynamic)
+                lights[nd++] = lights[i];
+        fl_upload_lights(lights, nd);
+        {
+            HwrLightDefaults d = hwr_lights_defaults();
+            glUniform1f(fl_loc_ambient, 2.0f * d.ambient);
+            glUniform1f(fl_loc_ao, 1.0f);   /* linear vAO: the SW value as-is */
+        }
     }
     fl_draw_batch(&batch);
 
@@ -659,10 +735,25 @@ int hwr_faces_render(const unsigned char *pal8, int filter_linear)
     fl_setup_program(&cam, pal8, 0);
     glUniform1i(fl_loc_filter, filter_linear);
     {
+        /* SW-exact face lighting, mirroring the floor pass: each face vertex
+         * carries the complete static SW shade (Shade0..3 + its Light0..3
+         * quicklight chains = every map lamp and anti-light shadow at SW
+         * falloff), on the unified scale (byte 128 = identity). So upload only
+         * DYNAMIC lights (headlights/fires) - static ones are inside the vertex
+         * data - and reconstruct the absolute level as (2*ambient)*vAO. */
         HwrLight lights[HWR_MAX_LIGHTS];
         int nlight = (s->get_lights != NULL)
             ? s->get_lights(s->ctx, lights, HWR_MAX_LIGHTS) : 0;
-        fl_upload_lights(lights, nlight < 0 ? 0 : nlight);
+        int i, nd = 0;
+        for (i = 0; i < nlight; i++)
+            if (lights[i].dynamic)
+                lights[nd++] = lights[i];
+        fl_upload_lights(lights, nd);
+        {
+            HwrLightDefaults d = hwr_lights_defaults();
+            glUniform1f(fl_loc_ambient, 2.0f * d.ambient);
+            glUniform1f(fl_loc_ao, 1.0f);   /* linear vAO: the SW value as-is */
+        }
     }
     fl_draw_batch(&batch);
 

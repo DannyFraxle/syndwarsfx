@@ -103,10 +103,22 @@ void swap_wscreen(void)
     }
 }
 
+/* When 0, the screen-refresh idle handler skips its present. The main game loop
+ * clears this around its own SDL event pump: LbWindowsControl() runs registered
+ * idle handlers, and this one calls swap_wscreen(), so with the flag left on the
+ * loop would present TWICE per iteration (once here via the event pump, once in
+ * its explicit swap). Under the GL renderer every swap_wscreen() is a full
+ * vsync-blocked SDL_GL_SwapWindow, so two per frame = two vblank waits = a hard
+ * lock to HALF the monitor refresh (30fps@60Hz, 72@144Hz) regardless of GPU load
+ * or window mode. The handler still presents everywhere else, so blocking
+ * operations (loading, palette fades) keep refreshing the screen. */
+int screen_idle_swap_enabled = 1;
+
 TbBool screen_idle_update(void)
 {
     //TODO when this gets modified to run it separate thread, it should only run if screen not locked
-    swap_wscreen();
+    if (screen_idle_swap_enabled)
+        swap_wscreen();
     return true;
 }
 

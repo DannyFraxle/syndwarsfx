@@ -105,7 +105,14 @@ int hwr_init(void *sdl_window)
         return HWR_ERROR;
     }
 
-    /* Vsync per config; ignore failure (some drivers reject it). */
+    /* Vsync per config. Hard vsync (1) is tear-free; the previously-tried
+     * adaptive vsync (-1) removed the 30fps stall but tears on any late frame,
+     * which showed up as a "wave" band drifting down the screen. With the
+     * interpolation now driven by a hi-res clock (see game_speed.c) motion is
+     * smooth, so we keep hard vsync for a clean image and use the ShowFPS
+     * worst-ms readout to tell whether a frame is actually missing the vblank
+     * budget (which would be the real cause of any residual 30fps lock).
+     * Ignore failure (some drivers reject the request). */
     SDL_GL_SetSwapInterval(hwr_cfg.vsync ? 1 : 0);
 
     glDisable(GL_CULL_FACE);   /* mesh winding is inconsistent in the data */

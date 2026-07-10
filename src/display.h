@@ -55,6 +55,9 @@ extern ushort text_window_y2;
 void display_set_full_screen(bool full_screen);
 void display_set_lowres_stretch(bool stretch);
 TbResult screen_idle_update_initialize(void);
+/* Gate for the screen-refresh idle handler's present; see display.c. The main
+ * loop clears it around its event pump to avoid a double vsync-blocked swap. */
+extern int screen_idle_swap_enabled;
 void display_lock(void);
 void display_unlock(void);
 

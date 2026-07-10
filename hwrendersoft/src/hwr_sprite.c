@@ -564,8 +564,13 @@ static const char *spr_vert_src =
     "    vScrd = scrd;\n"
     "    /* Depth uses centre scrd (aDepth, uniform across quad) to prevent\n"
     "     * floor from clipping one half of the sprite.  Push sprite depth\n"
-    "     * forward with a generous epsilon to always win z-fights. */\n"
-    "    float ndc_z = clamp((aDepth - 64.0) / 16384.0, -1.0, 1.0);\n"
+    "     * forward with a generous epsilon to always win z-fights. Sprites lying\n"
+    "     * near-flush with the floor (corpses, dropped items) have almost no\n"
+    "     * natural depth separation from the floor beneath them, so with the\n"
+    "     * camera now moving continuously (not in discrete 16Hz steps) small\n"
+    "     * per-frame precision noise used to flip a marginal 64-unit bias every\n"
+    "     * frame -> visible flicker. Widened for headroom. */\n"
+    "    float ndc_z = clamp((aDepth - 512.0) / 16384.0, -1.0, 1.0);\n"
     "    gl_Position = vec4(sx/uCentre.x - 1.0, 1.0 - sy/uCentre.y, ndc_z, 1.0);\n"
     "}\n";
 
@@ -649,14 +654,13 @@ static const char *spr_frag_src =
     "    }\n"
     "    light_col = light_col * uGain * uTint + base;\n"
     "    light_col *= clamp(1.0 - shadow, 0.0, 1.0);\n"
-    "    /* Opaque solid sprites (characters, uUnlit==0) and firing sprites\n"
-    "     * (uUnlit==2) floor light_col at 1.0: the SW renderer draws them at their\n"
-    "     * intrinsic per-thing Brightness (delivered here as vShade) WITHOUT\n"
-    "     * multiplying by the dim ground/sun base, so doing so here crushed them\n"
-    "     * far darker than SW. Flooring at 1.0 renders them at c*vShade (SW parity)\n"
-    "     * while point lights / sun still add on top for overbright near lamps. */\n"
-    "    light_col = max(light_col, vec3(1.0));\n"
-    "    frag = vec4(c * max(light_col, 0.0) * vShade, uAlpha);\n"
+    "    /* SW parity: the per-thing Brightness (vShade) ALREADY contains the\n"
+    "     * scene lighting - SW computes it per turn from nearby lights\n"
+    "     * (process_lighting) and draws sprites at exactly c * Brightness.\n"
+    "     * Adding scene lamps/ambient on top double-counts and channel-clamps\n"
+    "     * bright texels (washed-out trees/props). Pin light_col to 1.0. */\n"
+    "    light_col = vec3(1.0);\n"
+    "    frag = vec4(c * light_col * vShade, uAlpha);\n"
     "}\n";
 
 /* Shadow blob shader: simple radial gradient on the ground */
@@ -687,11 +691,16 @@ static const char *shadow_vert_src =
     "        shx = shx*(16384.0 - scrd) / 16384.0;\n"
     "        shy = shy*(16384.0 - scrd) / 16384.0;\n"
     "    }\n"
-    "    float ndc_z = clamp(scrd_raw / 16384.0 - 0.01, -1.0, 1.0);\n"  /* bias so it
+    "    float ndc_z = clamp(scrd_raw / 16384.0 - 0.04, -1.0, 1.0);\n"  /* bias so it
                                         reliably beats the floor's own depth despite
                                         per-frame animation jitter in the sprite's
                                         reported y/height (ground_y wobbles a little
-                                        each walk-cycle frame even with a still camera) */
+                                        each walk-cycle frame even with a still camera).
+                                        Widened 4x (was -0.01): shadows sit flush on the
+                                        floor with near-zero natural separation, and with
+                                        the camera now moving continuously instead of in
+                                        discrete 16Hz steps, per-frame precision noise
+                                        flipped that marginal bias every frame -> flicker. */
     "    gl_Position = vec4((uCentre.x + shx)/uCentre.x - 1.0, 1.0 - (uCentre.y - shy)/uCentre.y, ndc_z, 1.0);\n"
     "    vUV = aUV;\n"
     "}\n";
@@ -738,11 +747,16 @@ static const char *psh_vert_src =
     "        shx = shx*(16384.0 - scrd) / 16384.0;\n"
     "        shy = shy*(16384.0 - scrd) / 16384.0;\n"
     "    }\n"
-    "    float ndc_z = clamp(scrd_raw / 16384.0 - 0.01, -1.0, 1.0);\n"  /* bias so it
+    "    float ndc_z = clamp(scrd_raw / 16384.0 - 0.04, -1.0, 1.0);\n"  /* bias so it
                                         reliably beats the floor's own depth despite
                                         per-frame animation jitter in the sprite's
                                         reported y/height (ground_y wobbles a little
-                                        each walk-cycle frame even with a still camera) */
+                                        each walk-cycle frame even with a still camera).
+                                        Widened 4x (was -0.01): shadows sit flush on the
+                                        floor with near-zero natural separation, and with
+                                        the camera now moving continuously instead of in
+                                        discrete 16Hz steps, per-frame precision noise
+                                        flipped that marginal bias every frame -> flicker. */
     "    gl_Position = vec4((uCentre.x + shx)/uCentre.x - 1.0, 1.0 - (uCentre.y - shy)/uCentre.y, ndc_z, 1.0);\n"
     "    vUV = aUV;\n"
     "    vOpacity = aOpacity;\n"
@@ -1095,6 +1109,61 @@ static void spr_setup_program(const HwrCamera *cam,
     hwr_gl_check("spr_setup_program");
 }
 
+/* Billboard corners go through the exact same per-vertex "true 3D" correction
+ * the floor/face vertex shaders apply — spr_vert_src's
+ *   if (uPersp==5) shx = shx*(16384-scrd)/16384;
+ * (scrd computed per-vertex from aPos, i.e. from each billboard corner's own
+ * actual world position). That's correct and unavoidable geometry, and it's
+ * why floor/faces (built from real, correctly-sized world positions) look
+ * right: there's no separate CPU size calibration to get wrong. But sprite
+ * billboards ALSO have a CPU-computed WORLD HALF-SIZE (see hwr_sw_collect_
+ * sprites in source_sw.c) derived from camera zoom/orientation only — a value
+ * that's meant to be depth-INDEPENDENT (a fixed "reference" world size), and
+ * this SAME per-vertex shader term then multiplies it by up to ~1.75x or down
+ * to ~0.49x depending on the sprite's own depth (measured: raw view-depth
+ * spans roughly -12000..+8000 in a typical street scene) — a MUCH bigger
+ * swing than intended, since the base size was never meant to be hit by that
+ * factor at all. A flat CPU-side size correction can't fix this: it multiplies
+ * both extremes equally, so making far-oversized sprites correct always makes
+ * near-undersized ones (or vice versa) worse.
+ *
+ * Fix: cancel the shader's own upcoming multiplier here, then re-apply a
+ * DAMPENED copy of the identical curve — sprite_persp_strength (0 = flat with
+ * DISTANCE; 1 = full uncancelled 3D perspective) lets this be tuned to taste
+ * instead of guessing a made-up falloff shape (that was the earlier attempt).
+ *
+ * ZOOM (separate axis): the CPU base half-size (hwr_sw_collect_sprites) is
+ * ∝ 1/scale, which the shader's ×uScale (=scale) exactly cancels — so sprite
+ * on-screen size was zoom-INDEPENDENT (never shrank when zooming out). The SW
+ * original sized sprites ∝ overall_scale (zoom). Restore that here with a
+ * scale/persp_zoom_ref multiplier applied UNCONDITIONALLY (lockstep with the
+ * floor/world); persp_zoom_ref is the zoom at which the factor is 1.0 (nominal
+ * calibrated size). This is orthogonal to the strength dampening above. */
+static float hwr_billboard_dist_scale(const HwrCamera *cam, float bx, float by, float bz)
+{
+    float strength = hwr_lights_defaults().sprite_persp_strength;
+    float zoom_ref = hwr_lights_defaults().sprite_persp_zoom_ref;
+    float zoom = (zoom_ref > 0.0f) ? cam->scale / zoom_ref : 1.0f;
+    float cdx, cdy, cdz, cfb, s, mult;
+    /* Zoom factor always applies (even at full strength / non-persp mode);
+     * only the perspective cancel/dampen below is gated. */
+    if (cam->perspective != 5 || strength >= 0.999f)
+        return zoom;   /* nothing to cancel: flat mode or full strength requested */
+    cdx = bx - cam->cx;
+    cdy = by - cam->cy8;
+    cdz = bz - cam->cz;
+    cfb = (cam->d10 * cdx + cam->d14 * cdz) / 65536.0f;
+    s = (cam->d18 * cdy + cam->d1c * cfb) / 65536.0f;
+    if (s > 1024.0f)
+        s = 16384.0f * s / (s + 16384.0f);   /* mirror the shader's own scrd warp */
+    mult = (16384.0f - s) / 16384.0f;
+    if (mult < 0.05f) mult = 0.05f;          /* guard against near-zero/negative divide */
+    /* effective_mult = 1 + strength*(mult-1); dscale is what the CPU applies
+     * now so that (dscale * mult), which is what actually reaches the screen
+     * after the shader's own multiply, equals effective_mult. Times zoom. */
+    return zoom * (1.0f + strength * (mult - 1.0f)) / mult;
+}
+
 /* =========================================================================
  * Public entry points
  * ========================================================================= */
@@ -1151,14 +1220,14 @@ static void spr_build(HwrBillboard *billboards, int nbill, const HwrCamera *camp
         if (hw <= 0.0f) hw = 8.0f;
         if (hh <= 0.0f) hh = 8.0f;
 
-        shade = (float)bb->shade / 48.0f;
-        if (shade > 1.0f) shade = 1.0f;
-        /* Opaque sprites keep a floor so characters in shaded areas still pick up
-         * the scene's dynamic ambient/sun light instead of being crushed down to
-         * the legacy SW renderer's own (much darker) minimum. Translucent effects
-         * may still fade all the way to 0 (smoke fade-out, alpha-driven). */
-        if (shade < 0.45f && !(bb->flags & HWR_BILLBOARD_TRANSLUCENT))
-            shade = 0.45f;
+        /* SW parity: the fade-table rows scale colours by bri/32 (32 = identity,
+         * texture as-is). The atlas is baked at identity, so the draw-time shade
+         * is bri/32, clamped to SW's draw range [10..48] = [0.31 .. 1.5x]
+         * (draw_sorted_sprite1a). Translucent effects may still fade to 0. */
+        shade = (float)bb->shade / 32.0f;
+        if (shade > (48.0f / 32.0f)) shade = 48.0f / 32.0f;
+        if (shade < (10.0f / 32.0f) && !(bb->flags & HWR_BILLBOARD_TRANSLUCENT))
+            shade = 10.0f / 32.0f;
         if (shade < 0.0f) shade = 0.0f;
 
         {
@@ -1170,7 +1239,32 @@ static void spr_build(HwrBillboard *billboards, int nbill, const HwrCamera *camp
             } else {
                 rx = 1.0f; rz = 0.0f;
             }
-            float cx = bb->x, cy = bb->y, cz = bb->z;
+            /* bb->x/y/z is the TRUE anchor (Thing's real ground/feet position,
+             * or emitter centre for effects) — NOT the quad's geometric centre.
+             * cx/cy/cz below is that quad centre, derived from the anchor. */
+            float ax = bb->x, ay = bb->y, az = bb->z;
+            float cdx = ax - cam.cx;
+            float cdy = ay - cam.cy8;
+            float cdz = az - cam.cz;
+            float cfb = (cam.d10 * cdx + cam.d14 * cdz) / 65536.0f;
+            /* Raw (pre-perspective-clamp) view depth — kept for centre_scrd
+             * (z-fighting bias) below. Size correction is the cancel-and-
+             * dampen scheme in hwr_billboard_dist_scale(); see its comment. */
+            float raw_scrd = (cam.d18 * cdy + cam.d1c * cfb) / 65536.0f;
+            float cx, cy, cz;
+            {
+                float dscale = hwr_billboard_dist_scale(&cam, ax, ay, az);
+                hw *= dscale;
+                hh *= dscale;
+                /* Apply the anchor-to-centre offset using the FINAL (post-
+                 * dampening) half-size, not the size baked in at capture time
+                 * — see anchor_ratio_x/y's doc comment (hwr_scene_source.h)
+                 * for why: doing it at capture time desynced from dscale and
+                 * made asymmetric poses visibly twitch as distance changed. */
+                cx = ax + bb->anchor_ratio_x * hw * rx;
+                cz = az + bb->anchor_ratio_x * hw * rz;
+                cy = ay + bb->anchor_ratio_y * hh;
+            }
             float verts[4][3] = {
                 {cx - rx * hw, cy - hh, cz - rz * hw},
                 {cx + rx * hw, cy - hh, cz + rz * hw},
@@ -1178,11 +1272,7 @@ static void spr_build(HwrBillboard *billboards, int nbill, const HwrCamera *camp
                 {cx - rx * hw, cy + hh, cz - rz * hw},
             };
             float uvs[4][2] = {{u0,v1}, {u1,v1}, {u1,v0}, {u0,v0}};
-            float cdx = cx - cam.cx;
-            float cdy = cy - cam.cy8;
-            float cdz = cz - cam.cz;
-            float cfb = (cam.d10 * cdx + cam.d14 * cdz) / 65536.0f;
-            float centre_scrd = (cam.d18 * cdy + cam.d1c * cfb) / 65536.0f;
+            float centre_scrd = raw_scrd;
             if (cam.perspective == 5 && centre_scrd > 1024.0f)
                 centre_scrd = 16384.0f * centre_scrd / (centre_scrd + 16384.0f);
             if (bb->flags & HWR_BILLBOARD_ONTOP)
@@ -1438,13 +1528,21 @@ int hwr_shadows_render(void)
             HwrBillboard *bb = &billboards[i];
             if (bb->flags & HWR_BILLBOARD_NOSHADOW) continue;
             float sx = bb->x, sy = bb->y, sz = bb->z;
-            float hh = bb->half_size_y;
-            float ground_y = sy - hh;
+            /* bb->y is now the TRUE anchor (the Thing's actual floor-contact
+             * height — see anchor_ratio_y's doc comment), so ground_y is just
+             * sy directly; no half_size subtraction needed or wanted (scaling
+             * it by dscale, which drifts continuously with camera distance,
+             * would make the shadow float above/sink below the floor while
+             * scrolling — the same bug the sprite quad itself had). Match the
+             * sprite quad's own distance falloff for the FOOTPRINT SIZE only. */
+            float dscale = hwr_billboard_dist_scale(&cam, sx, sy, sz);
+            float hh = bb->half_size_y * dscale;
+            float ground_y = sy;
 
             /* Stable height basis (≈ old half_size_x*3) so the blob doesn't pop with
              * per-frame sprite width. */
-            float sr = bb->half_size_y * 1.15f;
-            float sd = bb->half_size_y * 1.15f;
+            float sr = hh * 1.15f;
+            float sd = hh * 1.15f;
             if (sr < 16.0f) sr = 16.0f;
             if (sd < 16.0f) sd = 16.0f;
 
@@ -1516,13 +1614,18 @@ int hwr_shadows_render(void)
              * for one frame then snap back.  half_size_y (∝ fh) is stable across the
              * walk cycle and direction-independent.  0.38 ≈ a typical person's
              * hw/hh ratio, so footprint magnitude is preserved (tunable). */
-            float hh = bb->half_size_y;
-            if (hh <= 0.0f) hh = 8.0f;
+            float sx = bb->x, sy = bb->y, sz = bb->z;
+            /* bb->y is the TRUE anchor (floor-contact height) — ground_y is
+             * just sy directly. Match the sprite quad's own distance falloff
+             * for the footprint size only; see the blob-shadow pass above. */
+            float dscale = hwr_billboard_dist_scale(&cam, sx, sy, sz);
+            float hh_true = bb->half_size_y;
+            if (hh_true <= 0.0f) hh_true = 8.0f;
+            float hh = hh_true * dscale;
             float hw = hh * 0.38f;
             if (hw <= 0.0f) hw = 8.0f;
 
-            float sx = bb->x, sy = bb->y, sz = bb->z;
-            float ground_y = sy - hh;
+            float ground_y = sy;
 
             /* ---- Sun projected shadow ---- */
             if (sun_active && sun_dir_y > 0.001f && psh_vc + 4 <= PSH_MAX_VC) {
@@ -1566,11 +1669,33 @@ int hwr_shadows_render(void)
             /* ---- Point-light projected shadows (up to 4 per sprite) ---- */
             if (npsh_lights > 0) {
                 int li, n_this = 0;
+                /* This is a ray/plane intersection: cast a ray from the light
+                 * through the character's BODY (an elevated point) down onto
+                 * the floor (ground_y) and see where it lands. It needs a
+                 * point ABOVE the floor to define that ray — sy USED to be
+                 * that point (the billboard's quad centre, feet+hh, before
+                 * the anchor-offset refactor made bb->y the true floor-contact
+                 * height directly). Reconstruct it here instead of using sy
+                 * (now == ground_y, which degenerated the math: t collapsed
+                 * to exactly 1.0 every time, so `t <= 1.0f` skipped ALL
+                 * point-light shadows unconditionally — the "shadows gone"
+                 * regression).
+                 *
+                 * Use hh_true (the REAL, undampened body half-height), not hh
+                 * (the distance/zoom-dampened display size): this needs the
+                 * character's actual physical height for the light-angle
+                 * geometry to come out right. Using the dampened hh made the
+                 * character "shorter" than reality whenever dscale<1 (i.e.
+                 * almost always, away from the one calibrated reference zoom/
+                 * distance), pulling centre_y right down toward ground_y and
+                 * making t barely move off 1.0 for ANY light position — the
+                 * shadows reappeared but never visibly stretched. */
+                float center_y = sy + hh_true;
 
                 for (li = 0; li < npsh_lights && n_this < 4 && psh_vc + 4 <= PSH_MAX_VC; li++) {
                     HwrLight *lt = &psh_lights[li];
                     float lx = lt->x, ly = lt->y, lz = lt->z;
-                    float dx = sx - lx, dy = sy - ly, dz = sz - lz;
+                    float dx = sx - lx, dy = center_y - ly, dz = sz - lz;
                     float dist2 = dx*dx + dy*dy + dz*dz;
                     if (dist2 <= 0.0f) continue;
 
@@ -1578,17 +1703,34 @@ int hwr_shadows_render(void)
                     if (maxd2 <= 0.0f) maxd2 = 4194304.0f;
                     if (dist2 > maxd2 * 1.5f) continue;
 
-                    float ldy = sy - ly;
+                    float ldy = center_y - ly;
                     if (fabsf(ldy) < 0.001f) ldy = 0.001f;
                     float t = (ground_y - ly) / ldy;
-                    if (t <= 1.0f) continue;
-                    if (t > 5.0f) continue;
-                    /* Light too close vertically — skip projected shadow */
-                    if (fabsf(sy - ly) < hh * 0.5f) continue;
-
-                    /* Project sprite centre through light onto ground */
-                    float sh_x = lx + t * (sx - lx);
-                    float sh_z = lz + t * (sz - lz);
+                    float sh_x, sh_z, stretch;
+                    if (t > 1.0f && t <= 5.0f && fabsf(center_y - ly) >= hh * 0.5f) {
+                        /* Light clearly elevated above the character (e.g. a
+                         * streetlamp) — proper ray/plane cast through the body
+                         * down onto the floor. */
+                        sh_x = lx + t * (sx - lx);
+                        sh_z = lz + t * (sz - lz);
+                        stretch = 1.0f + (t - 1.0f) * 0.6f;
+                    } else {
+                        /* Light at/near floor height (fire; vehicle headlights
+                         * — sw_get_lights sets their Y to the vehicle's own
+                         * body Y, i.e. ~ground level) — the ray/plane cast
+                         * degenerates for a light this low (t collapses toward
+                         * 0), so every such light was silently skipped. Fall
+                         * back to a simple shadow cast directly away from the
+                         * light along the ground (same idea as the sun-shadow
+                         * branch above), rather than no shadow at all. */
+                        float hdx = sx - lx, hdz = sz - lz;
+                        float hlen = sqrtf(hdx*hdx + hdz*hdz);
+                        if (hlen < hw * 0.25f) continue;   /* light ~on top of the character */
+                        hdx /= hlen; hdz /= hlen;
+                        sh_x = sx + hdx * (hh_true * 2.0f);
+                        sh_z = sz + hdz * (hh_true * 2.0f);
+                        stretch = 1.4f;
+                    }
 
                     /* Raw direction from sprite to projected shadow (unclamped) */
                     float ndx = sh_x - sx, ndz = sh_z - sz;
@@ -1604,8 +1746,8 @@ int hwr_shadows_render(void)
                     float opacity = (1.0f - nd) * 0.20f;
                     if (opacity < 0.01f) continue;
 
-                    /* Stretch — trapezoid: bottom at sprite feet, top projected away */
-                    float stretch = 1.0f + (t - 1.0f) * 0.6f;
+                    /* Stretch — trapezoid: bottom at sprite feet, top projected away
+                     * (stretch itself computed above, per which cast path applied). */
                     float bottom_w = hw * 0.7f;
                     float top_w   = bottom_w * stretch;
                     float length  = ndl * stretch;  /* project from feet to shadow × stretch */

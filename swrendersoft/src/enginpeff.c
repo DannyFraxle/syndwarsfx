@@ -27,6 +27,7 @@
 #include "enginbckt.h"
 #include "engincam.h"
 #include "engincolour.h"
+#include "engindrwlstx.h"
 #include "enginprops.h"
 #include "engintrns.h"
 #include "engintxtrmap.h"
@@ -277,6 +278,8 @@ void scene_post_effect_for_bucket(short bckt)
     switch (gamep_scene_effect_type)
     {
     case ScEff_RAIN:
+        if (engine_hwr_suppress_rain)
+            break;
         every = 8 * 1000 / gamep_scene_effect_intensity;
         if ((bckt % every) == 0) {
             draw_falling_rain(bckt);

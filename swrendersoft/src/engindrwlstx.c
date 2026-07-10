@@ -62,6 +62,10 @@ unsigned char hwr_sprite_skip_mask[512] = {0};
 unsigned char hwr_fire_skip_mask[64] = {0};
 unsigned char hwr_phwoar_skip_mask[128] = {0};
 
+/* When nonzero, the SW pixel-block rain post-effect is skipped so the FX3D
+ * renderer's own alpha-blended GL rain overlay draws instead. */
+int engine_hwr_suppress_rain = 0;
+
 /* FX3D Phase 8: bitset of object indices the SW engine decided are
  * semi-transparent this frame (deep-radar see-through buildings). Set in
  * draw_object() during drawlist build (which always runs, even when face draw
@@ -93,6 +97,12 @@ int hwr_glare_count = 0;
 int hwr_glare_flag_seq[HWR_GLARE_FLAG_MAX];
 int hwr_glare_flag_n = 0;
 int hwr_glare_flag_pos = 0;
+
+/* FX3D: object-model ground-shadow decal capture (see header). Filled by
+ * draw_object_model_shadow (tngobjdrw.c) during the build; cleared at frame
+ * start in process_engine_unk3 (game.c) alongside the glare list. */
+struct HwrModelShadow hwr_model_shadow_list[HWR_MODEL_SHADOW_MAX];
+int hwr_model_shadow_count = 0;
 
 /* True for the opaque face draw-item types the FX3D renderer takes over. */
 static TbBool drawitem_is_suppressed_face(ubyte type)

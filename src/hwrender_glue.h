@@ -64,6 +64,12 @@ void hwrender_set_requested(TbBool on);
 /** True once the GL backend has been initialised and is drawing. */
 TbBool hwrender_active(void);
 
+/** 1 while the current frame is floor-gated for FX3D (set by
+ *  hwrender_floor_gate() at frame start). Test THIS from draw/build code;
+ *  never call hwrender_floor_gate() itself as a query - it PERFORMS the
+ *  gating (framebuffer key-fill, camera snapshot, sprite collection). */
+extern int hwr_floor_gated_frame;
+
 /** Palette index used as the transparent composite key: where the software
  *  engine view is gated for 3D, WScreen is filled with this index, and the GL
  *  overlay discards it so the 3D scene shows through. */

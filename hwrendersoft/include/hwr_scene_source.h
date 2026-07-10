@@ -65,6 +65,10 @@ typedef struct {
     float cx, cy8, cz;
     int   perspective;
     int   view_w, view_h;
+    float world_half;   /* world-space half-extent of the visible floor around
+                         * (cx,cz), in the same units as cx/cz (tile<<8). Lets
+                         * the sun shadow map size its ortho frustum to the
+                         * actual render area instead of a fixed box. */
 } HwrCamera;
 
 /** A batch of geometry: indexed triangles over a shared vertex array.
@@ -108,19 +112,34 @@ typedef struct {
     float fdx, fdz;        /* shaped (headlight) forward dir in XZ; (0,0) = round light.
                             * When set, the light uses a teardrop falloff: narrow/bright
                             * near the lamp, widening and fading along the forward dir. */
+    int   dynamic;         /* 1 = transient light (vehicle headlights/tails, fires);
+                            * 0 = static map lamp/anti-light. The floor pass lights
+                            * itself from SW's baked per-corner quicklight data (which
+                            * already contains every static lamp and shadow), so it
+                            * uploads only the dynamic ones - no double-count. */
 } HwrLight;
 
-/** A camera-facing billboard sprite (a Thing). pos is the world anchor;
- *  sprite indexes into the atlas; shade is a 0..255 brightness; flags carries
- *  per-sprite hints (bit0 = translucent -> deferred to the Phase 7 pass).
- *  half_size_x/y are the world-space half-extents of the billboard quad
- *  (the quad corners are at center ± half_size in the camera-facing plane). */
+/** A camera-facing billboard sprite (a Thing). pos is the TRUE world anchor
+ *  (the Thing's real ground/feet position, or the emitter centre for
+ *  effects) — NOT necessarily the quad's own geometric centre; sprite indexes
+ *  into the atlas; shade is a 0..255 brightness; flags carries per-sprite
+ *  hints (bit0 = translucent -> deferred to the Phase 7 pass). half_size_x/y
+ *  are the world-space half-extents of the billboard quad. anchor_ratio_x/y
+ *  give the offset from pos to the quad's geometric centre, expressed as a
+ *  MULTIPLE of half_size_x/half_size_y respectively (not baked world units),
+ *  so the offset re-scales correctly however half_size is later adjusted
+ *  (e.g. distance-based dampening) — apply at render time as:
+ *    centre = pos + anchor_ratio_x*half_size_x*camRight (+z similarly)
+ *    centre.y = pos.y + anchor_ratio_y*half_size_y
+ *  0,0 = pos is already the quad centre (used by effects/glares/fire, which
+ *  have no separate feet/anchor concept). */
 typedef struct {
     float    x, y, z;
     uint16_t sprite;
     uint8_t  shade;
     uint8_t  flags;
     float    half_size_x, half_size_y;
+    float    anchor_ratio_x, anchor_ratio_y;
 } HwrBillboard;
 
 #define HWR_BILLBOARD_TRANSLUCENT 0x01

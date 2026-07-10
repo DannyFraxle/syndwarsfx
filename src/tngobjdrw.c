@@ -49,6 +49,7 @@
 #include "swlog.h"
 #include "thing.h"
 #include "vehicle.h"
+#include "hwrender_glue.h"
 /******************************************************************************/
 extern ubyte byte_1C83E4;
 
@@ -226,6 +227,36 @@ void draw_object_model_shadow(struct SortMapPoint *p_tngcor, ushort obmodl,
 
     get_object_shadow_bound_points_y(&cor1, &cor2, &cor3, &cor4,
       p_tngcor);
+
+#if defined(HAVE_HWRENDER)
+    /* FX3D: capture the shadow quad in world space instead of enlisting the SW
+     * screen-space draw item; the GL renderer draws it as a blended dark decal
+     * (the angled building/vehicle ground shadows). Corners are engine-relative
+     * in X/Z - store absolute world coords (Y is already in the 8*alt space).
+     * NOTE: must be a PASSIVE test. Calling hwrender_floor_gate() here re-RAN
+     * the gate (framebuffer wipe + camera re-snapshot + sprite re-collect) per
+     * object, which collapsed the motion interpolation to 16Hz. And the
+     * hwr_floor_gated_frame flag is 0 during the build (set after it, reset at
+     * present), so use hwrender_active(): the build only runs for the engine
+     * view, and the capture list is cleared each frame either way. */
+    if (hwrender_active()) {
+        if (hwr_model_shadow_count < HWR_MODEL_SHADOW_MAX) {
+            struct HwrModelShadow *ms =
+                &hwr_model_shadow_list[hwr_model_shadow_count++];
+            struct SortMapPoint *cors[4];
+            int k;
+            cors[0] = &cor1; cors[1] = &cor2; cors[2] = &cor3; cors[3] = &cor4;
+            for (k = 0; k < 4; k++) {
+                ms->x[k] = cors[k]->X + engn_xc;
+                ms->y[k] = cors[k]->Y;
+                ms->z[k] = cors[k]->Z + engn_zc;
+            }
+            ms->u1 = p_shtextr->X1; ms->v1 = p_shtextr->Y1;
+            ms->u2 = p_shtextr->X2; ms->v2 = p_shtextr->Y2;
+        }
+        return;
+    }
+#endif
 
     draw_shadow_at_coords(&cor1, &cor2, &cor3, &cor4, p_shtextr, bckt);
 }

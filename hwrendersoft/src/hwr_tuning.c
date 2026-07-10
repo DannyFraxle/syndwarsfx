@@ -32,7 +32,7 @@ static int          save_flash = 0;
 static int          sel = 0;
 
 /* Number of sliders — keep in sync with the array below */
-#define NSLIDERS 14
+#define NSLIDERS 18
 
 /* Single static slider array — used by both nav + render */
 static Slider sliders[NSLIDERS];
@@ -54,6 +54,15 @@ static void sliders_bind(HwrLightDefaults *d)
     sliders[11] = (Slider){"FILL_R", 0.7f,0.7f,0.7f, &d->filler_radius, 1, 500, 1, 0.5f, "%.0f"};
     sliders[12] = (Slider){"BLDG_R", 0.3f,0.8f,0.3f, &d->building_radius, 1, 500, 1, 0.5f, "%.0f"};
     sliders[13] = (Slider){"STRT_R", 1,1,0.5f, &d->street_radius, 1, 500, 1, 0.5f, "%.0f"};
+    /* AO = strength of the baked SW floor shade (0 = off, 1 = SW-linear,
+     * above 1 = power curve for deeper shadows). FACEAO = same for building/
+     * object faces, independent of the floor. */
+    sliders[14] = (Slider){"AO", 0.6f,0.8f,0.6f, &d->ao, 0,3, 0.05f, 0.01f, "%.2f"};
+    sliders[15] = (Slider){"FACEAO", 0.8f,0.6f,0.6f, &d->face_ao, 0,3, 0.05f, 0.01f, "%.2f"};
+    /* SAT = shadow saturation boost (mimics SW's hue-rich dark palette). */
+    sliders[16] = (Slider){"SAT", 0.9f,0.5f,0.9f, &d->shade_sat, 0,2, 0.05f, 0.01f, "%.2f"};
+    /* SHDW = baked floor-shadow depth (gamma; 1 = linear, higher = darker). */
+    sliders[17] = (Slider){"SHDW", 0.5f,0.5f,0.7f, &d->shadow_depth, 0.5f,4, 0.1f, 0.02f, "%.2f"};
 
     sliders_init = 1;
 }

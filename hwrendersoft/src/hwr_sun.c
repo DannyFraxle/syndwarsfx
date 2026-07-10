@@ -238,8 +238,10 @@ static int sn_init(void)
 
 /* ---- Shadow pass -------------------------------------------------------- */
 
-/* Compute sun_mvp for the current camera position. */
-static void sn_compute_mvp(float cx, float cz)
+/* Compute sun_mvp for the current camera position. world_half is the world-space
+ * half-extent of the visible floor (from the camera's render area); the ortho
+ * frustum is sized to it so the shadow map always covers the whole view. */
+static void sn_compute_mvp(float cx, float cz, float world_half)
 {
     /* Direction TOWARD the sun in world space (where the sun sits in the sky).
      * Azimuth: 0 = north (+Z), 90 = east (+X), going clockwise.
@@ -254,10 +256,18 @@ static void sn_compute_mvp(float cx, float cz)
     float dy =  sinE;
     float dz =  cosE * (float)cos((double)az);
 
+    /* Ortho half-extent sized to the visible floor (render area), so shadows
+     * cover the whole view at any zoom.  A margin catches shadows that tall
+     * buildings just off the floor edge cast back across the visible ground.
+     * Clamp to a sane minimum when very zoomed in. */
+    float half = world_half + 4096.0f;   /* +16 tiles margin for cast shadows */
+    if (half < 8192.0f) half = 8192.0f;
+
     /* The shadow camera sits AT the sun (above the scene, along +dir) and looks
      * back down toward the ground focus.  D must exceed the furthest geometry
-     * from the centre so the whole visible region stays in front of the eye. */
-    float D = 16384.0f;
+     * from the centre so the whole visible region stays in front of the eye;
+     * scale it with the frustum size (box diagonal ~1.41*half plus height). */
+    float D = 2.5f * half;
     float center[3] = { cx, 0.0f, cz };
     float eye[3]    = { center[0] + dx*D, center[1] + dy*D, center[2] + dz*D };
 
@@ -268,8 +278,6 @@ static void sn_compute_mvp(float cx, float cz)
     float view[16], proj[16];
     mat4_lookat(view, eye, center, up);
 
-    /* Ortho extents cover ±8192 units in XZ and full building height depth. */
-    float half = 8192.0f;
     mat4_ortho(proj, -half, half, -half, half, 1.0f, 2.0f * D + half);
 
     mat4_mul(sn_mvp, proj, view);
@@ -333,7 +341,7 @@ void hwr_sun_shadow_pass(void)
     if (s->get_camera(s->ctx, &cam) != 0)
         return;
 
-    sn_compute_mvp(cam.cx, cam.cz);
+    sn_compute_mvp(cam.cx, cam.cz, cam.world_half);
 
     /* Gather geometry. Both batches are static buffers in source_sw.c that
      * stay valid for the whole frame, so calling the getters again is safe. */

@@ -22,6 +22,7 @@
  */
 /******************************************************************************/
 #include "hwr_scene_source.h"
+#include "hwr_source_sw.h"
 #include "hwr_lights.h"
 
 #include <stddef.h>
@@ -284,6 +285,39 @@ static struct HwrCamSnap {
  * from snap_prev to snap for the frame being presented. */
 extern float g_interp_alpha;
 
+/* Floor/face tile culling window: sw_get_floor/sw_get_faces/emit_floor_damage_
+ * decals build their tile batch once per capture (16Hz), sized ra+2/rb+2 tiles
+ * around the camera. But the RENDER camera (sw_get_camera) is interpolated
+ * smoothly between snap_prev and snap across the several present frames before
+ * the next capture. A window sized only around the latest snap position covers
+ * the interpolation's END point but not points nearer snap_prev — for the early
+ * frames of a turn (small alpha, camera still close to the old position), a
+ * fast scroll can reveal ground/faces just outside that window before the next
+ * capture regenerates it: a trailing-edge flicker whose visibility scales with
+ * per-turn scroll speed (worse in whichever direction happens to move fastest).
+ * Fix: size the window to cover BOTH snapshots' tile-ranges (their union), which
+ * covers every point on the straight-line interpolation between them too. */
+static void hwr_floor_window_bounds(int *out_x0, int *out_x1, int *out_z0, int *out_z1)
+{
+    int cx = snap.xc >> 8, cz = snap.zc >> 8;
+    int ra = snap.ra ? snap.ra + 2 : 24;
+    int rb = snap.rb ? snap.rb + 2 : 24;
+    int x0 = cx - ra, x1 = cx + ra;
+    int z0 = cz - rb, z1 = cz + rb;
+    if (snap_prev.valid) {
+        int pcx = snap_prev.xc >> 8, pcz = snap_prev.zc >> 8;
+        int pra = snap_prev.ra ? snap_prev.ra + 2 : 24;
+        int prb = snap_prev.rb ? snap_prev.rb + 2 : 24;
+        int px0 = pcx - pra, px1 = pcx + pra;
+        int pz0 = pcz - prb, pz1 = pcz + prb;
+        if (px0 < x0) x0 = px0;
+        if (px1 > x1) x1 = px1;
+        if (pz0 < z0) z0 = pz0;
+        if (pz1 > z1) z1 = pz1;
+    }
+    *out_x0 = x0; *out_x1 = x1; *out_z0 = z0; *out_z1 = z1;
+}
+
 /* Per-object snapshot of moving-Thing state (position + rotation matrix index),
  * captured at floor-draw time together with the camera so that vehicle faces
  * render on the SAME sim-turn time base as the camera and the sprites.
@@ -479,6 +513,90 @@ extern struct TbSprite   *m_sprites, *m_sprites_end;
 static HwrBillboard hwr_collected_billboards[HWR_MAX_COLLECTED];
 static int          hwr_collected_count = 0;
 static int          hwr_xbr_count = 0;
+
+/* Sprite position interpolation (Thing-anchored billboards only). Collection
+ * happens once per 16Hz turn (hwrender_floor_gate -> hwr_sw_collect_sprites),
+ * but get_sprites is pulled every present frame at up to 60fps+, so without
+ * this the sprite (person/vehicle-thing/dropped-item) billboards visibly
+ * shimmer against the now-smoothly-interpolated floor/camera as they snap in
+ * 16Hz steps while scrolling. hwr_collected_key[i] is the persistent identity
+ * (the Thing pointer) for entry i, or NULL if this billboard shouldn't be
+ * interpolated (ephemeral effects: fire/phwoar/glares). hwr_collected_prev_idx[i]
+ * is resolved once per capture (matching this turn's keys against last turn's)
+ * so the per-frame render path is a cheap array lookup, not a search. */
+static const void  *hwr_collected_key[HWR_MAX_COLLECTED];
+static HwrBillboard hwr_collected_billboards_prev[HWR_MAX_COLLECTED];
+static const void  *hwr_collected_key_prev[HWR_MAX_COLLECTED];
+static int          hwr_collected_count_prev = 0;
+static int          hwr_collected_prev_idx[HWR_MAX_COLLECTED];
+
+/* Small open-addressing hash of the previous turn's keys -> prev index, used
+ * to resolve hwr_collected_prev_idx in one pass. Sized well above
+ * HWR_MAX_COLLECTED to keep load factor low. */
+#define HWR_SPRITE_MATCH_HASH 8192
+static const void *spr_match_key[HWR_SPRITE_MATCH_HASH];
+static int         spr_match_idx[HWR_SPRITE_MATCH_HASH];
+
+static uint32_t hwr_ptr_hash(const void *p)
+{
+    /* This project builds -m32 (uintptr_t is 32-bit); do the mix as 32-bit
+     * only (a >>32 shift on a 32-bit value is undefined behaviour). */
+    uint32_t h = (uint32_t)(uintptr_t)p;
+    h ^= h >> 16; h *= 0x85ebca6bu;
+    h ^= h >> 13; h *= 0xc2b2ae35u;
+    h ^= h >> 16;
+    return h;
+}
+
+/* Snapshot the just-finished turn's collected billboards as "previous" (for
+ * interpolation), then build the key->index match table for it. Must run
+ * BEFORE hwr_collected_count/keys are overwritten for the new turn. */
+static void hwr_sw_snapshot_prev_sprites(void)
+{
+    int i;
+    memcpy(hwr_collected_billboards_prev, hwr_collected_billboards,
+        (size_t)hwr_collected_count * sizeof(hwr_collected_billboards[0]));
+    memcpy(hwr_collected_key_prev, hwr_collected_key,
+        (size_t)hwr_collected_count * sizeof(hwr_collected_key[0]));
+    hwr_collected_count_prev = hwr_collected_count;
+
+    for (i = 0; i < HWR_SPRITE_MATCH_HASH; i++)
+        spr_match_key[i] = NULL;
+    for (i = 0; i < hwr_collected_count_prev; i++) {
+        const void *k = hwr_collected_key_prev[i];
+        uint32_t idx;
+        if (k == NULL) continue;
+        idx = hwr_ptr_hash(k) & (HWR_SPRITE_MATCH_HASH - 1);
+        while (spr_match_key[idx] != NULL)
+            idx = (idx + 1) & (HWR_SPRITE_MATCH_HASH - 1);
+        spr_match_key[idx] = k;
+        spr_match_idx[idx] = i;
+    }
+}
+
+/* Resolve hwr_collected_prev_idx[] for the current turn's billboards against
+ * the match table built by hwr_sw_snapshot_prev_sprites(). Must run AFTER the
+ * current turn's hwr_collected_key[] is fully populated (i.e. at the end of
+ * hwr_sw_collect_sprites, after effects/glares are appended). */
+static void hwr_sw_resolve_sprite_interp(void)
+{
+    int i;
+    for (i = 0; i < hwr_collected_count; i++) {
+        const void *k = hwr_collected_key[i];
+        uint32_t idx;
+        hwr_collected_prev_idx[i] = -1;
+        if (k == NULL) continue;
+        idx = hwr_ptr_hash(k) & (HWR_SPRITE_MATCH_HASH - 1);
+        while (spr_match_key[idx] != NULL) {
+            if (spr_match_key[idx] == k) {
+                hwr_collected_prev_idx[i] = spr_match_idx[idx];
+                break;
+            }
+            idx = (idx + 1) & (HWR_SPRITE_MATCH_HASH - 1);
+        }
+    }
+}
+
 /* Effect-collection counts (fire/phwoar), surfaced in the KP-7 dump. */
 static int          hwr_fire_seen = 0, hwr_fire_coll = 0;
 static int          hwr_phwoar_seen = 0, hwr_phwoar_coll = 0;
@@ -759,6 +877,7 @@ static void hwr_sw_collect_effects(void)
         unsigned short frm_idx;
         float wx, wy, wz, bigf = 1.0f;
         int fw = 0, fh = 0, slot;
+        const void *eff_key;
 
         if (!is_fire && !is_phwoar)
             continue;
@@ -787,6 +906,7 @@ static void hwr_sw_collect_effects(void)
              * attempt so a fire still lights the ground even when its billboard
              * falls back to the SW renderer. */
             hwr_firelight_add((int)fl->x, (int)fl->y, (int)fl->z);
+            eff_key = (const void *)fl;
         } else {
             struct HwrPhwoar *ph;
             if (off >= 1024) continue;
@@ -795,6 +915,7 @@ static void hwr_sw_collect_effects(void)
             wx = (float)(ph->x >> 8);
             wy = (float)(ph->y >> 5) - (float)snap.yc;
             wz = (float)(ph->z >> 8);
+            eff_key = (const void *)ph;
         }
 
         slot = hwr_effect_frame_slot(frm_idx, &fw, &fh);
@@ -814,6 +935,12 @@ static void hwr_sw_collect_effects(void)
             bb->shade = 48;   /* full brightness — effects are self-lit */
             bb->flags = HWR_BILLBOARD_TRANSLUCENT | HWR_BILLBOARD_NOSHADOW
                       | (is_fire ? HWR_BILLBOARD_ADDITIVE : 0);
+            /* Anchor already IS the quad centre for effects (no feet/anchor
+             * offset like Thing sprites) — must explicitly zero since this
+             * array slot is reused frame-to-frame and may hold a stale
+             * nonzero ratio from a previous frame's Thing-sprite entry. */
+            bb->anchor_ratio_x = 0.0f;
+            bb->anchor_ratio_y = 0.0f;
             if (sc <= 0.0f) sc = 256.0f;
             /* Fire flames render about 20% too small versus the original SW
              * proportions; boost them to match. */
@@ -826,7 +953,10 @@ static void hwr_sw_collect_effects(void)
                 bb->half_size_y = (float)fh * 18.0f * 0.85f * res_scale * bigf;
             }
             /* Effects anchor at the emitter centre (the projected x/y/z point),
-             * unlike Thing sprites which anchor at the feet. */
+             * unlike Thing sprites which anchor at the feet. Keyed by the
+             * FIRE_flame/phwoar array slot address (fixed arrays; a reused slot
+             * jump is caught by sw_get_sprites' teleport guard). */
+            hwr_collected_key[hwr_collected_count] = eff_key;
             hwr_collected_count++;
         }
 
@@ -881,6 +1011,10 @@ static void hwr_sw_collect_glares(void)
         bb->shade = 48;   /* full brightness — self-lit glow */
         bb->flags = HWR_BILLBOARD_TRANSLUCENT | HWR_BILLBOARD_NOSHADOW
                   | HWR_BILLBOARD_ADDITIVE;
+        /* Anchor already IS the quad centre; must be explicit (reused array
+         * slot), see the fire/phwoar site above for why. */
+        bb->anchor_ratio_x = 0.0f;
+        bb->anchor_ratio_y = 0.0f;
         {
             float w = (siren == 1) ? gld.glare_red_width
                     : (siren == 2) ? gld.glare_blue_width
@@ -888,6 +1022,7 @@ static void hwr_sw_collect_glares(void)
             bb->half_size_x = r * w;
             bb->half_size_y = r * w;
         }
+        hwr_collected_key[hwr_collected_count] = NULL;  /* ephemeral, not interpolated */
         hwr_collected_count++;
     }
 }
@@ -986,6 +1121,7 @@ static void hwr_sw_collect_overlays(void)
 void hwr_sw_collect_sprites(void)
 {
     unsigned short i;
+    hwr_sw_snapshot_prev_sprites();
     hwr_collected_count = 0;
     hwr_xbr_count = 0;
     int hwr_eligible_count = 0;
@@ -1068,9 +1204,15 @@ void hwr_sw_collect_sprites(void)
                 bb->y = (float)(thing->Y >> 5);
                 bb->z = (float)(thing->Z >> 8);
                 bb->sprite = (uint16_t)eslot;
-                bb->shade = (uint8_t)(fade * 48.0f + 0.5f);
+                /* 32 = full (identity) on the draw-time bri/32 scale; this is an
+                 * alpha ramp for the fade-out, so keep it topping out at 1.0. */
+                bb->shade = (uint8_t)(fade * 32.0f + 0.5f);
                 bb->flags = HWR_BILLBOARD_TRANSLUCENT | HWR_BILLBOARD_NOSHADOW
                           | (is_flame ? HWR_BILLBOARD_ADDITIVE : 0);
+                /* Anchor already IS the quad centre; must be explicit (reused
+                 * array slot), see the fire/phwoar site for why. */
+                bb->anchor_ratio_x = 0.0f;
+                bb->anchor_ratio_y = 0.0f;
                 if (rnorm > 0.001f && snap.D1C != 0) {
                     bb->half_size_x = (float)efw * 100663296.0f / (sc * rnorm) * 0.85f * res_scale * scl;
                     bb->half_size_y = (float)efh * 100663296.0f / (sc * (float)snap.D1C) * 0.85f * res_scale * scl;
@@ -1078,6 +1220,7 @@ void hwr_sw_collect_sprites(void)
                     bb->half_size_x = (float)efw * 18.0f * 0.85f * res_scale * scl;
                     bb->half_size_y = (float)efh * 18.0f * 0.85f * res_scale * scl;
                 }
+                hwr_collected_key[hwr_collected_count] = (const void *)thing;
                 hwr_collected_count++;
                 hwr_sprite_skip_mask[ss_idx >> 3] |= (uint8_t)(1 << (ss_idx & 7));
             }
@@ -1201,8 +1344,14 @@ void hwr_sw_collect_sprites(void)
                                      * brightness here made identical sprites collide on one slot
                                      * and all show whichever brightness baked first, and the
                                      * angle-gated bonus re-baked them as they turned: the
-                                     * light/dark blink on walking/running characters. */
-                                    int bri = 60;
+                                     * light/dark blink on walking/running characters.
+                                     * Bake at IDENTITY (fade row 32 = 1.0x): the fade rows
+                                     * scale colours by i/32 through LbPaletteFindColour, so
+                                     * baking overbright (the old 60 = 1.875x) channel-clamped
+                                     * and hue-shifted colours INTO the atlas - dark dithered
+                                     * art (trees) washed out to pink. Identity keeps exact
+                                     * palette colours; brightness is applied at draw time. */
+                                    int bri = 32;
                                     int use_remap = frv_idx != 4;
                                     for (row = 0; row < spr_h && el_y + row < fh; row++) {
                                         for (col = 0; col < spr_w && el_x + col < fw; col++) {
@@ -1292,6 +1441,10 @@ void hwr_sw_collect_sprites(void)
                 {
                     int bonus = (frv_arr[4] != 0 && angle > 1 && angle < 7) ? 15 : 0;
                     int sh = (int)ss->Brightness + bonus;
+                    /* Static map sprites: SW passes the tile's cached ShadeR as
+                     * Brightness (build_static). Diagnostics showed those values
+                     * are valid under GL (Ambient/4 + the tile's lamp light), so
+                     * use them as-is - they already carry the SW look. */
                     if (sh < 10) sh = 10;
                     if (sh > 75) sh = 75;
                     bb->shade = (uint8_t)sh;
@@ -1341,7 +1494,10 @@ void hwr_sw_collect_sprites(void)
                 float res_scale = (sw_view_h > 0) ? (float)sw_view_h / 480.0f : 1.0f;
                 /* Streetlamp fixture props (thing_categories "street" owners) render
                  * about 10% oversized versus the original SW proportions; scale them
-                 * down to match. */
+                 * down to match. (The earlier is_person flat corrections of 0.8 and
+                 * 0.6 were chasing the wrong bug — see hwr_billboard_dist_scale in
+                 * hwr_sprite.c for the real cause/fix; reset to neutral here until
+                 * that's confirmed and re-tuned if still needed.) */
                 float size_corr = (itm->Type == HWR_DI_SFrmStatc
                     && hwr_thing_category_get(thing->Type, thing->SubType) == 3) ? 0.909f : 1.0f;
                 if (rnorm > 0.001f && snap.D1C != 0) {
@@ -1351,27 +1507,23 @@ void hwr_sw_collect_sprites(void)
                     bb->half_size_x = (float)fw * 18.0f * 0.85f * res_scale * size_corr;
                     bb->half_size_y = (float)fh * 18.0f * 0.85f * res_scale * size_corr;
                 }
-                /* Horizontal anchor correction: element X=0 (world anchor) must
-                 * appear at bb->x. The atlas pixel for the anchor is at (-off_x)
-                 * from the left edge; shift the billboard centre to match. */
-                if (fw > 0 && rnorm > 0.001f) {
-                    float rx = (float)snap.D14 / rnorm;   /* cam right X (cos/norm) */
-                    float rz = -(float)snap.D10 / rnorm;  /* cam right Z (-sin/norm) */
-                    float cx_shift = ((float)off_x + (float)fw * 0.5f)
-                                     * 2.0f * bb->half_size_x / (float)fw;
-                    bb->x += cx_shift * rx;
-                    bb->z += cx_shift * rz;
-                }
-                /* Vertical anchor correction: element Y=0 (feet) must align with
-                 * the thing's world Y. Generalises the old += hh (which assumed
-                 * off_y == -fh, i.e. all elements strictly above the feet). */
-                if (fh > 0) {
-                    bb->y += bb->half_size_y;
-                    bb->y -= 2.0f * bb->half_size_y * (float)(fh + off_y) / (float)fh;
-                } else {
-                    bb->y += bb->half_size_y;
-                }
+                /* Anchor offset: element X=0/Y=0 (the Thing's true world
+                 * anchor, bb->x/y/z as already set above) must appear at the
+                 * atlas pixel (-off_x, feet-relative -off_y), not at the quad's
+                 * geometric centre. Store this as a ratio of half_size (NOT a
+                 * baked world-unit shift) — the shift must be reapplied at
+                 * render time using whatever half_size is ACTUALLY used for the
+                 * quad (post distance-dampening, hwr_billboard_dist_scale in
+                 * hwr_sprite.c); baking it in here at capture-time size caused
+                 * the shift to desync from the later-scaled quad and made
+                 * asymmetric poses (arm/leg extended, bigger off_x/off_y) visibly
+                 * twitch as the dampening factor drifted with camera distance. */
+                bb->anchor_ratio_x = (fw > 0)
+                    ? ((float)off_x + (float)fw * 0.5f) * 2.0f / (float)fw : 0.0f;
+                bb->anchor_ratio_y = (fh > 0)
+                    ? (1.0f - 2.0f * (float)(fh + off_y) / (float)fh) : 1.0f;
             }
+            hwr_collected_key[hwr_collected_count] = (const void *)thing;
             hwr_collected_count++;
                 hwr_sprite_skip_mask[ss_idx >> 3] |= (uint8_t)(1 << (ss_idx & 7));
             }
@@ -1382,6 +1534,7 @@ void hwr_sw_collect_sprites(void)
     hwr_sw_collect_effects();
     hwr_sw_collect_glares();
     hwr_sw_collect_overlays();
+    hwr_sw_resolve_sprite_interp();
 
     /* ---- KP-7 one-shot debug dump (xBR/billboard stats) ---- */
     {
@@ -1409,14 +1562,34 @@ void hwr_sw_collect_sprites(void)
                     if (hwr_di_hist[di])
                         fprintf(df, " %d:%d", di, hwr_di_hist[di]);
                 fprintf(df, "\n");
-                for (di = 0; di < hwr_collected_count && di < 10; di++) {
-                    fprintf(df, " [%d]: pos=(%.0f,%.0f,%.0f) hw=%.0f hh=%.0f slot=%d shade=%d\n",
-                        di, hwr_collected_billboards[di].x, hwr_collected_billboards[di].y,
-                        hwr_collected_billboards[di].z,
-                        hwr_collected_billboards[di].half_size_x,
-                        hwr_collected_billboards[di].half_size_y,
-                        (int)hwr_collected_billboards[di].sprite,
-                        (int)hwr_collected_billboards[di].shade);
+                /* raw_scrd here, for calibrating sprite_dist_falloff: same formula
+                 * as hwr_billboard_dist_scale()/spr_build() in hwr_sprite.c, using
+                 * the captured (not render-interpolated) camera — close enough for
+                 * a stationary calibration screenshot. Also dumps min/max/avg over
+                 * ALL collected billboards so we can see the real depth range a
+                 * street view actually spans, instead of guessing a reference. */
+                {
+                    float scrd_min = 1e30f, scrd_max = -1e30f, scrd_sum = 0.0f;
+                    int scrd_n = 0;
+                    for (di = 0; di < hwr_collected_count; di++) {
+                        HwrBillboard *b = &hwr_collected_billboards[di];
+                        float cdx = b->x - (float)snap.xc;
+                        float cdy = b->y - 8.0f * (float)snap.yc;
+                        float cdz = b->z - (float)snap.zc;
+                        float cfb = ((float)snap.D10 * cdx + (float)snap.D14 * cdz) / 65536.0f;
+                        float raw_scrd = ((float)snap.D18 * cdy + (float)snap.D1C * cfb) / 65536.0f;
+                        if (raw_scrd < scrd_min) scrd_min = raw_scrd;
+                        if (raw_scrd > scrd_max) scrd_max = raw_scrd;
+                        scrd_sum += raw_scrd;
+                        scrd_n++;
+                        if (di < 40)
+                            fprintf(df, " [%d]: pos=(%.0f,%.0f,%.0f) hw=%.0f hh=%.0f slot=%d shade=%d raw_scrd=%.0f\n",
+                                di, b->x, b->y, b->z, b->half_size_x, b->half_size_y,
+                                (int)b->sprite, (int)b->shade, raw_scrd);
+                    }
+                    if (scrd_n > 0)
+                        fprintf(df, "raw_scrd range: min=%.0f max=%.0f avg=%.0f (n=%d)\n",
+                            scrd_min, scrd_max, scrd_sum / scrd_n, scrd_n);
                 }
                 fprintf(df, "skip_mask[0..7]:");
                 for (di = 0; di < 8 && di < (int)((next_sort_sprite + 7) / 8); di++)
@@ -1429,8 +1602,13 @@ void hwr_sw_collect_sprites(void)
     }
 }
 
+void hwr_quicklight_cache_flush(void);   /* defined below (quicklight memo) */
+
 void hwr_sw_capture(void)
 {
+    /* New present: invalidate the per-frame quicklight sum memo. */
+    hwr_quicklight_cache_flush();
+
     /* Keep the previous turn's camera so the present path can interpolate the
      * view toward the current one across the frames until the next capture. On
      * the very first capture there is no prior turn, so mirror the current one. */
@@ -1623,6 +1801,18 @@ extern unsigned char hwr_obj_transp_mask[8192];
  * buildings that still linger in game_objects[] but are no longer traversed. */
 extern unsigned char hwr_obj_live_mask[8192];
 
+/* Object-model ground-shadow decals captured by draw_object_model_shadow
+ * (tngobjdrw.c) during the SW build - the angled silhouette shadows matrix'd
+ * objects (buildings/temples, vehicles) cast on the ground. World-space quads
+ * with a page-4 shadow-texture rect; emitted into the blended transparent
+ * batch below. Mirrors struct HwrModelShadow (engindrwlstx.h). */
+struct HwrModelShadowMirror {
+    int32_t x[4], y[4], z[4];
+    uint8_t u1, v1, u2, v2;
+};
+extern struct HwrModelShadowMirror hwr_model_shadow_list[];
+extern int hwr_model_shadow_count;
+
 
 /* Texture pages packed contiguously (18 * 256 * 256) for the GL texture array. */
 static uint8_t   floor_pages[HWR_TMAP_PAGES * HWR_TMAP_DIM * HWR_TMAP_DIM];
@@ -1700,6 +1890,7 @@ static int corner_wave_y(int cx, int cz, int corner_gx, int corner_gz, int wx, i
  * (Texture==0) is a vertical occluder. Returns an "openness" byte (255 = fully
  * open, lower = more occluded) baked into the vertex so the shader darkens the
  * ambient fill at the base of walls and in corners. */
+__attribute__((unused))   /* superseded by the SW-exact corner_baked_shade */
 static uint8_t corner_ao(int cgx, int cgz)
 {
     int dx, dz, occ = 0;
@@ -1718,6 +1909,249 @@ static uint8_t corner_ao(int cgx, int cgz)
         if (open < 31) open = 31;
         return (uint8_t)open;
     }
+}
+
+/* --- Baked SW floor shade (default shadow system) -----------------------------
+ * The SW engine bakes each level's floor lighting - including building shadows -
+ * into the per-tile Ambient field. We render that directly (smoothed) so the GL
+ * floor reproduces the software look, instead of casting a dynamic sun shadow.
+ * Normalised against the level's mean Ambient so open ground reads ~full bright
+ * and baked-dark tiles fall off; box-blurred over a few tiles to remove the
+ * per-tile blockiness. STRENGTH deepens the contrast; both are ini-tunable via
+ * the ao slider (uAO) which scales the whole term in the shader. */
+static float    sn_amb_mean = 128.0f;   /* mean floor Ambient for normalisation */
+static uint32_t sn_amb_sig  = 0;
+static int      sn_amb_done = 0;
+static uint32_t sn_map_signature(void);   /* fwd (defined with the sun hint below) */
+
+/* Per-level blurred Ambient field. A small per-corner window (the old approach)
+ * only spans ~1 tile, so sharp shadow edges stayed blocky. Instead we blur the
+ * whole Ambient map once per level with a wide multi-pass box blur (separable,
+ * a few iterations ~ Gaussian) into this buffer, then just sample it per corner.
+ * Cheap (once per level) and genuinely smooth. */
+static float    sn_amb_blur[HWR_MAP_TILE_WIDTH * HWR_MAP_TILE_WIDTH];
+static float    sn_amb_tmp [HWR_MAP_TILE_WIDTH * HWR_MAP_TILE_WIDTH];
+
+/* Tunables for the baked-shade look (exposed as constants for now). */
+#define SN_BAKE_BLUR_R    1      /* box-blur radius in tiles (gentle edge smoothing) */
+#define SN_BAKE_BLUR_ITER 2      /* blur passes (more = smoother, softer) */
+#define SN_BAKE_STRENGTH  1.6f   /* >1 deepens shadows below the mean */
+#define SN_BAKE_MINBRIGHT 0.10f  /* deepest shadow (never pure black) */
+
+/* One separable box-blur pass (horizontal then vertical) with a running sum. */
+static void sn_box_blur_pass(float *buf, float *tmp, int R)
+{
+    const int W = HWR_MAP_TILE_WIDTH;
+    int x, y, i;
+    float inv = 1.0f / (float)(2 * R + 1);
+    /* Horizontal: buf -> tmp */
+    for (y = 0; y < W; y++) {
+        float *row = &buf[y * W];
+        float *orow = &tmp[y * W];
+        double run = 0.0;
+        for (i = -R; i <= R; i++) run += row[clampi(i, 0, W - 1)];
+        for (x = 0; x < W; x++) {
+            orow[x] = (float)(run * inv);
+            run -= row[clampi(x - R, 0, W - 1)];
+            run += row[clampi(x + R + 1, 0, W - 1)];
+        }
+    }
+    /* Vertical: tmp -> buf */
+    for (x = 0; x < W; x++) {
+        double run = 0.0;
+        for (i = -R; i <= R; i++) run += tmp[clampi(i, 0, W - 1) * W + x];
+        for (y = 0; y < W; y++) {
+            buf[y * W + x] = (float)(run * inv);
+            run -= tmp[clampi(y - R, 0, W - 1) * W + x];
+            run += tmp[clampi(y + R + 1, 0, W - 1) * W + x];
+        }
+    }
+}
+
+static void sn_update_amb_mean(void)
+{
+    uint32_t sig = sn_map_signature();
+    const int W = HWR_MAP_TILE_WIDTH;
+    double sum = 0.0; long n = 0; int i, tot = W * W, pass;
+    if (sn_amb_done && sig == sn_amb_sig)
+        return;
+    sn_amb_sig = sig; sn_amb_done = 1;
+    if (game_my_big_map == NULL) {
+        sn_amb_mean = 128.0f;
+        for (i = 0; i < tot; i++) sn_amb_blur[i] = 128.0f;
+        return;
+    }
+    /* Seed the blur buffer with raw Ambient and accumulate the mean. The rare
+     * non-floor cells (Texture==0) have no ambient; seed them with the running
+     * mean estimate so they don't punch dark holes into the blur. */
+    for (i = 0; i < tot; i++) {
+        struct HwrMapEl *m = &game_my_big_map[i];
+        if (m->Texture != 0) { sn_amb_blur[i] = (float)m->Ambient; sum += (double)m->Ambient; n++; }
+        else                 { sn_amb_blur[i] = -1.0f; }
+    }
+    sn_amb_mean = n ? (float)(sum / (double)n) : 128.0f;
+    if (sn_amb_mean < 1.0f) sn_amb_mean = 1.0f;
+    for (i = 0; i < tot; i++)
+        if (sn_amb_blur[i] < 0.0f) sn_amb_blur[i] = sn_amb_mean;
+    /* Wide multi-pass blur. */
+    for (pass = 0; pass < SN_BAKE_BLUR_ITER; pass++)
+        sn_box_blur_pass(sn_amb_blur, sn_amb_tmp, SN_BAKE_BLUR_R);
+}
+
+/* Per-vertex face shade, replicating the software renderer's matcap lighting
+ * (compute_normals_light_ratio in engindrwlstm_wrp.c). SW rotates each vertex's
+ * object-space normal (game_normals[Shade0..3]) into world space, then projects
+ * it through the SAME camera-rotation factors used to project points (D10/D14 =
+ * XZ rotation, D18/D1C = pitch/depth). The projected normal's screen-space X/Y
+ * pick a texel in a pre-lit "shading sphere" (matcap). We approximate that matcap
+ * with a directional light in that same screen space: faces whose normal points
+ * toward SN_FACE_L* (screen up-left, matching SW's baked light) are bright, the
+ * far side shaded. Camera-relative, so buildings re-shade as the view rotates —
+ * exactly how SW behaves. FLOOR keeps the dark side from going black. */
+/* Per-vertex face brightness, replicating the software renderer's face shading
+ * exactly (draw_object_face4d_textrd, engindrwlstx_fac.c):
+ *   mode 2 faces:  fixed S = 0x200000            -> shade index 32 = identity
+ *   other modes:   S = (Shade0<<7 + lights) << 7 -> shade index Shade0>>2,
+ *                  where index 32 = identity (texture as-is), 63 = ~2x bright.
+ * So Shade0..3 ARE the baked per-vertex brightnesses with 128 = identity.
+ * Map to a GL light byte with 255 = identity: light = Shade * 255/128 = ~Shade*2.
+ * SW's ushort wrap makes negative Shade values overbright -> clamp to 255.
+ * (Dynamic quicklights from Light0..3 are covered by GL's own light pass.) */
+/* SW-EXACT static face vertex shade (draw_object_face4d_textrd/face3d):
+ *   shd = Shade<<7 + SUM(quicklights via Light chain), idx = shd>>9,
+ * identity 32, overbright to 63. Same unified byte scale as the floor
+ * (128 = identity), so the faces pass reconstructs the level as vAO*2 and
+ * static lamps light walls from the SW data - not the GL radial pools. */
+static int sw_quicklight_sum(uint16_t light_first);   /* fwd (defined below) */
+static uint8_t sw_shade_to_byte(int shd);             /* fwd (defined below) */
+
+static uint8_t sw_face_shade(int16_t s, uint16_t light_first)
+{
+    int shd;
+    if (s < 0)                          /* SW ushort wrap -> clamped overbright */
+        return 252;
+    shd = ((int)s << 7) + sw_quicklight_sum(light_first);
+    return sw_shade_to_byte(shd);
+}
+
+static void hwr_world_normal(const HwrM33 *m, int nx, int ny, int nz, float out[3]); /* fwd */
+
+/* Face shade for ROTATED (dynamic) objects - vehicles, turrets, rotors.
+ * SW draws these through draw_object_face4g_textrd, where Shade0..3 are indices
+ * into game_normals[] and the brightness is recomputed each frame from the
+ * rotated normal (compute_normals_light_ratio): the normal is rotated by the
+ * object matrix, projected through the camera factors, and its view-depth
+ * component becomes the shade. Replicated here in float with a unit normal:
+ * s in [-1..1], negative clamped to 0 exactly as SW does. */
+static uint8_t sw_face_shade_dynamic(int16_t nidx, const HwrM33 *m)
+{
+    float n[3], fp, s;
+    int v;
+    if (nidx <= 0 || nidx >= (int16_t)next_normal || game_normals == NULL)
+        return 200;                              /* no normal -> neutral */
+    {
+        struct HwrNormal *nn = &game_normals[nidx];
+        hwr_world_normal(m, nn->NX, nn->NY, nn->NZ, n);   /* unit, world space */
+    }
+    fp = ((float)snap.D10 * n[0] + (float)snap.D14 * n[2]) / 65536.0f;
+    s  = ((float)snap.D18 * n[1] + (float)snap.D1C * fp)   / 65536.0f;
+    if (s < 0.0f) s = -s;   /* mesh winding is inconsistent; use magnitude */
+    if (s > 1.0f) s = 1.0f;
+    /* Unified scale: 128 = identity (the faces pass reconstructs level as
+     * vAO*2), so a fully camera-facing normal (s=1) = identity brightness. */
+    v = (int)(s * 128.0f + 0.5f);
+    if (v < 12) v = 12;     /* keep grazing faces from pure black */
+    return (uint8_t)v;
+}
+
+/* Floor-corner brightness, replicating the software renderer exactly
+ * (shpoint_compute_shade, lvdraw3d.c): each corner point's shade starts from the
+ * corner cell's baked Ambient, where shade index 32 = identity (texture as-is)
+ * -> Ambient 128 = identity. Dynamic lamp light is added by the GL light pass
+ * (SW adds sqlight/quicklights the same way). Gouraud interpolation across the
+ * tile comes free from the per-corner vertices - same smoothing as SW. */
+/* SW-EXACT floor lighting for a grid corner, replicating shpoint_compute_shade
+ * (lvdraw3d.c) with the same data the software renderer uses:
+ *   shd = (Ambient << 7) + 256 + SUM(FullLight.Intensity * QuickLight.Ratio)
+ *   shade index = shd >> 9, identity 32, overbright to 63.
+ * The per-tile QuickLight list (mapel->Shade -> game_quick_lights) is the
+ * engine's precomputed static lighting: every map lamp's pool AND the
+ * negative-intensity anti-lights (building shadows) with per-corner falloff
+ * ratios. So this one value IS the complete static SW floor light - lamps,
+ * shadows, ambient - at SW's own numbers. (ReflShade and the transient person
+ * super_quick_light term are omitted: minor, and dynamic GL lights cover the
+ * latter.) Returned as a light byte with 128 = identity (idx*4), so the shader
+ * reconstructs the level as vAO*2 (up to ~2x overbright at 252). */
+/* SUM(FullLight.Intensity * QuickLight.Ratio) over a quicklight chain - the
+ * engine's precomputed static lighting term (cummulate_shade_from_quick_lights):
+ * every map lamp's pool and the negative-intensity anti-light shadows, with
+ * per-point falloff ratios. Shared by the floor corners (mapel->Shade chain)
+ * and the object faces (face->Light0..3 chains). */
+/* Memoised per frame: the sums are per chain HEAD, and the chains only change
+ * per game turn, but this gets called for every face vertex and floor corner
+ * every present (tens of thousands of walks of randomly-scattered nodes) -
+ * uncached it dropped the frame rate to turn rate. */
+static int32_t  ql_sum_cache[65536];
+static uint32_t ql_sum_stamp[65536];
+static uint32_t ql_sum_frame = 0;
+
+void hwr_quicklight_cache_flush(void)
+{
+    ql_sum_frame++;    /* invalidates every stamp lazily */
+}
+
+static int sw_quicklight_sum(uint16_t light_first)
+{
+    int shd = 0, i;
+    uint16_t light;
+    if (light_first == 0 || game_quick_lights == NULL || game_full_lights == NULL)
+        return 0;
+    if (ql_sum_stamp[light_first] == ql_sum_frame)
+        return ql_sum_cache[light_first];
+    for (light = light_first, i = 0;
+         light != 0 && light < next_quick_light && i <= 100; i++) {
+        struct HwrQuickLight *ql = &game_quick_lights[light];
+        if (ql->Light < next_full_light)
+            shd += (int)game_full_lights[ql->Light].Intensity * (int)ql->Ratio;
+        light = ql->NextQuick;
+    }
+    ql_sum_cache[light_first] = shd;
+    ql_sum_stamp[light_first] = ql_sum_frame;
+    return shd;
+}
+
+/* SW shade word -> light byte on the unified scale: index = shd>>9 (identity
+ * 32, overbright caps at 63 ~= 2x), byte = index*4 so 128 = identity. */
+static uint8_t sw_shade_to_byte(int shd)
+{
+    int v;
+    if (shd < 0)      shd = 0;
+    if (shd > 0x7E00) shd = 0x7F00;   /* SW clamp */
+    v = (shd >> 9) * 4;
+    if (v > 255) v = 255;
+    if (v < 4)   v = 4;               /* never pure black */
+    return (uint8_t)v;
+}
+
+static uint8_t corner_baked_shade(int cgx, int cgz)
+{
+    const int W = HWR_MAP_TILE_WIDTH;
+    struct HwrMapEl *m =
+        &game_my_big_map[W * clampi(cgz, 0, W-1) + clampi(cgx, 0, W-1)];
+    /* Prefer the map's baked ShadeR (the complete static shade the level was
+     * authored with, shade-index scale, 32 = identity): under FX3D the SW floor
+     * pass that would recompute it is skipped, so it survives from load - and
+     * it carries the properly SHAPED (diagonal, sun-angled) building shadows
+     * that the runtime Ambient+quicklight reconstruction was rendering as
+     * axis-aligned squares. Cells without a baked value (never floor-shaded,
+     * e.g. column cells) fall back to the runtime formula. */
+    if (m->ShadeR != 0) {
+        int v = (int)m->ShadeR * 4;
+        if (v > 255) v = 255;
+        return (uint8_t)v;
+    }
+    return sw_shade_to_byte(((int)m->Ambient << 7) + 256
+                            + sw_quicklight_sum(m->Shade));
 }
 
 /* For column/building cells (Texture==0), find the nearest valid floor tile
@@ -1745,6 +2179,176 @@ static int nearest_floor_neighbour(int gx, int gz, int *out_texidx, uint8_t *out
         }
     }
     return 0;
+}
+
+/* ---- Auto-derived sun azimuth from the level's baked floor lighting --------
+ * SW stores no sun angle; each level's directional look is baked into the
+ * per-tile ambient brightness. A building footprint (Texture==0) leaves the
+ * floor tile on its anti-sun side darker than the level average, so the darker
+ * neighbours of buildings reveal the shadow direction. We compare each building
+ * cell's floor neighbours against the mean floor ambient, accumulate a net
+ * "toward the shadow" vector, and take the sun as its opposite. Cached per level
+ * (keyed on a cheap layout signature) and logged once so the result is visible.
+ * Returns azimuth in degrees, or a negative sentinel when the baked data carries
+ * no usable directional signal (flat/symmetric ambient) -> caller keeps the ini
+ * azimuth. */
+static uint32_t sn_hint_sig  = 0;
+static int      sn_hint_done = 0;
+static HwrSunHint sn_hint;                  /* last computed result + diagnostics */
+
+static uint32_t sn_map_signature(void)
+{
+    /* FNV-1a over a sparse Alt sample. Alt is static per level, unlike Texture
+     * (whose animation flag bits toggle per frame) or Shade (live lighting), so
+     * the scan recomputes once per level instead of every frame. */
+    uint32_t sig = 2166136261u;
+    int i, n = HWR_MAP_TILE_WIDTH * HWR_MAP_TILE_WIDTH;
+    if (game_my_big_map == NULL)
+        return 0;
+    for (i = 0; i < n; i += 37)
+        sig = (sig ^ (uint32_t)(uint16_t)game_my_big_map[i].Alt) * 16777619u;
+    return sig;
+}
+
+/* Scan one baked floor field (0 = Ambient, 1 = Shade) for a directional sun
+ * signal. Buildings here are objects/columns, not floor-texture holes, so we do
+ * not look for footprints: instead we take the darkness-weighted brightness
+ * gradient over every floor tile. A tile sitting in a baked shadow is darker
+ * than its lit neighbours, so its local gradient points toward the lit (sun)
+ * side; weighting each tile's gradient by how far below the mean it sits and
+ * summing gives a net "toward the sun" vector. Fills *az (deg, <0 if none),
+ * *coh (0..1 agreement) and *std (field spread; ~0 means a flat field with no
+ * baked shading at all). */
+static void sn_scan_field(int use_shade,
+    double *az, double *coh, double *std, long *nfloor_out)
+{
+    const int W = HWR_MAP_TILE_WIDTH;
+    double sum = 0.0, sum2 = 0.0, mean, variance;
+    double sx = 0.0, sz = 0.0, wacc = 0.0, mag;
+    long   n = 0;
+    int gx, gz;
+
+    *az = -1.0; *coh = 0.0; *std = 0.0;
+
+    for (gz = 0; gz < W; gz++)
+        for (gx = 0; gx < W; gx++) {
+            struct HwrMapEl *me = &game_my_big_map[W*gz+gx];
+            double v;
+            if (me->Texture == 0) continue;         /* skip the rare non-floor cells */
+            v = use_shade ? (double)me->Shade : (double)me->Ambient;
+            sum += v; sum2 += v*v; n++;
+        }
+    if (nfloor_out) *nfloor_out = n;
+    if (n < 64) return;
+    mean = sum / (double)n;
+    variance = sum2/(double)n - mean*mean;
+    *std = variance > 0.0 ? sqrt(variance) : 0.0;
+
+    /* Local high-pass: weight each tile by how far it sits BELOW its own local
+     * neighbourhood mean (a real cast shadow is a local dip), not the global
+     * mean - that removes broad surface-type brightness (roads vs pavement) and
+     * lets the directional shadow signal survive. R sets the neighbourhood. */
+    #define FLD(m) (use_shade ? (double)(m)->Shade : (double)(m)->Ambient)
+    {
+        const int R = 3;
+        for (gz = 1; gz < W-1; gz++)
+            for (gx = 1; gx < W-1; gx++) {
+                struct HwrMapEl *me = &game_my_big_map[W*gz+gx];
+                struct HwrMapEl *l = &game_my_big_map[W*gz+(gx-1)];
+                struct HwrMapEl *r = &game_my_big_map[W*gz+(gx+1)];
+                struct HwrMapEl *u = &game_my_big_map[W*(gz-1)+gx];
+                struct HwrMapEl *dn= &game_my_big_map[W*(gz+1)+gx];
+                double fc, ggx, ggz, w, lm; long lc;
+                int wx, wz;
+                if (me->Texture==0 || l->Texture==0 || r->Texture==0 ||
+                    u->Texture==0 || dn->Texture==0)
+                    continue;                        /* need 4 floor neighbours */
+                fc = FLD(me);
+                /* Local neighbourhood mean (floor tiles only). */
+                lm = 0.0; lc = 0;
+                for (wz = -R; wz <= R; wz++)
+                    for (wx = -R; wx <= R; wx++) {
+                        int nx = gx+wx, nz = gz+wz;
+                        struct HwrMapEl *nm;
+                        if (nx<0||nx>=W||nz<0||nz>=W) continue;
+                        nm = &game_my_big_map[W*nz+nx];
+                        if (nm->Texture==0) continue;
+                        lm += FLD(nm); lc++;
+                    }
+                if (lc < 4) continue;
+                lm /= (double)lc;
+                w = lm - fc;                          /* >0 => locally darker (shadow) */
+                if (w <= 0.0) continue;              /* only local dips carry direction */
+                ggx = FLD(r) - FLD(l);               /* toward brighter (+x) */
+                ggz = FLD(dn) - FLD(u);              /* toward brighter (+z) */
+                sx += w * ggx;
+                sz += w * ggz;
+                wacc += w * (fabs(ggx) + fabs(ggz));
+            }
+    }
+    #undef FLD
+
+    mag = sqrt(sx*sx + sz*sz);
+    *coh = (wacc > 1e-6) ? mag / wacc : 0.0;
+    if (mag < 1e-6) return;
+    {
+        /* (sx,sz) points toward the sun; azimuth in hwr_sun's convention
+         * (dx=sin(az), dz=cos(az)). */
+        double a = atan2(sx, sz) * 180.0 / 3.14159265358979;
+        if (a < 0.0) a += 360.0;
+        *az = a;
+    }
+}
+
+static void sn_derive_sun_azimuth(void)
+{
+    double a_az, a_coh, a_std, s_az, s_coh, s_std;
+    long   nfloor = 0;
+
+    memset(&sn_hint, 0, sizeof(sn_hint));
+    sn_hint.azimuth = -1.0f;
+    if (game_my_big_map == NULL) {
+        sn_hint.map_null = 1;
+        return;
+    }
+
+    sn_scan_field(0, &a_az, &a_coh, &a_std, &nfloor);  /* Ambient */
+    sn_scan_field(1, &s_az, &s_coh, &s_std, NULL);     /* Shade   */
+
+    sn_hint.nfloor = nfloor;
+    sn_hint.amb_az = (float)a_az; sn_hint.amb_coh = (float)a_coh; sn_hint.amb_std = (float)a_std;
+    sn_hint.shd_az = (float)s_az; sn_hint.shd_coh = (float)s_coh; sn_hint.shd_std = (float)s_std;
+
+    /* Pick the field that has real spread AND a coherent direction; prefer the
+     * more coherent one. Thresholds are deliberately loose - the per-field
+     * diagnostics are logged so they can be tightened once we see real levels. */
+    {
+        /* Only Ambient is baked; Shade is the live quick-light mask (ignored).
+         * Coherence stays low because most tiles are open ground with no shadow,
+         * so we accept a weak-but-consistent direction and validate visually. */
+        (void)s_az; (void)s_coh; (void)s_std;
+        if (a_std >= 2.0 && a_coh >= 0.03 && a_az >= 0.0) {
+            sn_hint.field = 1;
+            sn_hint.azimuth = (float)a_az;
+            sn_hint.coherence = (float)a_coh;
+        }
+    }
+}
+
+void hwr_sw_sun_hint(HwrSunHint *out)
+{
+    uint32_t sig = sn_map_signature();
+    int recomputed = 0;
+    if (!sn_hint_done || sig != sn_hint_sig) {
+        sn_hint_sig  = sig;
+        sn_hint_done = 1;
+        sn_derive_sun_azimuth();
+        recomputed = 1;         /* map (level) changed this call */
+    }
+    if (out != NULL) {
+        *out = sn_hint;
+        out->fresh = recomputed;
+    }
 }
 
 static int sw_get_camera(void *ctx, HwrCamera *out)
@@ -1792,12 +2396,21 @@ static int sw_get_camera(void *ctx, HwrCamera *out)
     out->perspective = snap.persp;
     out->view_w = sw_view_w;
     out->view_h = sw_view_h;
+    /* World-space half-extent of the visible floor (sw_get_floor builds tiles out
+     * to render_area+2 around the camera). The sun shadow map uses this to size
+     * its ortho frustum to the actual zoom instead of a fixed 32-tile box, so
+     * shadows cover the whole view and stay proportionally sharp. */
+    {
+        int r = (snap.ra > snap.rb ? snap.ra : snap.rb);
+        r = (r ? r + 2 : 24);
+        out->world_half = (float)(r << 8);   /* tiles -> world units (tile<<8) */
+    }
     return 0;
 }
 
 static int sw_get_floor(void *ctx, HwrGeometryBatch *out)
 {
-    int cx, cz, ra, rb, gx, gz, x0, x1, z0, z1;
+    int gx, gz, x0, x1, z0, z1;
     (void)ctx;
     floor_vert_count = 0;
     floor_index_count = 0;
@@ -1808,14 +2421,13 @@ static int sw_get_floor(void *ctx, HwrGeometryBatch *out)
     if (game_my_big_map == NULL || game_textures == NULL || out == NULL || !snap.valid)
         return 0;
 
-    cx = snap.xc >> 8;
-    cz = snap.zc >> 8;
-    ra = snap.ra ? snap.ra + 2 : 24;
-    rb = snap.rb ? snap.rb + 2 : 24;
-    x0 = clampi(cx - ra, 0, HWR_MAP_TILE_WIDTH - 2);
-    x1 = clampi(cx + ra, 0, HWR_MAP_TILE_WIDTH - 2);
-    z0 = clampi(cz - rb, 0, HWR_MAP_TILE_WIDTH - 2);
-    z1 = clampi(cz + rb, 0, HWR_MAP_TILE_WIDTH - 2);
+    sn_update_amb_mean();   /* refresh the baked-shade normalisation for this level */
+
+    hwr_floor_window_bounds(&x0, &x1, &z0, &z1);
+    x0 = clampi(x0, 0, HWR_MAP_TILE_WIDTH - 2);
+    x1 = clampi(x1, 0, HWR_MAP_TILE_WIDTH - 2);
+    z0 = clampi(z0, 0, HWR_MAP_TILE_WIDTH - 2);
+    z1 = clampi(z1, 0, HWR_MAP_TILE_WIDTH - 2);
 
     for (gz = z0; gz <= z1; gz++) {
         for (gx = x0; gx <= x1; gx++) {
@@ -1843,6 +2455,7 @@ static int sw_get_floor(void *ctx, HwrGeometryBatch *out)
                 if (!nearest_floor_neighbour(gx, gz, &ni, &inherited_shade, &tile_flags, &tile_ambient)) continue;
                 texidx = ni;
             }
+            (void)tile_ambient;   /* Ambient now read per corner in corner_baked_shade */
             tx = &game_textures[texidx];
 
             base = floor_vert_count;
@@ -1883,10 +2496,14 @@ static int sw_get_floor(void *ctx, HwrGeometryBatch *out)
              * meets buildings/columns. Replaces the SW per-tile ShadeR (which is
              * near-flat on open ground and reads as no occlusion). */
             (void)inherited_shade;
-            v[0].light = corner_ao(gx,     gz);
-            v[1].light = corner_ao(gx + 1, gz);
-            v[2].light = corner_ao(gx + 1, gz + 1);
-            v[3].light = corner_ao(gx,     gz + 1);
+            /* Baked SW floor shade (smoothed): reproduces the software floor's
+             * lighting/building shadows. Replaces the geometric corner AO, which
+             * did almost nothing here (buildings are objects, not Texture==0
+             * floor cells). The GL sun shadow map is the alternative (sun_enable). */
+            v[0].light = corner_baked_shade(gx,     gz);
+            v[1].light = corner_baked_shade(gx + 1, gz);
+            v[2].light = corner_baked_shade(gx + 1, gz + 1);
+            v[3].light = corner_baked_shade(gx,     gz + 1);
             /* Mirrors lvdraw3d.c's floor mode pick: Flags&0x20 selects glass
              * mode 21 (unshaded, like object window glass) over the normal
              * dynamically-shaded mode 5; Flags&0x01 separately forces the SW
@@ -1897,13 +2514,16 @@ static int sw_get_floor(void *ctx, HwrGeometryBatch *out)
              * asphalt - fold it in the same way so it isn't lost to GL's
              * geometric AO + dynamic sun/shadow. */
             {
+                /* Flags 0x20 (glass mode 21) / 0x01 (forced max shade) stay
+                 * emissive as in SW. The old "emissive = tile Ambient" hack is
+                 * gone: Ambient now feeds the per-corner light directly (see
+                 * corner_baked_shade), Gouraud-smooth like SW, instead of a
+                 * flat per-tile floor that showed as square patches. */
                 uint8_t floor_em = 0;
                 if (tile_flags & 0x20)
                     floor_em = 255;
                 if (tile_flags & 0x01)
                     floor_em = 255;
-                if (tile_ambient > floor_em)
-                    floor_em = (tile_ambient > 255) ? 255 : (uint8_t)tile_ambient;
                 v[0].emissive = v[1].emissive = v[2].emissive = v[3].emissive = floor_em;
             }
             floor_vert_count += 4;
@@ -1953,6 +2573,8 @@ static void face_emit_vert(int wx, int wy, int wz, uint8_t u, uint8_t v,
     o->tile_depth = depth;
     o->emissive = emissive;
 }
+
+static void emit_model_shadows(void);   /* fwd (defined with the trans sort below) */
 
 /* Emit one transparent (blended) face vertex into the transparent batch. */
 static void trans_emit_vert(int wx, int wy, int wz, uint8_t u, uint8_t v,
@@ -2131,19 +2753,16 @@ static int hwr_damaged_ground_uv(int nb, uint8_t u[4], uint8_t v[4])
  * exactly so the decal lands flush on its floor tile. */
 static void emit_floor_damage_decals(void)
 {
-    int cx, cz, ra, rb, x0, x1, z0, z1, gx, gz;
+    int x0, x1, z0, z1, gx, gz;
 
     if (game_my_big_map == NULL || !snap.valid)
         return;
 
-    cx = snap.xc >> 8;
-    cz = snap.zc >> 8;
-    ra = snap.ra ? snap.ra + 2 : 24;
-    rb = snap.rb ? snap.rb + 2 : 24;
-    x0 = clampi(cx - ra, 0, HWR_MAP_TILE_WIDTH - 2);
-    x1 = clampi(cx + ra, 0, HWR_MAP_TILE_WIDTH - 2);
-    z0 = clampi(cz - rb, 0, HWR_MAP_TILE_WIDTH - 2);
-    z1 = clampi(cz + rb, 0, HWR_MAP_TILE_WIDTH - 2);
+    hwr_floor_window_bounds(&x0, &x1, &z0, &z1);
+    x0 = clampi(x0, 0, HWR_MAP_TILE_WIDTH - 2);
+    x1 = clampi(x1, 0, HWR_MAP_TILE_WIDTH - 2);
+    z0 = clampi(z0, 0, HWR_MAP_TILE_WIDTH - 2);
+    z1 = clampi(z1, 0, HWR_MAP_TILE_WIDTH - 2);
 
     for (gz = z0; gz <= z1; gz++) {
         for (gx = x0; gx <= x1; gx++) {
@@ -2168,8 +2787,11 @@ static void emit_floor_damage_decals(void)
             wy[1]=(float)(8*corner_alt(gx,gz, gx+1, gz)   + corner_wave_y(gx,gz, gx+1, gz,   (int)wx[1],(int)wz[1]));
             wy[2]=(float)(8*corner_alt(gx,gz, gx+1, gz+1) + corner_wave_y(gx,gz, gx+1, gz+1, (int)wx[2],(int)wz[2]));
             wy[3]=(float)(8*corner_alt(gx,gz, gx,   gz+1) + corner_wave_y(gx,gz, gx,   gz+1, (int)wx[3],(int)wz[3]));
-            lt[0]=corner_ao(gx,gz);     lt[1]=corner_ao(gx+1,gz);
-            lt[2]=corner_ao(gx+1,gz+1); lt[3]=corner_ao(gx,gz+1);
+            /* Damage decals lie flat on the floor and ride the faces pass, which
+             * now uses the unified 128-identity scale - light them with the same
+             * SW per-corner floor shade so they match the ground they overlay. */
+            lt[0]=corner_baked_shade(gx,gz);     lt[1]=corner_baked_shade(gx+1,gz);
+            lt[2]=corner_baked_shade(gx+1,gz+1); lt[3]=corner_baked_shade(gx,gz+1);
             for (c = 0; c < 4; c++)
                 dep[c] = face_scrd(wx[c], wy[c], wz[c]) - HWR_DECAL_DEPTH_BIAS;
 
@@ -2291,8 +2913,10 @@ static void emit_explode_faces(void)
         }
 
         base = face_vert_count;
+        /* 128 = identity on the unified faces-pass scale (was 255 when the
+         * pass treated 255 as identity) - fragments stay full-bright. */
         for (k = 0; k < npt; k++)
-            face_emit_vert(cxs[k], cys[k], czs[k], cu[k], cv[k], page, 255,
+            face_emit_vert(cxs[k], cys[k], czs[k], cu[k], cv[k], page, 128,
                 face_scrd((float)cxs[k], (float)cys[k], (float)czs[k]), 0);
 
         if (quad) {
@@ -2313,7 +2937,7 @@ static void emit_explode_faces(void)
 
 static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
 {
-    int cx, cz, ra, rb, x0, x1, z0, z1;
+    int x0, x1, z0, z1;
     unsigned o;
     (void)ctx;
     face_vert_count = 0;
@@ -2332,12 +2956,7 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
         game_textures == NULL || out == NULL || !snap.valid)
         return 0;
 
-    cx = snap.xc >> 8;
-    cz = snap.zc >> 8;
-    ra = (snap.ra ? snap.ra + 2 : 24);
-    rb = (snap.rb ? snap.rb + 2 : 24);
-    x0 = cx - ra; x1 = cx + ra;
-    z0 = cz - rb; z1 = cz + rb;
+    hwr_floor_window_bounds(&x0, &x1, &z0, &z1);
 
     memset(face_obj_seen, 0, sizeof(face_obj_seen));
 
@@ -2473,6 +3092,7 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
             continue;
         face_obj_seen[o >> 3] |= (uint8_t)(1 << (o & 7));
 
+
         /* Deep-radar see-through: whole object flagged semi-transparent by the
          * SW engine this frame -> all its (non-reflective) faces blend.
          * [transparency] debug=1 forces every object transparent (diagnostic to
@@ -2606,10 +3226,15 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
             }
 
             /* Full emissive for face modes SW renders at fixed brightness
-             * regardless of scene lighting (window glass + raw texture
-             * blits - see hwr_mode_is_emissive). */
+             * regardless of scene lighting (window glass + raw texture blits -
+             * see hwr_mode_is_emissive). ONLY for non-rotated objects: SW's
+             * fixed-identity mode-2 special case lives in draw_object_face4d;
+             * rotated objects (matrix set - vehicles, swaying trees) draw via
+             * draw_object_face4g, which normal-shades EVERY mode per frame.
+             * Treating a rotated object's mode-2 faces as emissive rendered
+             * them full-bright (washed-out pink park trees). */
             uint8_t em[4] = {0, 0, 0, 0};
-            if (hwr_mode_is_emissive(fc->Flags))
+            if (obj_mat == NULL && hwr_mode_is_emissive(fc->Flags))
                 em[0] = em[1] = em[2] = em[3] = 255;
 
             /* Quad diagonal is PN1-PN2, matching draw_object_face4d_textrd:
@@ -2632,11 +3257,29 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
                 trans_index[trans_index_count++] = base + 1;
                 trans_index[trans_index_count++] = base + 2;
             } else {
+                /* SW per-vertex face shading. Static objects (buildings) bake the
+                 * brightness in Shade0..3 (128 = identity, draw_object_face4d);
+                 * rotated objects (vehicles - obj_mat set) use Shade0..3 as
+                 * normal indices and recompute from the rotated normal each
+                 * frame (draw_object_face4g). Mode-2 faces are identity-flat in
+                 * SW and ride the emissive path (em=255) instead. */
+                uint8_t fl0, fl1, fl2, fl3;
+                if (obj_mat != NULL) {
+                    fl0 = sw_face_shade_dynamic(fc->Shade0, obj_mat);
+                    fl1 = sw_face_shade_dynamic(fc->Shade1, obj_mat);
+                    fl2 = sw_face_shade_dynamic(fc->Shade2, obj_mat);
+                    fl3 = sw_face_shade_dynamic(fc->Shade3, obj_mat);
+                } else {
+                    fl0 = sw_face_shade(fc->Shade0, (uint16_t)fc->Light0);
+                    fl1 = sw_face_shade(fc->Shade1, (uint16_t)fc->Light1);
+                    fl2 = sw_face_shade(fc->Shade2, (uint16_t)fc->Light2);
+                    fl3 = sw_face_shade(fc->Shade3, (uint16_t)fc->Light3);
+                }
                 base = face_vert_count;
-                face_emit_vert(wx[0], wy[0], wz[0], u0, v0c, pg, 200, sd[0], em[0]);
-                face_emit_vert(wx[1], wy[1], wz[1], u1, v1c, pg, 200, sd[1], em[1]);
-                face_emit_vert(wx[2], wy[2], wz[2], u2, v2c, pg, 200, sd[2], em[2]);
-                face_emit_vert(wx[3], wy[3], wz[3], u3, v3c, pg, 200, sd[3], em[3]);
+                face_emit_vert(wx[0], wy[0], wz[0], u0, v0c, pg, fl0, sd[0], em[0]);
+                face_emit_vert(wx[1], wy[1], wz[1], u1, v1c, pg, fl1, sd[1], em[1]);
+                face_emit_vert(wx[2], wy[2], wz[2], u2, v2c, pg, fl2, sd[2], em[2]);
+                face_emit_vert(wx[3], wy[3], wz[3], u3, v3c, pg, fl3, sd[3], em[3]);
                 face_index[face_index_count++] = base + 0;
                 face_index[face_index_count++] = base + 2;
                 face_index[face_index_count++] = base + 1;
@@ -2749,9 +3392,10 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
                 sd[k] = face_scrd((float)wx[k], (float)wy[k], (float)wz[k]);
             }
 
-            /* See the face4 loop above / hwr_mode_is_emissive. */
+            /* See the face4 loop above / hwr_mode_is_emissive: emissive modes
+             * only apply to non-rotated objects (rotated = normal-shaded). */
             uint8_t em3[3] = {0, 0, 0};
-            if (hwr_mode_is_emissive(fc->Flags))
+            if (obj_mat == NULL && hwr_mode_is_emissive(fc->Flags))
                 em3[0] = em3[1] = em3[2] = 255;
 
             if (is_transp) {
@@ -2764,10 +3408,26 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
                 trans_index[trans_index_count++] = base + 1;
                 trans_index[trans_index_count++] = base + 2;
             } else {
+                /* SW per-vertex shading. Rotated objects (matrix set) draw via
+                 * the "g" variant: normal-shaded per frame for EVERY mode.
+                 * Non-rotated (draw_object_face3d): modes 0/2 identity-flat,
+                 * otherwise Shade0..2 = baked brightness. */
+                uint8_t fl0, fl1, fl2;
+                if (obj_mat != NULL) {
+                    fl0 = sw_face_shade_dynamic(fc->Shade0, obj_mat);
+                    fl1 = sw_face_shade_dynamic(fc->Shade1, obj_mat);
+                    fl2 = sw_face_shade_dynamic(fc->Shade2, obj_mat);
+                } else if (fc->Flags == 0 || fc->Flags == 2) {
+                    fl0 = fl1 = fl2 = 128;   /* SW identity-flat (unified scale) */
+                } else {
+                    fl0 = sw_face_shade(fc->Shade0, fc->Light0);
+                    fl1 = sw_face_shade(fc->Shade1, fc->Light1);
+                    fl2 = sw_face_shade(fc->Shade2, fc->Light2);
+                }
                 base = face_vert_count;
-                face_emit_vert(wx[0], wy[0], wz[0], u0, v0c, pg, 200, sd[0], em3[0]);
-                face_emit_vert(wx[1], wy[1], wz[1], u1, v1c, pg, 200, sd[1], em3[1]);
-                face_emit_vert(wx[2], wy[2], wz[2], u2, v2c, pg, 200, sd[2], em3[2]);
+                face_emit_vert(wx[0], wy[0], wz[0], u0, v0c, pg, fl0, sd[0], em3[0]);
+                face_emit_vert(wx[1], wy[1], wz[1], u1, v1c, pg, fl1, sd[1], em3[1]);
+                face_emit_vert(wx[2], wy[2], wz[2], u2, v2c, pg, fl2, sd[2], em3[2]);
                 face_index[face_index_count++] = base + 0;
                 face_index[face_index_count++] = base + 1;
                 face_index[face_index_count++] = base + 2;
@@ -2785,6 +3445,7 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
      * overlay the base floor/faces already emitted this pass. */
     emit_floor_damage_decals();
     emit_explode_faces();
+    emit_model_shadows();
 
     out->verts = face_verts;
     out->vert_count = face_vert_count;
@@ -2806,6 +3467,49 @@ static int sw_get_reflect_faces(void *ctx, HwrReflectBatch *out)
     out->indices = refl_index;
     out->index_count = refl_index_count;
     return refl_index_count;
+}
+
+/* Emit the object-model ground-shadow decals captured during the SW build
+ * (draw_object_model_shadow: the angled silhouette shadows matrix'd objects -
+ * buildings/temples, vehicles - cast on the ground) into the blended
+ * transparent batch. Each is a world-space quad textured from the page-4
+ * shadow art; SW draws them ghosted (mode 10, ~50% darken), which the blended
+ * pass's alpha reproduces. Texel 0 (outside the silhouette) is the transparent
+ * key, discarded by the pass. Depth-biased toward the camera like the other
+ * floor decals so they sit on top of the ground. */
+static void emit_model_shadows(void)
+{
+    int i;
+    if (!snap.valid)
+        return;
+    for (i = 0; i < hwr_model_shadow_count; i++) {
+        struct HwrModelShadowMirror *ms = &hwr_model_shadow_list[i];
+        uint8_t cu[4], cv[4];
+        int base, k;
+        if (trans_vert_count + 4 > HWR_TRANS_MAX_VERTS ||
+            trans_index_count + 6 > HWR_TRANS_MAX_INDEX)
+            return;
+        /* Corner ring 1..4 maps the texture rect (X1,Y1)-(X2,Y2):
+         * cor1=(-w,-l)->(u1,v1)  cor2=(+w,-l)->(u2,v1)
+         * cor3=(+w,+l)->(u2,v2)  cor4=(-w,+l)->(u1,v2). */
+        cu[0]=ms->u1; cv[0]=ms->v1;
+        cu[1]=ms->u2; cv[1]=ms->v1;
+        cu[2]=ms->u2; cv[2]=ms->v2;
+        cu[3]=ms->u1; cv[3]=ms->v2;
+        base = trans_vert_count;
+        for (k = 0; k < 4; k++) {
+            float dep = face_scrd((float)ms->x[k], (float)ms->y[k],
+                (float)ms->z[k]) - HWR_DECAL_DEPTH_BIAS;
+            trans_emit_vert(ms->x[k], ms->y[k], ms->z[k], cu[k], cv[k],
+                4 /* shadow art page */, 128 /* identity */, dep, 0);
+        }
+        trans_index[trans_index_count++] = base + 0;
+        trans_index[trans_index_count++] = base + 1;
+        trans_index[trans_index_count++] = base + 2;
+        trans_index[trans_index_count++] = base + 0;
+        trans_index[trans_index_count++] = base + 2;
+        trans_index[trans_index_count++] = base + 3;
+    }
 }
 
 /* One transparent triangle keyed by centroid depth for back-to-front sorting. */
@@ -3127,6 +3831,7 @@ static int sw_get_lights(void *ctx, HwrLight *out, int max)
         out[i].y = (float)fl->Y;
         out[i].z = (float)fl->Z + 50.0f;    /* 50 PRC south */
         out[i].fdx = 0.0f; out[i].fdz = 0.0f;   /* map lights are round */
+        out[i].dynamic = 0;                     /* static map lamp / anti-light */
         if (fl->TrueIntensity < 0) {
             /* Anti-light: shader reads .r as the darkening amount and the
              * negative radius as the flag. Use TrueIntensity (stable,
@@ -3261,6 +3966,7 @@ static int sw_get_lights(void *ctx, HwrLight *out, int max)
                 out[nnearest].max_dist2 = HL_REACH * HL_REACH;
                 out[nnearest].fdx = fx;               /* shaped: teardrop along forward */
                 out[nnearest].fdz = fz;
+                out[nnearest].dynamic = 1;
                 nnearest++;
             }
             for (s = -1; s <= 1; s += 2) {
@@ -3275,6 +3981,7 @@ static int sw_get_lights(void *ctx, HwrLight *out, int max)
                 out[nnearest].radius = 1.0f;
                 out[nnearest].max_dist2 = TL_POOL2;
                 out[nnearest].fdx = 0.0f; out[nnearest].fdz = 0.0f;
+                out[nnearest].dynamic = 1;
                 nnearest++;
             }
         }
@@ -3313,6 +4020,7 @@ static int sw_get_lights(void *ctx, HwrLight *out, int max)
                 out[nnearest].fdx = 0.0f; out[nnearest].fdz = 0.0f;
                 /* Bigger fires reach a little further; small ones stay tight. */
                 out[nnearest].max_dist2 = base_dist2 * (0.65f + 0.35f * fli->strength);
+                out[nnearest].dynamic = 1;
                 nnearest++;
             }
         }
@@ -3324,9 +4032,43 @@ static int sw_get_lights(void *ctx, HwrLight *out, int max)
 static int sw_get_sprites(void *ctx, HwrBillboard *out, int max)
 {
     int n = hwr_collected_count;
+    int i;
     if (n > max) n = max;
-    if (n > 0 && out != NULL)
-        memcpy(out, hwr_collected_billboards, (size_t)n * sizeof(HwrBillboard));
+    if (n <= 0 || out == NULL)
+        return n;
+    memcpy(out, hwr_collected_billboards, (size_t)n * sizeof(HwrBillboard));
+    if (g_interp_alpha >= 1.0f)
+        return n;
+    /* Lerp Thing-anchored billboards toward their previous-turn position so
+     * they scroll smoothly with the now-interpolated floor/camera instead of
+     * snapping once per 16Hz turn (see hwr_collected_key / prev_idx above). */
+    for (i = 0; i < n; i++) {
+        int p = hwr_collected_prev_idx[i];
+        const HwrBillboard *pb;
+        float dx, dy, dz;
+        if (p < 0)
+            continue;
+        pb = &hwr_collected_billboards_prev[p];
+        dx = out[i].x - pb->x;
+        dy = out[i].y - pb->y;
+        dz = out[i].z - pb->z;
+        /* Teleport guard (2 map tiles = 512 world units): a respawn/warp
+         * shouldn't visibly slide from the old spot. */
+        if (dx*dx + dy*dy + dz*dz > 512.0f*512.0f)
+            continue;
+        out[i].x = pb->x + dx * g_interp_alpha;
+        out[i].y = pb->y + dy * g_interp_alpha;
+        out[i].z = pb->z + dz * g_interp_alpha;
+        /* half_size_x/y are NOT lerped (used to be, see git history): they're
+         * driven by the current animation frame's atlas bounding box, a
+         * discrete per-pose value, not a continuous physical quantity — poses
+         * with a big frame-to-frame bbox swing (e.g. arms out vs in) smoothly
+         * MORPHED between the two sizes every turn transition, visible as a
+         * breathing/bounce artifact. The original reason for lerping this
+         * (shadow ground_y/footprint derived from half_size_y) no longer
+         * applies now that ground_y uses the true anchor Y directly (see
+         * anchor_ratio_y in hwr_scene_source.h) instead of half_size_y. */
+    }
     return n;
 }
 
@@ -3341,6 +4083,13 @@ static const uint8_t *sw_get_palette(void *ctx)
  * vec_tmap[] every game tick, unlike the other 16 pages of static art. */
 #define HWR_TMAP_ANIM_PAGE0 4
 #define HWR_TMAP_ANIM_PAGE1 5
+/* Page 0 is also mutated every tick while raining: water_droplets_on_floor
+ * (enginpeff.c) paints ripple/splash pixels straight into vec_tmap[0] as a
+ * floor-texture animation, the same trick the original SW renderer used for
+ * puddle ripples. It needs the same per-frame refresh as the FLIC pages or
+ * the GPU copy stays frozen at its initial load and the floor never shows
+ * rain splashes. */
+#define HWR_TMAP_RAIN_PAGE 0
 
 static int sw_get_texture_pages(void *ctx, HwrTexturePages *out)
 {
@@ -3363,14 +4112,18 @@ static int sw_get_texture_pages(void *ctx, HwrTexturePages *out)
         if (any)
             floor_pages_ready = 1;
     } else {
-        /* Refresh the animated pages every frame so FLIC playback reaches
-         * the GPU texture array (see fl_upload_pages' sub-image refresh). */
+        /* Refresh the animated pages every frame so FLIC playback and the
+         * rain-ripple page reach the GPU texture array (see fl_upload_pages'
+         * sub-image refresh). */
         if (vec_tmap[HWR_TMAP_ANIM_PAGE0] != NULL)
             memcpy(floor_pages + HWR_TMAP_ANIM_PAGE0 * (HWR_TMAP_DIM * HWR_TMAP_DIM),
                 vec_tmap[HWR_TMAP_ANIM_PAGE0], HWR_TMAP_DIM * HWR_TMAP_DIM);
         if (vec_tmap[HWR_TMAP_ANIM_PAGE1] != NULL)
             memcpy(floor_pages + HWR_TMAP_ANIM_PAGE1 * (HWR_TMAP_DIM * HWR_TMAP_DIM),
                 vec_tmap[HWR_TMAP_ANIM_PAGE1], HWR_TMAP_DIM * HWR_TMAP_DIM);
+        if (vec_tmap[HWR_TMAP_RAIN_PAGE] != NULL)
+            memcpy(floor_pages + HWR_TMAP_RAIN_PAGE * (HWR_TMAP_DIM * HWR_TMAP_DIM),
+                vec_tmap[HWR_TMAP_RAIN_PAGE], HWR_TMAP_DIM * HWR_TMAP_DIM);
     }
     if (!floor_pages_ready)
         return -1;       /* art not loaded yet; try again next frame */

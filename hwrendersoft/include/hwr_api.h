@@ -147,6 +147,20 @@ void hwr_present_indexed_keyed_alpha(const uint8_t *px, int w, int h, int pitch,
 void hwr_present_indexed_keyed_luma(const uint8_t *px, int w, int h, int pitch,
     const uint8_t *pal, int key_index, float bg_alpha, float bg_luma);
 
+/** Configure the procedural rain overlay (from fx3d_lights.ini [rain]).
+ *  enable toggles the pass; alpha is the streak opacity (0..1); density is the
+ *  streak-column count across one screen-height of width; speed is the fall
+ *  speed in screen-heights/second; width is streak thickness in pixels;
+ *  length is streak length as a fraction of screen height; angle is a wind
+ *  slant in radians (0 = straight down). */
+void hwr_rain_config(int enable, float alpha, float density, float speed,
+    float width, float length, float angle);
+
+/** Draw the procedural rain overlay, alpha-blended over the already-rendered
+ *  3D scene. Call after the opaque/translucent 3D passes, before the keyed
+ *  WScreen (HUD) composite. No-op when disabled or not ready. */
+void hwr_rain_render(void);
+
 /** Configure screen-space ambient occlusion (from fx3d_lights.ini). enable
  *  toggles the whole G-buffer path; radius is the screen-space sample radius
  *  (UV units); strength scales the darkening; bias rejects self-occlusion;

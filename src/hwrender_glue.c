@@ -75,6 +75,7 @@ void fx3d_config_finalize(void)
 #include "hwr_thingbrowse.h"
 #include "hwr_source_sw.h"
 #include "bfscreen.h"
+#include "enginpeff.h"
 #include "game_options.h"
 #include "swlog.h"
 
@@ -146,6 +147,28 @@ static void glue_present(void)
             HwrLightDefaults d = hwr_lights_defaults();
             int dw = 0, dh = 0;
             hwr_drawable_size(&dw, &dh);
+            /* Per-level sun direction: when auto_azimuth is on, replace the ini
+             * bearing with the angle derived from this level's baked SW floor
+             * shading, so building shadows fall the same way the software render
+             * intended (each level bakes a different direction). Falls back to
+             * the ini azimuth when the baked data has no clear direction. */
+            if (d.sun_auto_azimuth) {
+                HwrSunHint h;
+                hwr_sw_sun_hint(&h);
+                /* Log once per level (on the first frame after the map changed).
+                 * Always dump both fields' stats so we can see which (if any)
+                 * carries the baked direction. */
+                if (h.fresh) {
+                    LOGERR("FX3D sun: map_null=%d floor=%ld | Ambient std=%.1f az=%.0f coh=%.2f | "
+                        "Shade std=%.1f az=%.0f coh=%.2f | picked field=%d az=%.1f",
+                        h.map_null, h.nfloor,
+                        h.amb_std, h.amb_az, h.amb_coh,
+                        h.shd_std, h.shd_az, h.shd_coh,
+                        h.field, h.azimuth);
+                }
+                if (h.azimuth >= 0.0f)
+                    d.sun_azimuth = h.azimuth;
+            }
             hwr_sun_config(d.sun_enable, d.sun_bright, d.sun_ambient,
                 d.sun_azimuth, d.sun_elevation, d.sun_pcf,
                 d.sun_bias, d.sun_slope, d.sun_units, d.sun_debug,
@@ -169,6 +192,17 @@ static void glue_present(void)
             hwr_sprites_trans_render(pal, fx3d_filter_sprites); /* blended sprites (Phase 8) */
             hwr_ssao_resolve();              /* composites colour*AO to back buffer */
             hwr_overlay_render();            /* screen-space tinted overlays (shield/blast) */
+            {
+                /* Procedural rain: real alpha-blended GL overlay, only while it's
+                 * actually raining (engine_hwr_suppress_rain gates the old SW
+                 * pixel-block draw off whenever hwrender is active, regardless
+                 * of weather, so this is the only rain path in that case). */
+                int raining = (gamep_scene_effect_type == ScEff_RAIN);
+                hwr_rain_config(raining && d.rain_enable, d.rain_alpha,
+                    d.rain_density, d.rain_speed, d.rain_width, d.rain_length,
+                    d.rain_angle * 0.0174533f);
+                hwr_rain_render();
+            }
             hwr_thingno_render();            /* overlay ThingNo debug labels */
             hwr_sprites_debug_render();      /* overlay sprite debug labels */
             hwr_thingbrowse_render();        /* thing category browser (F5) */
@@ -202,6 +236,8 @@ static void glue_present(void)
 
 /* Declarations from libswrender for the sprite-suppression gate. */
 extern int engine_hwr_suppress_sprites;
+/* Declaration from libswrender for the SW rain-suppression gate. */
+extern int engine_hwr_suppress_rain;
 /* Target-box list (hud_target.c); cleared per frame, refilled during HUD draw,
  * consumed by the GL overlay pass. */
 extern int hwr_tgtbox_count;
@@ -213,6 +249,9 @@ TbBool hwrender_floor_gate(void)
     int w, h;
     /* Reset the sprite-suppression gate; only set it below if we collect. */
     engine_hwr_suppress_sprites = 0;
+    /* Reset the rain-suppression gate; only set it below when active, so the
+     * SW pixel-block rain still draws normally in a pure software build. */
+    engine_hwr_suppress_rain = 0;
     hwr_tgtbox_count = 0;
     hwr_pause_box_count = 0;
     if (!hwrender_active())
@@ -231,6 +270,9 @@ TbBool hwrender_floor_gate(void)
      * suppress-sprites gate so the SW drawlist exec skips them. */
     hwr_sw_collect_sprites();
     engine_hwr_suppress_sprites = 1;
+    /* The FX3D GL rain overlay (hwr_rain_render) replaces the SW pixel-block
+     * rain draw so it can genuinely alpha-blend over the 3D scene. */
+    engine_hwr_suppress_rain = 1;
     hwr_floor_gated_frame = 1;
     return true;
 }
