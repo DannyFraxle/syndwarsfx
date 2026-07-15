@@ -1409,6 +1409,9 @@ void hwr_sw_collect_sprites(void)
                 }
                 if (slot < 0)
                     continue;
+            } else if (slot < 0) {
+                /* Blacklisted (-2): atlas full, never retry this key. */
+                continue;
             }
 
             /* Fill billboard */
@@ -1708,9 +1711,26 @@ void hwr_sw_capture(void)
         hover_lasty_valid = 1;
     }
 
-    /* Snapshot explosion/collapse fragments so emit_explode_faces() can
-     * interpolate them to the display rate. Shift the last capture to prev,
-     * then copy the live array into cap. */
+}
+
+/** Snapshot explosion/collapse fragments so emit_explode_faces() can
+ *  interpolate them to the display rate. Shift the last capture to prev, then
+ *  copy the live array into cap.
+ *
+ *  Deliberately separate from hwr_sw_capture(): that runs at floor-gate time,
+ *  BEFORE process_explode() advances ex_faces for this turn (see game.c, the
+ *  gameturn_animation_advance block calls hwrender_floor_gate() then
+ *  process_explode() a few lines later). Capturing there would grab the
+ *  fragments' PRE-update state as "current", making every render frame lerp
+ *  against a snapshot that's already a turn stale relative to what vehicles
+ *  and the camera use (their Thing/view state is refreshed by process_things()
+ *  earlier in the main loop, before draw_game() runs) - fragments always end
+ *  up one full turn behind, which reads as the whole cascade being locked to
+ *  the 16Hz sim rate no matter how smooth everything else is. Call this AFTER
+ *  process_explode() instead, so "current" is this turn's freshly-simulated
+ *  state, same as the other interpolated paths. */
+void hwr_sw_capture_explode(void)
+{
     if (ex_faces_cap_valid) {
         memcpy(ex_faces_prev, ex_faces_cap, sizeof(ex_faces_prev));
         ex_faces_prev_valid = 1;
@@ -2630,15 +2650,18 @@ static void hwr_world_normal(const HwrM33 *m, int nx, int ny, int nz, float out[
     }
 }
 
-/* Emit one reflective (chameleon paint) vertex. */
+/* Emit one reflective (chameleon paint) vertex. lx/ly/lz are the point's
+ * object-local coordinates (pre-rotation), so dirt/grime noise can be anchored
+ * to the body panel instead of sliding as the vehicle moves/turns. */
 static void refl_emit_vert(int wx, int wy, int wz, const float n[3],
-    float base, float depth)
+    float base, float depth, float lx, float ly, float lz)
 {
     HwrReflectVertex *o = &refl_verts[refl_vert_count++];
     o->x = (float)wx; o->y = (float)wy; o->z = (float)wz;
     o->nx = n[0]; o->ny = n[1]; o->nz = n[2];
     o->depth = depth;
     o->base = base;
+    o->lx = lx; o->ly = ly; o->lz = lz;
 }
 
 /* Rotate a vehicle object point by its M33 matrix.
@@ -2855,11 +2878,24 @@ static void emit_explode_faces(void)
             /* Interpolate the fragment's corners between the previous turn and
              * this one so flying debris / collapsing building shards move
              * smoothly at the display rate. Same slot must hold the same
-             * fragment (matched by Type + a still-counting-down Timer); a reused
-             * slot or a fresh fragment snaps. */
+             * fragment (matched by Type + Timer); a reused slot or a fresh
+             * fragment snaps.
+             *
+             * Types 1/2/5/6 (thing_expld.c: animate_explode_face1/face5)
+             * decrement Timer every turn while alive, so "still the same
+             * fragment" means Timer strictly decreased. Types 3/4 (absolute
+             * world-coord tri/quad shatter pieces, animate_explode_face3_tri/
+             * _quad) are different: their Timer is a constant set at spawn and
+             * is only ever changed to 0 at the instant they die or subdivide
+             * (explode_face3_move_above_ground never touches it) - requiring
+             * "decreased" there can never be true, so these NEVER interpolated
+             * before, only snapped every tick for their whole (often brief,
+             * subdivision-heavy) life. For them "still alive" instead means
+             * Timer is unchanged from last turn. */
             struct HwrExplodeFace *pf = &ex_faces_prev[i];
             int interp = (ex_faces_prev_valid && g_interp_alpha < 1.0f &&
-                pf->Type == ef->Type && pf->Timer != 0 && pf->Timer > ef->Timer);
+                pf->Type == ef->Type && pf->Timer != 0 &&
+                (absolute ? (pf->Timer == ef->Timer) : (pf->Timer > ef->Timer)));
             int pbx = 0, pby = 0, pbz = 0;
             int pox[4], poy[4], poz[4];
             float a = g_interp_alpha;
@@ -3140,7 +3176,8 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
                 for (rk = 0; rk < 4; rk++) {
                     rsd = face_scrd((float)rwx[rk], (float)rwy[rk], (float)rwz[rk]);
                     refl_emit_vert(rwx[rk], rwy[rk], rwz[rk], rn[rk],
-                        (float)fc->ExCol, rsd);
+                        (float)fc->ExCol, rsd,
+                        (float)rp[rk]->X, (float)rp[rk]->Y, (float)rp[rk]->Z);
                 }
                 /* Same diagonal as the textured quad: (0,2,1)+(3,1,2). */
                 refl_index[refl_index_count++] = rbase + 0;
@@ -3325,7 +3362,8 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
                 for (rk = 0; rk < 3; rk++) {
                     rsd = face_scrd((float)rwx[rk], (float)rwy[rk], (float)rwz[rk]);
                     refl_emit_vert(rwx[rk], rwy[rk], rwz[rk], rn[rk],
-                        (float)fc->ExCol, rsd);
+                        (float)fc->ExCol, rsd,
+                        (float)rp[rk]->X, (float)rp[rk]->Y, (float)rp[rk]->Z);
                 }
                 refl_index[refl_index_count++] = rbase + 0;
                 refl_index[refl_index_count++] = rbase + 1;
@@ -3922,7 +3960,9 @@ static int sw_get_lights(void *ctx, HwrLight *out, int max)
         unsigned o;
         for (o = 1; o < obj_snap_count && nnearest + 4 <= max; o++) {
             const HwrM33 *m;
+            HwrM33 mlerp;
             float fx, fz, rx, rz, fl;
+            int obj_tx, obj_ty, obj_tz;
             float tx, ty, tz;
             long ddx, ddz;
             int s;
@@ -3932,12 +3972,48 @@ static int sw_get_lights(void *ctx, HwrLight *out, int max)
             ddz = (long)obj_snap[o].tz - veh_cull_cz;
             if (ddx*ddx + ddz*ddz > VEH_CULL_RANGE2)
                 continue;   /* only cars within the (shifted) cull disc get lights */
-            tx = (float)obj_snap[o].tx;
-            ty = (float)obj_snap[o].ty;
-            tz = (float)obj_snap[o].tz;
+            /* Interpolate position + rotation the SAME way sw_get_faces does for
+             * the vehicle body (see obj_tx/obj_mat above): obj_snap is captured
+             * once per 16Hz sim turn but sw_get_lights runs every present frame,
+             * so without this the headlight/tail pools snapped to the new spot
+             * once a turn while the smoothly-interpolated car body and camera
+             * glided past them - the light visibly detaching from the car each
+             * turn read as a flicker. */
+            obj_tx = obj_snap[o].tx;
+            obj_ty = obj_snap[o].ty;
+            obj_tz = obj_snap[o].tz;
+            if (obj_snap_prev_valid && o < obj_snap_prev_count &&
+                obj_snap_prev[o].is_dynamic && g_interp_alpha < 1.0f) {
+                int dtx = obj_tx - obj_snap_prev[o].tx;
+                int dty = obj_ty - obj_snap_prev[o].ty;
+                int dtz = obj_tz - obj_snap_prev[o].tz;
+                if (abs(dtx) < (2 << 8) && abs(dty) < (2 << 8) && abs(dtz) < (2 << 8)) {
+                    float a = g_interp_alpha;
+                    obj_tx = obj_snap_prev[o].tx + (int)((float)dtx * a);
+                    obj_ty = obj_snap_prev[o].ty + (int)((float)dty * a);
+                    obj_tz = obj_snap_prev[o].tz + (int)((float)dtz * a);
+                }
+            }
+            tx = (float)obj_tx;
+            ty = (float)obj_ty;
+            tz = (float)obj_tz;
             /* Forward and right (XZ) from the vehicle matrix; fall back to axes. */
             m = (obj_snap[o].matx > 0 && obj_snap[o].matx < (int16_t)next_local_mat)
                 ? &snap_local_mats[obj_snap[o].matx] : NULL;
+            if (m != NULL && obj_snap_prev_valid && o < obj_snap_prev_count &&
+                obj_snap_prev[o].is_dynamic && g_interp_alpha < 1.0f) {
+                int16_t pmatx = obj_snap_prev[o].matx;
+                if (pmatx > 0 && pmatx < 100) {
+                    const HwrM33 *pm = &snap_local_mats_prev[pmatx];
+                    float a = g_interp_alpha;
+                    int r, c;
+                    for (r = 0; r < 3; r++)
+                        for (c = 0; c < 3; c++)
+                            mlerp.R[r][c] = (int32_t)((float)pm->R[r][c] +
+                                ((float)m->R[r][c] - (float)pm->R[r][c]) * a);
+                    m = &mlerp;
+                }
+            }
             if (m != NULL) {
                 int dx, dy, dz;
                 hwr_rotate_point(m, 0, 0, 256, &dx, &dy, &dz);

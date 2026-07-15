@@ -417,3 +417,149 @@ void hwr_rain_render(void)
 
     hwr_gl_check("hwr_rain_render");
 }
+
+/* ---------------------------------------------------------------------------
+ * Bullet-time screen filter. Cues the player that an explosion just slowed
+ * the game down on purpose (not a hitch): a cool desaturating tint that
+ * deepens toward the screen edges, scaled by how far into the slow-motion
+ * dip the current frame is (game_speed.c's bullettime_intensity(), 0 = normal
+ * speed, 1 = deepest dip). Like the rain overlay, this only needs screen UV -
+ * no G-buffer or scene sampling required. */
+
+static const char *bullettime_vert_src =
+    "#version 330 core\n"
+    "layout(location=0) in vec2 aPos;\n"
+    "void main(){ gl_Position = vec4(aPos, 0.0, 1.0); }\n";
+
+static const char *bullettime_frag_src =
+    "#version 330 core\n"
+    "out vec4 frag;\n"
+    "uniform vec2 uResolution;\n"
+    "uniform float uIntensity;  // 0..1, current dip depth\n"
+    "uniform float uAlpha;      // max overlay opacity at full dip\n"
+    "uniform float uVignette;   // vignette strength, 0..1\n"
+    "void main(){\n"
+    "    vec2 uv = gl_FragCoord.xy / uResolution;\n"
+    "    vec2 d = (uv - vec2(0.5));\n"
+    "    d.x *= uResolution.x / uResolution.y;  // aspect-correct: circular, not elliptical\n"
+    "    float dist = length(d);\n"
+    "    // 0 at screen centre, ramps up hard past ~20% of the half-diagonal so\n"
+    "    // the middle of the view stays readable and the effect reads as a\n"
+    "    // framing vignette rather than a flat colour wash.\n"
+    "    float vig = pow(clamp((dist - 0.2) / 0.55, 0.0, 1.0), 1.6) * uVignette;\n"
+    "    float uniform_tint = 0.12 * uIntensity * uAlpha;\n"
+    "    float edge = vig * uIntensity * uAlpha;\n"
+    "    float a = clamp(uniform_tint + edge, 0.0, 1.0);\n"
+    "    if (a <= 0.003)\n"
+    "        discard;\n"
+    "    // Blue-grey desaturating tint in the middle, darkening toward near-black\n"
+    "    // at the frame edges (the actual 'vignette' look).\n"
+    "    vec3 col = mix(vec3(0.55, 0.62, 0.72), vec3(0.02, 0.03, 0.06), vig);\n"
+    "    frag = vec4(col, a);\n"
+    "}\n";
+
+static GLuint bullettime_prog = 0;
+static GLuint bullettime_vao = 0, bullettime_vbo = 0;
+static GLint  bt_loc_res = -1, bt_loc_intensity = -1, bt_loc_alpha = -1, bt_loc_vignette = -1;
+static int    bullettime_ready = 0;
+
+static int   bullettime_enable = 0;
+static float bullettime_alpha = 0.5f;
+static float bullettime_vignette = 0.6f;
+
+static int bullettime_init(void)
+{
+    GLuint vs, fs;
+    static const float quad[] = {
+        -1.0f, -1.0f,   1.0f, -1.0f,   -1.0f, 1.0f,
+        -1.0f,  1.0f,   1.0f, -1.0f,    1.0f, 1.0f,
+    };
+
+    vs = compile_shader(GL_VERTEX_SHADER, bullettime_vert_src);
+    if (vs == 0)
+        return HWR_ERROR;
+    fs = compile_shader(GL_FRAGMENT_SHADER, bullettime_frag_src);
+    if (fs == 0) {
+        glDeleteShader(vs);
+        return HWR_ERROR;
+    }
+    bullettime_prog = glCreateProgram();
+    glAttachShader(bullettime_prog, vs);
+    glAttachShader(bullettime_prog, fs);
+    glLinkProgram(bullettime_prog);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    {
+        GLint ok = 0;
+        glGetProgramiv(bullettime_prog, GL_LINK_STATUS, &ok);
+        if (!ok) {
+            char log[512];
+            glGetProgramInfoLog(bullettime_prog, sizeof(log), NULL, log);
+            hwr_set_error("bullettime program link failed: %s", log);
+            return HWR_ERROR;
+        }
+    }
+    bt_loc_res       = glGetUniformLocation(bullettime_prog, "uResolution");
+    bt_loc_intensity = glGetUniformLocation(bullettime_prog, "uIntensity");
+    bt_loc_alpha     = glGetUniformLocation(bullettime_prog, "uAlpha");
+    bt_loc_vignette  = glGetUniformLocation(bullettime_prog, "uVignette");
+
+    glGenVertexArrays(1, &bullettime_vao);
+    glBindVertexArray(bullettime_vao);
+    glGenBuffers(1, &bullettime_vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, bullettime_vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(quad), quad, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void *)0);
+    glBindVertexArray(0);
+
+    if (hwr_gl_check("bullettime_init"))
+        return HWR_ERROR;
+    bullettime_ready = 1;
+    return HWR_OK;
+}
+
+/** Configure the bullet-time screen filter (from fx3d_lights.ini [bullettime]). */
+void hwr_bullettime_config(int enable, float alpha, float vignette)
+{
+    bullettime_enable = enable;
+    bullettime_alpha = alpha;
+    bullettime_vignette = vignette;
+}
+
+/** Draw the bullet-time screen filter, alpha-blended over the already-
+ *  rendered scene. intensity is game_speed.c's bullettime_intensity() (0 =
+ *  normal speed, no-op; up to 1 = deepest slow-motion dip). Call after the 3D
+ *  passes, before the keyed WScreen (HUD) composite. */
+void hwr_bullettime_render(float intensity)
+{
+    int dw = 0, dh = 0;
+
+    if (!bullettime_enable || intensity <= 0.001f || !hwr_is_ready())
+        return;
+    if (!bullettime_ready && bullettime_init() != HWR_OK)
+        return;
+
+    hwr_drawable_size(&dw, &dh);
+    if (dw <= 0 || dh <= 0)
+        return;
+
+    glDisable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    glUseProgram(bullettime_prog);
+    glUniform2f(bt_loc_res, (float)dw, (float)dh);
+    glUniform1f(bt_loc_intensity, intensity);
+    glUniform1f(bt_loc_alpha, bullettime_alpha);
+    glUniform1f(bt_loc_vignette, bullettime_vignette);
+
+    glBindVertexArray(bullettime_vao);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glBindVertexArray(0);
+
+    glDisable(GL_BLEND);
+    glEnable(GL_DEPTH_TEST);
+
+    hwr_gl_check("hwr_bullettime_render");
+}

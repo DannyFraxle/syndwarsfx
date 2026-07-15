@@ -45,6 +45,12 @@ extern unsigned char hwr_sprite_skip_mask[512];
  *  engine view (before BAT/billboard sub-renders overwrite them). */
 void hwr_sw_capture(void);
 
+/** Snapshot ex_faces (explosion/collapse fragments) for interpolation. Call
+ *  AFTER process_explode() has advanced them for this turn - see the doc
+ *  comment on the definition in source_sw.c for why this must NOT be folded
+ *  into hwr_sw_capture(), which runs earlier in the turn. */
+void hwr_sw_capture_explode(void);
+
 /** Result of the per-level sun-direction scan of the baked SW floor shading.
  *  The scan measures the darkness-weighted brightness gradient of the floor
  *  shading (dark/shadowed tiles point toward the lit sun side), independently

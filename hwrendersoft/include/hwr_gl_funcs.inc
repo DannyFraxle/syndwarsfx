@@ -16,6 +16,7 @@ HWR_GL_FUNC(const GLubyte_compat *, glGetString, (GLenum))
 HWR_GL_FUNC(void,   glDrawElements,           (GLenum, GLsizei, GLenum, const void *))
 HWR_GL_FUNC(void,   glDrawArrays,             (GLenum, GLint, GLsizei))
 HWR_GL_FUNC(void,   glPixelStorei,            (GLenum, GLint))
+HWR_GL_FUNC(void,   glGetIntegerv,            (GLenum, GLint *))
 
 HWR_GL_FUNC(void,   glGenBuffers,             (GLsizei, GLuint *))
 HWR_GL_FUNC(void,   glDeleteBuffers,          (GLsizei, const GLuint *))

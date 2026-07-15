@@ -83,12 +83,16 @@ typedef struct {
 /** A reflective ("chameleon"/spectraflair paint) vertex. Carries the unit
  *  world-space normal and a base palette colour, so the chameleon shader can
  *  compute a view-angle hue shift plus a faked fresnel sheen procedurally.
- *  depth is the same per-vertex scrd as HwrVertex.tile_depth (shared z-buffer). */
+ *  depth is the same per-vertex scrd as HwrVertex.tile_depth (shared z-buffer).
+ *  lx/ly/lz are the point's OBJECT-LOCAL coordinates (pre-rotation, pre-
+ *  translation) — used to anchor procedural dirt/grime to the body panel so
+ *  it doesn't slide as the vehicle moves or turns. */
 typedef struct {
     float x, y, z;
     float nx, ny, nz;
     float depth;
     float base;            /* ExCol palette index (0..255) as float */
+    float lx, ly, lz;       /* object-local position, for panel-fixed dirt noise */
 } HwrReflectVertex;
 
 /** A batch of reflective faces: indexed triangles over a shared vertex array. */

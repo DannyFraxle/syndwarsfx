@@ -114,7 +114,7 @@ int hwr_rle_decode_opaque(const uint8_t *rle, uint8_t *out, uint8_t *opq, int w,
 }
 
 /* =========================================================================
- * Atlas — lazy 2048×2048 GL_RG8 shelf packer + hash table
+ * Atlas — lazy 8192×8192 GL_RGBA8 shelf packer + hash table
  * =========================================================================
  * The atlas packs decoded sprite pixel data as RGBA into a GL_RGBA8 texture.
  * xBR-upscaled full-colour sprite composites are stored here.
@@ -134,7 +134,7 @@ typedef struct Shelf {
 } Shelf;
 
 static struct {
-    GLuint    tex;             /* GL_RGBA8 2048x2048 texture */
+    GLuint    tex;             /* GL_RGBA8 HWR_ATLAS_W x HWR_ATLAS_H texture */
     int       ready;           /* GL texture created by renderer thread */
     int       hash_ready;      /* hash table initialized (safe from main thread) */
     Shelf     *shelves;        /* linked list of shelves */
@@ -148,6 +148,16 @@ static struct {
     float     slot_v0[HWR_ATLAS_MAX_SLOTS];
     float     slot_u1[HWR_ATLAS_MAX_SLOTS];
     float     slot_v1[HWR_ATLAS_MAX_SLOTS];
+
+    /* Padded box actually reserved/uploaded in the atlas (sprite rect + 1px
+     * border on each side, see ATLAS_PAD). UVs above stay pointed at the
+     * inner (unpadded) sprite rect; the border exists purely so GL_LINEAR
+     * sampling near the edge blends with a clamped copy of the sprite's own
+     * border pixel instead of bleeding into whatever was packed next door. */
+    int       slot_box_x[HWR_ATLAS_MAX_SLOTS];
+    int       slot_box_y[HWR_ATLAS_MAX_SLOTS];
+    int       slot_box_w[HWR_ATLAS_MAX_SLOTS];
+    int       slot_box_h[HWR_ATLAS_MAX_SLOTS];
 
     /* Deferred GL upload: pixels stored here by the main thread, uploaded by the
      * renderer thread via hwr_atlas_upload_pending(). NULL = no pending upload. */
@@ -215,6 +225,18 @@ static void atlas_init_gl(void)
         return;
     atlas_init_hash();  /* ensure hash is ready too */
 
+    {
+        GLint max_tex = 0;
+        glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_tex);
+        if (max_tex < HWR_ATLAS_W || max_tex < HWR_ATLAS_H) {
+            fprintf(stderr,
+                "hwr_sprite: GL_MAX_TEXTURE_SIZE=%d is smaller than the "
+                "%dx%d sprite atlas; sprites will fail to register and "
+                "disappear. Rebuild with a smaller HWR_ATLAS_W/H.\n",
+                (int)max_tex, HWR_ATLAS_W, HWR_ATLAS_H);
+        }
+    }
+
     glGenTextures(1, &at.tex);
     glBindTexture(GL_TEXTURE_2D, at.tex);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -273,13 +295,43 @@ int hwr_atlas_find(uint32_t key)
     return -1;
 }
 
+/* Border width reserved around every packed sprite to stop GL_LINEAR
+ * filtering from sampling a neighbouring sprite's texels at the seam. */
+#define ATLAS_PAD 1
+
+/* Build a (w+2*PAD) x (h+2*PAD) RGBA copy of pixels with the outer ring
+ * clamped from the sprite's own edge pixels, for a bleed-proof upload. */
+static uint8_t *atlas_build_padded(const uint8_t *pixels, int w, int h)
+{
+    int box_w = w + 2 * ATLAS_PAD, box_h = h + 2 * ATLAS_PAD;
+    uint8_t *dst = (uint8_t *)malloc((size_t)box_w * box_h * 4);
+    int x, y;
+    if (!dst)
+        return NULL;
+    for (y = 0; y < box_h; y++) {
+        int sy = y - ATLAS_PAD;
+        if (sy < 0) sy = 0;
+        if (sy >= h) sy = h - 1;
+        for (x = 0; x < box_w; x++) {
+            int sx = x - ATLAS_PAD;
+            if (sx < 0) sx = 0;
+            if (sx >= w) sx = w - 1;
+            memcpy(dst + ((size_t)y * box_w + x) * 4,
+                   pixels + ((size_t)sy * w + sx) * 4, 4);
+        }
+    }
+    return dst;
+}
+
 int hwr_atlas_register(uint32_t key, const uint8_t *pixels, int w, int h)
 {
     uint32_t idx;
     int slot;
     Shelf *s, *best;
+    int box_w = w + 2 * ATLAS_PAD;
+    int box_h = h + 2 * ATLAS_PAD;
 
-    if (w <= 0 || h <= 0 || w > HWR_ATLAS_W || h > HWR_ATLAS_H) {
+    if (w <= 0 || h <= 0 || box_w > HWR_ATLAS_W || box_h > HWR_ATLAS_H) {
         atlas_blacklist_add(key);
         return -1;
     }
@@ -308,35 +360,39 @@ int hwr_atlas_register(uint32_t key, const uint8_t *pixels, int w, int h)
         return -1;
     }
 
-    /* Find best-fit shelf (first-fit with smallest remainder) */
+    /* Find best-fit shelf (first-fit with smallest remainder), sized against
+     * the padded box so the border never overlaps a neighbouring sprite. */
     best = NULL;
     for (s = at.shelves; s; s = s->next) {
-        if (s->h >= h && s->w >= w) {
+        if (s->h >= box_h && s->w >= box_w) {
             if (!best || s->h < best->h || (s->h == best->h && s->w < best->w))
                 best = s;
         }
     }
 
     if (best) {
+        int bx = best->x, by = best->y;
         slot = at.slot_count;
-        at.slot_u0[slot] = (float)best->x / (float)HWR_ATLAS_W;
-        at.slot_v0[slot] = (float)best->y / (float)HWR_ATLAS_H;
-        at.slot_u1[slot] = (float)(best->x + w) / (float)HWR_ATLAS_W;
-        at.slot_v1[slot] = (float)(best->y + h) / (float)HWR_ATLAS_H;
+        at.slot_u0[slot] = (float)(bx + ATLAS_PAD) / (float)HWR_ATLAS_W;
+        at.slot_v0[slot] = (float)(by + ATLAS_PAD) / (float)HWR_ATLAS_H;
+        at.slot_u1[slot] = (float)(bx + ATLAS_PAD + w) / (float)HWR_ATLAS_W;
+        at.slot_v1[slot] = (float)(by + ATLAS_PAD + h) / (float)HWR_ATLAS_H;
         at.slot_w[slot] = w;
         at.slot_h[slot] = h;
+        at.slot_box_x[slot] = bx;
+        at.slot_box_y[slot] = by;
+        at.slot_box_w[slot] = box_w;
+        at.slot_box_h[slot] = box_h;
 
-        /* Stash RG pixels for deferred GL upload by the renderer thread */
+        /* Stash padded RGBA pixels for deferred GL upload by the renderer thread */
         if (pixels != NULL) {
             free(at.pending[slot]);
-            at.pending[slot] = (uint8_t *)malloc((size_t)w * h * 4);
-            if (at.pending[slot])
-                memcpy(at.pending[slot], pixels, (size_t)w * h * 4);
+            at.pending[slot] = atlas_build_padded(pixels, w, h);
         }
 
         /* Shrink the shelf */
-        best->x += w;
-        best->w -= w;
+        best->x += box_w;
+        best->w -= box_w;
 
         at.hash[idx].key = key;
         at.hash[idx].slot = slot;
@@ -345,36 +401,38 @@ int hwr_atlas_register(uint32_t key, const uint8_t *pixels, int w, int h)
     }
 
     /* No shelf fits: start a new shelf at next_shelf_y */
-    if (at.next_shelf_y + h > HWR_ATLAS_H) {
+    if (at.next_shelf_y + box_h > HWR_ATLAS_H) {
         atlas_blacklist_add(key);
         return -1;
     }
 
     s = (Shelf *)malloc(sizeof(Shelf));
-    s->x = w;
+    s->x = box_w;
     s->y = at.next_shelf_y;
-    s->w = HWR_ATLAS_W - w;
-    s->h = h;
+    s->w = HWR_ATLAS_W - box_w;
+    s->h = box_h;
     s->next = at.shelves;
     at.shelves = s;
 
     slot = at.slot_count;
-    at.slot_u0[slot] = 0.0f;
-    at.slot_v0[slot] = (float)s->y / (float)HWR_ATLAS_H;
-    at.slot_u1[slot] = (float)w / (float)HWR_ATLAS_W;
-    at.slot_v1[slot] = (float)(s->y + h) / (float)HWR_ATLAS_H;
+    at.slot_u0[slot] = (float)ATLAS_PAD / (float)HWR_ATLAS_W;
+    at.slot_v0[slot] = (float)(s->y + ATLAS_PAD) / (float)HWR_ATLAS_H;
+    at.slot_u1[slot] = (float)(ATLAS_PAD + w) / (float)HWR_ATLAS_W;
+    at.slot_v1[slot] = (float)(s->y + ATLAS_PAD + h) / (float)HWR_ATLAS_H;
     at.slot_w[slot] = w;
     at.slot_h[slot] = h;
+    at.slot_box_x[slot] = 0;
+    at.slot_box_y[slot] = s->y;
+    at.slot_box_w[slot] = box_w;
+    at.slot_box_h[slot] = box_h;
 
-    /* Stash RG pixels for deferred GL upload by the renderer thread */
+    /* Stash padded RGBA pixels for deferred GL upload by the renderer thread */
         if (pixels != NULL) {
             free(at.pending[slot]);
-            at.pending[slot] = (uint8_t *)malloc((size_t)w * h * 4);
-            if (at.pending[slot])
-                memcpy(at.pending[slot], pixels, (size_t)w * h * 4);
+            at.pending[slot] = atlas_build_padded(pixels, w, h);
         }
 
-        at.next_shelf_y += h;
+        at.next_shelf_y += box_h;
 
     at.hash[idx].key = key;
     at.hash[idx].slot = slot;
@@ -410,16 +468,10 @@ void hwr_atlas_upload_pending(void)
     glBindTexture(GL_TEXTURE_2D, at.tex);
     for (i = 0; i < at.slot_count; i++) {
         if (at.pending[i] != NULL) {
-            /* Reconstruct the atlas x,y from slot UV to call glTexSubImage2D.
-             * Slot was placed either in a shelf (exact x,y known from UV) or as
-             * a new shelf at (0, s->y). We reconstruct by inverting the UV math:
-             *   u0 = x / W  =>  x = (int)(u0 * W + 0.5f)
-             *   v0 = y / H  =>  y = (int)(v0 * H + 0.5f)
-             */
-            int sx = (int)(at.slot_u0[i] * HWR_ATLAS_W + 0.5f);
-            int sy = (int)(at.slot_v0[i] * HWR_ATLAS_H + 0.5f);
-            glTexSubImage2D(GL_TEXTURE_2D, 0, sx, sy,
-                            at.slot_w[i], at.slot_h[i],
+            /* Upload the padded box (sprite + 1px clamped border), not just
+             * the inner sprite rect the UVs point at. */
+            glTexSubImage2D(GL_TEXTURE_2D, 0, at.slot_box_x[i], at.slot_box_y[i],
+                            at.slot_box_w[i], at.slot_box_h[i],
                             GL_RGBA, GL_UNSIGNED_BYTE, at.pending[i]);
             free(at.pending[i]);
             at.pending[i] = NULL;
@@ -1138,12 +1190,25 @@ static void spr_setup_program(const HwrCamera *cam,
  * original sized sprites ∝ overall_scale (zoom). Restore that here with a
  * scale/persp_zoom_ref multiplier applied UNCONDITIONALLY (lockstep with the
  * floor/world); persp_zoom_ref is the zoom at which the factor is 1.0 (nominal
- * calibrated size). This is orthogonal to the strength dampening above. */
+ * calibrated size). This is orthogonal to the strength dampening above.
+ *
+ * cam->scale is overall_scale, which get_scaled_zoom() (enginzoom.c) already
+ * multiplies by screen_height/240 so 2D SW blits stay the same *relative*
+ * screen size at any resolution. The 3D billboards here are already sized
+ * correctly by the projection as resolution changes, so dividing the raw
+ * (resolution-scaled) cam->scale by a fixed zoom_ref would double-apply that
+ * factor - e.g. sprites end up ~1.5x too big after 720p->1080p. Strip the
+ * same height/240 factor back out (mirroring get_unscaled_zoom) before
+ * comparing to zoom_ref, so zoom_ref is a resolution-independent constant. */
 static float hwr_billboard_dist_scale(const HwrCamera *cam, float bx, float by, float bz)
 {
     float strength = hwr_lights_defaults().sprite_persp_strength;
     float zoom_ref = hwr_lights_defaults().sprite_persp_zoom_ref;
-    float zoom = (zoom_ref > 0.0f) ? cam->scale / zoom_ref : 1.0f;
+    float unscaled_scale = cam->scale;
+    float h = (cam->view_h < cam->view_w) ? cam->view_h : cam->view_w;
+    if (h >= 400.0f)
+        unscaled_scale = cam->scale * 240.0f / h;
+    float zoom = (zoom_ref > 0.0f) ? unscaled_scale / zoom_ref : 1.0f;
     float cdx, cdy, cdz, cfb, s, mult;
     /* Zoom factor always applies (even at full strength / non-persp mode);
      * only the perspective cancel/dampen below is gated. */

@@ -840,6 +840,7 @@ static const char *refl_vert_src =
     "layout(location=1) in vec3 aNormal;\n"
     "layout(location=2) in float aDepth;\n"
     "layout(location=3) in float aBase;\n"
+    "layout(location=4) in vec3 aLocalPos;\n"
     "uniform float uD10, uD14, uD18, uD1C;\n"
     "uniform float uScale;\n"
     "uniform vec2 uCentre;\n"
@@ -848,6 +849,7 @@ static const char *refl_vert_src =
     "out vec3 vN;\n"
     "out float vBase;\n"
     "out vec3 vWorldPos;\n"
+    "out vec3 vLocalPos;\n"
     "void main(){\n"
     "    float dx = aPos.x - uCtr.x;\n"
     "    float dy = aPos.y - uCtr.y;\n"
@@ -869,6 +871,7 @@ static const char *refl_vert_src =
     "    vN = aNormal;\n"
     "    vBase = aBase;\n"
     "    vWorldPos = aPos;\n"
+    "    vLocalPos = aLocalPos;\n"
     "    float ndc_z = clamp(aDepth / 16384.0, -1.0, 1.0);\n"
     "    gl_Position = vec4(sx/uCentre.x - 1.0, 1.0 - sy/uCentre.y, ndc_z, 1.0);\n"
     "}\n";
@@ -878,6 +881,7 @@ static const char *refl_frag_src =
     "in vec3 vN;\n"
     "in float vBase;\n"
     "in vec3 vWorldPos;\n"
+    "in vec3 vLocalPos;\n"
     "layout(location=0) out vec4 frag;\n"
     "layout(location=1) out vec4 fragPos;\n"
     "uniform sampler2D uPalette;\n"
@@ -890,6 +894,9 @@ static const char *refl_frag_src =
     "uniform float uStreakSharp; // streak thinness (higher = thinner, sharper)\n"
     "uniform float uSheen;       // streak highlight strength\n"
     "uniform vec3  uTintHi;      // streak highlight colour\n"
+    "uniform float uDirtScale;   // dirt blotch frequency (object-local units)\n"
+    "uniform float uDirtStrength;// dirt overlay opacity (0..1)\n"
+    "uniform vec3  uDirtColor;   // dust/grime tint\n"
     "// --- scene lighting (mirrors the floor/face shader) so paint darkens in\n"
     "//     unlit/shadowed areas instead of glowing at constant brightness ---\n"
     "uniform vec3  uLightPos[64];\n"
@@ -923,6 +930,23 @@ static const char *refl_frag_src =
     "    vec3 p = abs(fract(c.xxx + vec3(0.0,2.0/3.0,1.0/3.0))*6.0 - 3.0);\n"
     "    return c.z * mix(vec3(1.0), clamp(p - 1.0, 0.0, 1.0), c.y);\n"
     "}\n"
+    "float hash21(vec2 p){\n"
+    "    p = fract(p*vec2(123.34, 345.45));\n"
+    "    p += dot(p, p + 34.345);\n"
+    "    return fract(p.x*p.y);\n"
+    "}\n"
+    "float noise2(vec2 p){\n"
+    "    vec2 i = floor(p), f = fract(p);\n"
+    "    float a = hash21(i), b = hash21(i+vec2(1.0,0.0));\n"
+    "    float c = hash21(i+vec2(0.0,1.0)), d = hash21(i+vec2(1.0,1.0));\n"
+    "    vec2 u = f*f*(3.0-2.0*f);\n"
+    "    return mix(a,b,u.x) + (c-a)*u.y*(1.0-u.x) + (d-b)*u.x*u.y;\n"
+    "}\n"
+    "float fbm2(vec2 p){\n"
+    "    float v = 0.0, amp = 0.55;\n"
+    "    for (int i = 0; i < 3; i++) { v += amp*noise2(p); p *= 2.05; amp *= 0.5; }\n"
+    "    return v;\n"
+    "}\n"
     "void main(){\n"
     "    fragPos = vec4(0.0);\n"
     "    // Smoothly-interpolated per-vertex normal -> shade curves across faces.\n"
@@ -948,13 +972,22 @@ static const char *refl_frag_src =
     "    float bands  = 0.5 + 0.5*cos(b*uStreakFreq*6.2831853 + a*2.5);\n"
     "    float streak = pow(bands, uStreakSharp);\n"
     "    float edge   = clamp(length(vec2(a, b)), 0.0, 1.0);  // brighter at grazing\n"
-    "    float fres   = pow(edge, 3.0);                       // grazing-angle rim\n"
-    "    // Mostly-black base + multicolour reflective streaks + rainbow rim + a\n"
-    "    // touch of white sparkle highlight.\n"
+    "    float fres   = pow(edge, 6.0);                       // grazing-angle rim (rare/subtle now)\n"
+    "    // Mostly-black base + multicolour reflective streaks + a hint of rainbow\n"
+    "    // rim + a touch of white sparkle highlight.\n"
+    "    // Black base + multicolour reflective shine, same everywhere (no window/\n"
+    "    // paint classification - that guess misfired, since real ExCol values\n"
+    "    // don't reliably separate glass from paint).\n"
     "    vec3 col = paint\n"
     "             + refl * streak * uSheen\n"
-    "             + refl * fres * 0.35\n"
-    "             + uTintHi * streak * edge * uSheen * 0.4;\n"
+    "             + refl * fres * 0.12\n"
+    "             + uTintHi * streak * edge * uSheen * 0.25;\n"
+    "    // Dust/grime: faint blotchy noise anchored to the OBJECT-LOCAL point (not\n"
+    "    // world position), so it stays fixed to the panel as the vehicle drives or\n"
+    "    // turns. Kept subtle - it should read as a light dusting, not grey paint.\n"
+    "    float dirtN = fbm2(vec2(vLocalPos.x, vLocalPos.z + vLocalPos.y*0.7) * uDirtScale);\n"
+    "    float dirtMask = smoothstep(0.28, 0.70, dirtN);\n"
+    "    col = mix(col, uDirtColor, dirtMask * uDirtStrength);\n"
     "    // --- scene lighting factor (point lights + sun + ambient), same as the\n"
     "    //     floor, so painted panels go dark in shadow / unlit interiors ---\n"
     "    vec3 light_col = vec3(0.0);\n"
@@ -999,6 +1032,7 @@ static GLint  rf_l_d10=-1, rf_l_d14=-1, rf_l_d18=-1, rf_l_d1c=-1;
 static GLint  rf_l_scale=-1, rf_l_centre=-1, rf_l_ctr=-1, rf_l_persp=-1;
 static GLint  rf_l_pal=-1, rf_l_huebase=-1, rf_l_huespan=-1, rf_l_sat=-1, rf_l_paintlevel=-1;
 static GLint  rf_l_streakfreq=-1, rf_l_streaksharp=-1, rf_l_sheen=-1, rf_l_tinthi=-1;
+static GLint  rf_l_dirtscale=-1, rf_l_dirtstrength=-1, rf_l_dirtcolor=-1;
 /* Lighting uniforms (mirror the floor program). */
 static GLint  rf_l_lpos=-1, rf_l_lrgb=-1, rf_l_lrad=-1, rf_l_lmaxd2=-1, rf_l_nlights=-1;
 static GLint  rf_l_ambient=-1, rf_l_gain=-1, rf_l_tint=-1;
@@ -1044,6 +1078,9 @@ static int rf_init(void)
     rf_l_streaksharp=glGetUniformLocation(rf_prog,"uStreakSharp");
     rf_l_sheen=glGetUniformLocation(rf_prog,"uSheen");
     rf_l_tinthi=glGetUniformLocation(rf_prog,"uTintHi");
+    rf_l_dirtscale=glGetUniformLocation(rf_prog,"uDirtScale");
+    rf_l_dirtstrength=glGetUniformLocation(rf_prog,"uDirtStrength");
+    rf_l_dirtcolor=glGetUniformLocation(rf_prog,"uDirtColor");
     rf_l_lpos=glGetUniformLocation(rf_prog,"uLightPos");
     rf_l_lrgb=glGetUniformLocation(rf_prog,"uLightRgb");
     rf_l_lrad=glGetUniformLocation(rf_prog,"uLightRadius");
@@ -1081,6 +1118,9 @@ static int rf_init(void)
         glEnableVertexAttribArray(3);
         glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, stride,
             (void *)offsetof(HwrReflectVertex, base));
+        glEnableVertexAttribArray(4);
+        glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, stride,
+            (void *)offsetof(HwrReflectVertex, lx));
     }
     glBindVertexArray(0);
     if (hwr_gl_check("rf_init"))
@@ -1129,16 +1169,25 @@ int hwr_reflect_render(const unsigned char *pal8)
     glUniform3f(rf_l_ctr, cam.cx, cam.cy8, cam.cz);
     glUniform1i(rf_l_persp, cam.perspective);
     glUniform1i(rf_l_pal, 1);
-    /* Tunable look — deep saturated spectraflair rainbow + thin sweeping streaks.
+    /* Tunable look — deep saturated spectraflair rainbow + thin sweeping streaks,
+     * but mostly black: the rim/sheen are toned down from earlier passes so the
+     * body reads black more often, with colour breaking through on the streaks
+     * and at sharp grazing angles only.
      * Hue sweeps from green (.33) through blue (.66) to purple (~.85). */
     glUniform1f(rf_l_huebase, 0.33f);      /* start at green */
     glUniform1f(rf_l_huespan, 0.55f);      /* sweep ~green->blue->purple */
-    glUniform1f(rf_l_sat, 0.9f);           /* deep, saturated colours */
+    glUniform1f(rf_l_sat, 0.65f);          /* dusty, not fully-saturated rainbow (was 0.9) */
     glUniform1f(rf_l_paintlevel, 0.07f);   /* near-black metallic body */
     glUniform1f(rf_l_streakfreq, 3.0f);    /* number of streak bands */
     glUniform1f(rf_l_streaksharp, 8.0f);   /* thin, sharp streaks */
-    glUniform1f(rf_l_sheen, 0.9f);         /* multicolour reflection strength */
+    glUniform1f(rf_l_sheen, 0.55f);        /* multicolour reflection strength (was 0.9 — too vivid) */
     glUniform3f(rf_l_tinthi, 0.85f, 0.90f, 1.0f);
+    /* Dust/grime overlay: faint, anchored to the object-local point so it
+     * doesn't slide across the body as the vehicle drives or turns. Kept low
+     * strength so it reads as a light dusting, not a grey wash. */
+    glUniform1f(rf_l_dirtscale, 0.006f);   /* blotch frequency (object-local units) */
+    glUniform1f(rf_l_dirtstrength, 0.4f);  /* overlay opacity */
+    glUniform3f(rf_l_dirtcolor, 0.18f, 0.15f, 0.11f);  /* brownish grime */
 
     /* Scene lighting so painted panels darken in shadow / unlit interiors,
      * mirroring fl_upload_lights + the floor's sun setup. */

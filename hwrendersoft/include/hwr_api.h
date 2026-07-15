@@ -161,6 +161,17 @@ void hwr_rain_config(int enable, float alpha, float density, float speed,
  *  WScreen (HUD) composite. No-op when disabled or not ready. */
 void hwr_rain_render(void);
 
+/** Configure the bullet-time screen filter (from fx3d_lights.ini
+ *  [bullettime]). enable toggles the pass; alpha is the max overlay opacity
+ *  at full dip (0..1); vignette is the edge darkening/tint strength (0..1). */
+void hwr_bullettime_config(int enable, float alpha, float vignette);
+
+/** Draw the bullet-time screen filter, alpha-blended over the already-
+ *  rendered 3D scene. intensity is game_speed.c's bullettime_intensity()
+ *  (0 = normal speed, no-op; up to 1 = deepest slow-motion dip). Call after
+ *  the opaque/translucent 3D passes, before the keyed WScreen composite. */
+void hwr_bullettime_render(float intensity);
+
 /** Configure screen-space ambient occlusion (from fx3d_lights.ini). enable
  *  toggles the whole G-buffer path; radius is the screen-space sample radius
  *  (UV units); strength scales the darkening; bias rejects self-occlusion;

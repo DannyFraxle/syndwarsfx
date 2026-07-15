@@ -1925,8 +1925,14 @@ void process_engine_unk3(void)
     {
         clear_super_quick_lights();
     }
-    if (gameturn_animation_advance)
+    if (gameturn_animation_advance) {
         process_explode();
+        // Snapshot ex_faces for the FX3D renderer's fragment interpolation
+        // AFTER this turn's update, not before (see hwrender_explode_captured
+        // doc comment) - otherwise collapsing-building debris always lerps
+        // against a turn-stale snapshot and looks locked to the 16Hz sim rate.
+        hwrender_explode_captured();
+    }
     assert(vec_tmap[1] != NULL);
     vec_map = vec_tmap[1];
     face_transp_tinted_surface_col = deep_radar_surface_col;
@@ -5177,6 +5183,16 @@ void do_rotate_map(void)
         zoom_input++;
     if (is_gamekey_pressed(GKey_ZOOM_OUT))
         zoom_input--;
+#if defined(LB_ENABLE_MOUSE_WHEEL)
+    if (lbDisplay.WheelMoveUp) {
+        zoom_input += lbDisplay.WheelMoveUp;
+        lbDisplay.WheelMoveUp = 0;
+    }
+    if (lbDisplay.WheelMoveDown) {
+        zoom_input -= lbDisplay.WheelMoveDown;
+        lbDisplay.WheelMoveDown = 0;
+    }
+#endif
 
     // Update zoom level
     if (zoom_input != 0)

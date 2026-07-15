@@ -65,6 +65,18 @@ float  bullet_time = 1.0f;
  * motion at the display rate. 1.0 = no interpolation (snap to latest). */
 float  g_interp_alpha = 1.0f;
 
+/* --- Bullet-time-on-explosion state ([bullettime] section) --- */
+static int    bt_enable = 0;
+static float  bt_scale = 0.25f;
+static int    bt_hold_ms = 700;
+static int    bt_ramp_ms = 900;
+static int    bt_min_intensity = 100;
+static int    bt_range_tiles = 15;
+
+static double bt_last_ms = 0.0;
+static float  bt_hold_remain = 0.0f;
+static float  bt_ramp_remain = 0.0f;
+
 static float       world_accum = 0.0f;
 /* High-resolution timestamp (milliseconds) of the previous sim tick. 0 = not
  * yet sampled / reset. Deliberately a double driven by the SDL performance
@@ -85,6 +97,67 @@ static double hires_now_ms(void)
     if (freq == 0)              /* pathological: fall back to the coarse clock */
         return (double)LbTimerClock();
     return (double)SDL_GetPerformanceCounter() * 1000.0 / (double)freq;
+}
+
+void bullettime_config(int enable, float scale, int hold_ms, int ramp_ms,
+    int min_intensity, int range_tiles)
+{
+    bt_enable = enable;
+    if (scale < 0.05f) scale = 0.05f;
+    if (scale > 1.0f) scale = 1.0f;
+    bt_scale = scale;
+    bt_hold_ms = (hold_ms > 0) ? hold_ms : 0;
+    bt_ramp_ms = (ramp_ms > 0) ? ramp_ms : 1;
+    bt_min_intensity = min_intensity;
+    bt_range_tiles = (range_tiles > 0) ? range_tiles : 0;
+}
+
+int bullettime_range_tiles(void)
+{
+    return bt_range_tiles;
+}
+
+void bullettime_trigger(int intensity)
+{
+    if (!bt_enable || intensity < bt_min_intensity)
+        return;
+    bt_hold_remain = (float)bt_hold_ms;
+    bt_ramp_remain = (float)bt_ramp_ms;
+}
+
+/* Advances bullet_time toward/away from bt_scale using real wall-clock time;
+ * called once per presented frame (wait_next_displayframe), regardless of sim
+ * mode, so the slow-motion dip plays out at real speed even when sim turns
+ * are decoupled from the display rate. Takes effect from the NEXT frame's
+ * is_game_turn_due() (this function runs after that call in the main loop). */
+static void bullettime_tick(void)
+{
+    double now, elapsed;
+
+    now = hires_now_ms();
+    elapsed = (bt_last_ms == 0.0) ? 0.0 : (now - bt_last_ms);
+    bt_last_ms = now;
+    if (elapsed < 0.0 || elapsed > 250.0)
+        elapsed = 0.0;
+
+    if (bt_hold_remain > 0.0f) {
+        bt_hold_remain -= (float)elapsed;
+        bullet_time = bt_scale;
+    } else if (bt_ramp_remain > 0.0f) {
+        float t;
+        bt_ramp_remain -= (float)elapsed;
+        t = 1.0f - (bt_ramp_remain / (float)bt_ramp_ms);
+        if (t < 0.0f) t = 0.0f;
+        if (t > 1.0f) t = 1.0f;
+        bullet_time = bt_scale + (1.0f - bt_scale) * t;
+    } else {
+        bullet_time = 1.0f;
+    }
+}
+
+float bullettime_intensity(void)
+{
+    return 1.0f - bullet_time;
 }
 
 /* Runtime FPS/TPS readout (for the [fx3d] ShowFPS overlay). */
@@ -246,6 +319,9 @@ void wait_next_displayframe(void)
     static TbClockMSec last_frame = 0;
     TbClockMSec now, sleep_end, frame_ms;
 
+    // Advance the bullet-time slow-motion dip (independent of sim mode).
+    bullettime_tick();
+
     // Count every presented frame for the FPS readout.
     fps_present_count++;
     now = LbTimerClock();
@@ -332,8 +408,8 @@ void draw_fps_counter(void)
         return;
     if (lbDisplay.WScreen == NULL)
         return;
-    snprintf(msg, sizeof(msg), "FPS %d  TPS %d  ms avg %d worst %d",
-        fps_display_val, fps_logic_val, frame_avg_val, frame_worst_val);
+    snprintf(msg, sizeof(msg), "FPS %d  TPS %d  ms avg %d worst %d  BT %.2f",
+        fps_display_val, fps_logic_val, frame_avg_val, frame_worst_val, bullet_time);
     draw_text(8, 8, msg, colour_lookup[ColLU_WHITE]);
     {
         /* Report the most recent building whose Thing Y moved (hovering/animating

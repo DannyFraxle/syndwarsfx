@@ -114,6 +114,15 @@ static HwrLightDefaults hwr_defaults = {
     0.6f,           /* rain_width (very thin streaks, pixels) */
     0.05f,          /* rain_length (fraction of screen height) */
     0.0f,           /* rain_angle (degrees, 0 = straight down) */
+    /* --- bullet-time-on-explosion --- */
+    0,              /* bullettime_enable — off by default */
+    0.25f,          /* bullettime_scale (quarter speed while dipped) */
+    700,            /* bullettime_hold_ms */
+    900,            /* bullettime_ramp_ms */
+    100,            /* bullettime_min_intensity (filters out plain bullet hits) */
+    15,             /* bullettime_range_tiles (explosions further than this never trigger it) */
+    0.6f,           /* bullettime_alpha (screen filter max opacity) */
+    0.75f,          /* bullettime_vignette (edge darkening/tint strength) */
 };
 
 static void table_defaults(void)
@@ -139,7 +148,7 @@ void hwr_lights_clear(void)
 }
 
 /* Section ids for the simple line-by-line parser. */
-enum { SEC_NONE = 0, SEC_LIGHTS, SEC_DEFAULTS, SEC_SSAO, SEC_SUN, SEC_CATEGORIES, SEC_SPRITES, SEC_TRANSP, SEC_GLARE, SEC_FIRELIGHT, SEC_RAIN };
+enum { SEC_NONE = 0, SEC_LIGHTS, SEC_DEFAULTS, SEC_SSAO, SEC_SUN, SEC_CATEGORIES, SEC_SPRITES, SEC_TRANSP, SEC_GLARE, SEC_FIRELIGHT, SEC_RAIN, SEC_BULLETTIME };
 
 static void parse_transp_line(const char *p)
 {
@@ -236,6 +245,38 @@ static void parse_rain_line(const char *p)
         hwr_defaults.rain_length = fv;
     } else if (sscanf(p, "angle = %f", &fv) == 1) {
         hwr_defaults.rain_angle = fv;
+    }
+}
+
+static void parse_bullettime_line(const char *p)
+{
+    float fv;
+    int iv;
+    if (sscanf(p, "enable = %d", &iv) == 1) {
+        hwr_defaults.bullettime_enable = (iv != 0) ? 1 : 0;
+    } else if (sscanf(p, "scale = %f", &fv) == 1) {
+        if (fv < 0.05f) fv = 0.05f;
+        if (fv > 1.0f) fv = 1.0f;
+        hwr_defaults.bullettime_scale = fv;
+    } else if (sscanf(p, "hold_ms = %d", &iv) == 1) {
+        if (iv < 0) iv = 0;
+        hwr_defaults.bullettime_hold_ms = iv;
+    } else if (sscanf(p, "ramp_ms = %d", &iv) == 1) {
+        if (iv < 1) iv = 1;
+        hwr_defaults.bullettime_ramp_ms = iv;
+    } else if (sscanf(p, "min_intensity = %d", &iv) == 1) {
+        hwr_defaults.bullettime_min_intensity = iv;
+    } else if (sscanf(p, "range_tiles = %d", &iv) == 1) {
+        if (iv < 0) iv = 0;
+        hwr_defaults.bullettime_range_tiles = iv;
+    } else if (sscanf(p, "alpha = %f", &fv) == 1) {
+        if (fv < 0.0f) fv = 0.0f;
+        if (fv > 1.0f) fv = 1.0f;
+        hwr_defaults.bullettime_alpha = fv;
+    } else if (sscanf(p, "vignette = %f", &fv) == 1) {
+        if (fv < 0.0f) fv = 0.0f;
+        if (fv > 1.0f) fv = 1.0f;
+        hwr_defaults.bullettime_vignette = fv;
     }
 }
 
@@ -539,6 +580,8 @@ void hwr_lights_load(const char *path)
                 section = SEC_FIRELIGHT;
             else if (strncmp(p, "[rain]", 6) == 0)
                 section = SEC_RAIN;
+            else if (strncmp(p, "[bullettime]", 12) == 0)
+                section = SEC_BULLETTIME;
             else
                 section = SEC_NONE;
             continue;
@@ -575,6 +618,8 @@ void hwr_lights_load(const char *path)
             parse_firelight_line(p);
         } else if (section == SEC_RAIN) {
             parse_rain_line(p);
+        } else if (section == SEC_BULLETTIME) {
+            parse_bullettime_line(p);
         }
     }
     fclose(f);

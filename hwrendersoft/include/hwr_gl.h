@@ -66,6 +66,7 @@ typedef ptrdiff_t      GLsizeiptr;
 #define GL_ONE_MINUS_SRC_ALPHA            0x0303
 #define GL_LEQUAL                         0x0203
 #define GL_TEXTURE_2D                     0x0DE1
+#define GL_MAX_TEXTURE_SIZE               0x0D33
 #define GL_TEXTURE0                       0x84C0
 #define GL_TEXTURE1                       0x84C1
 #define GL_TEXTURE2                       0x84C2
@@ -143,6 +144,7 @@ typedef const GLubyte_compat *(HWR_APIENTRY *PFN_glGetString)(GLenum);
 typedef void   (HWR_APIENTRY *PFN_glDrawElements)(GLenum, GLsizei, GLenum, const void *);
 typedef void   (HWR_APIENTRY *PFN_glDrawArrays)(GLenum, GLint, GLsizei);
 typedef void   (HWR_APIENTRY *PFN_glPixelStorei)(GLenum, GLint);
+typedef void   (HWR_APIENTRY *PFN_glGetIntegerv)(GLenum, GLint *);
 
 typedef void   (HWR_APIENTRY *PFN_glGenBuffers)(GLsizei, GLuint *);
 typedef void   (HWR_APIENTRY *PFN_glDeleteBuffers)(GLsizei, const GLuint *);

@@ -141,6 +141,22 @@ typedef struct {
     float rain_width;           /**< Streak thickness in pixels (default 1.5). */
     float rain_length;          /**< Streak length, fraction of screen height (default 0.10). */
     float rain_angle;           /**< Wind slant in degrees, 0 = straight down (default 0). */
+    /* Bullet-time-on-explosion ([bullettime] section). A big explosion (see
+     * bullettime_trigger() in game_speed.c, fed from do_shockwave() intensity)
+     * dips the sim's world_dt/dt_units toward bullettime_scale for
+     * bullettime_hold_ms, then eases back over bullettime_ramp_ms; these
+     * screen-filter fields drive the accompanying GL vignette/tint so it's
+     * clear the slow-down is a deliberate effect, not a hitch. */
+    int   bullettime_enable;        /**< 1 = enable the effect (sim dip + screen filter). */
+    float bullettime_scale;         /**< world_dt multiplier while fully dipped (default 0.25). */
+    int   bullettime_hold_ms;       /**< Milliseconds held at full dip (default 700). */
+    int   bullettime_ramp_ms;       /**< Milliseconds easing back to normal speed (default 900). */
+    int   bullettime_min_intensity; /**< do_shockwave() intensity threshold to trigger (default 100). */
+    int   bullettime_range_tiles;   /**< Max distance (tiles) from the local player's controlled
+                                          agent an explosion can be and still trigger (default 15;
+                                          0 = unlimited, intensity gate only). */
+    float bullettime_alpha;         /**< Screen filter max opacity at full dip, 0..1 (default 0.5). */
+    float bullettime_vignette;      /**< Vignette strength (edge darkening/tint), 0..1 (default 0.6). */
 } HwrLightDefaults;
 
 /** Reset every entry to white (1,1,1) at scale 1.0 and defaults to sane values. */

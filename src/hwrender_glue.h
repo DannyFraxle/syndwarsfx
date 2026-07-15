@@ -82,6 +82,14 @@ extern int hwr_floor_gated_frame;
  *  draws the software floor as normal). */
 TbBool hwrender_floor_gate(void);
 
+/** Call right after process_explode() has advanced the explosion/collapse
+ *  fragments for this logical turn, so the FX3D renderer's fragment
+ *  interpolation lerps from this turn's fresh state next turn instead of a
+ *  turn-stale one (which reads as the whole collapse cascade being locked to
+ *  the 16Hz sim rate instead of smooth at the display rate). No-op in a
+ *  software-only build. */
+void hwrender_explode_captured(void);
+
 /** Initialise the GL backend on the current SDL window. Call after the video
  *  mode is set. No-op (returns false) in a software-only build or when not
  *  requested. */

@@ -239,6 +239,9 @@ struct DisplayStruct { // sizeof=118
     /** Currently active colour palette.
      *  LbPaletteGet() should be used to retrieve a copy of the palette. */
     ubyte *Palette; // offset=114
+#ifndef LB_ENABLE_MOUSE_WHEEL
+#define LB_ENABLE_MOUSE_WHEEL
+#endif
 #if defined(LB_ENABLE_MOUSE_WHEEL)
     short WheelPosition;
     ushort WheelMoveUp;

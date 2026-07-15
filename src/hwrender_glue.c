@@ -77,6 +77,7 @@ void fx3d_config_finalize(void)
 #include "bfscreen.h"
 #include "enginpeff.h"
 #include "game_options.h"
+#include "game_speed.h"
 #include "swlog.h"
 
 #include <string.h>
@@ -178,6 +179,11 @@ static void glue_present(void)
             hwr_transparent_config(d.transp_enable, d.transp_alpha,
                 deep_radar_surface_col);
             hwr_sprites_trans_config(d.transp_sprite_enable, d.transp_sprite_alpha);
+            bullettime_config(d.bullettime_enable, d.bullettime_scale,
+                d.bullettime_hold_ms, d.bullettime_ramp_ms,
+                d.bullettime_min_intensity, d.bullettime_range_tiles);
+            hwr_bullettime_config(d.bullettime_enable, d.bullettime_alpha,
+                d.bullettime_vignette);
             hwr_thingno_debug(d.thingno_debug);
             hwr_sprites_debug(d.sprite_debug);
             hwr_scene_begin();
@@ -203,6 +209,7 @@ static void glue_present(void)
                     d.rain_angle * 0.0174533f);
                 hwr_rain_render();
             }
+            hwr_bullettime_render(bullettime_intensity());
             hwr_thingno_render();            /* overlay ThingNo debug labels */
             hwr_sprites_debug_render();      /* overlay sprite debug labels */
             hwr_thingbrowse_render();        /* thing category browser (F5) */
@@ -243,6 +250,13 @@ extern int engine_hwr_suppress_rain;
 extern int hwr_tgtbox_count;
 /* Pause popup box fills (fepause.c); consumed by the GL overlay pass. */
 extern int hwr_pause_box_count;
+
+void hwrender_explode_captured(void)
+{
+    if (!hwrender_active())
+        return;
+    hwr_sw_capture_explode();
+}
 
 TbBool hwrender_floor_gate(void)
 {

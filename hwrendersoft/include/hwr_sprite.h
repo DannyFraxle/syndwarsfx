@@ -3,9 +3,9 @@
 
 #include <stdint.h>
 
-#define HWR_ATLAS_W         4096
-#define HWR_ATLAS_H         4096
-#define HWR_ATLAS_MAX_SLOTS 4096
+#define HWR_ATLAS_W         8192
+#define HWR_ATLAS_H         8192
+#define HWR_ATLAS_MAX_SLOTS 8192
 
 int  hwr_rle_decode(const uint8_t *rle, uint8_t *out, int w, int h);
 int  hwr_rle_decode_opaque(const uint8_t *rle, uint8_t *out, uint8_t *opq, int w, int h);

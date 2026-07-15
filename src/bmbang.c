@@ -20,6 +20,9 @@
 
 #include "thing.h"
 #include "swlog.h"
+#include "game_speed.h"
+#include "bigmap.h"
+#include "engincam.h"
 /******************************************************************************/
 
 extern ubyte byte_1C4769;
@@ -77,8 +80,54 @@ void unused_func_025(short a1, short a2, short a3)
         : : "a" (a1), "d" (a2), "b" (a3));
 }
 
+// Whether (x,z) is within the configured bullet-time trigger range of the
+// current camera/view centre (PRCCOORD units, 256/tile) - i.e. whether the
+// explosion is actually visible-ish on screen, not just near whichever agent
+// happens to be "under control". Despite the handful of C-side assignments
+// like "engn_xc = PRCCOORD_TO_MAPCOORD(p_thing->X)" (which would suggest
+// MAP-tile-index scale), the value actually live during normal gameplay
+// scrolling (set by the still-unported ASM camera code) is already in the
+// same raw PRCCOORD scale as Thing.X/Z - confirmed empirically via a debug
+// log: engn_xc/engn_zc values like 11016/3791 are only sensible (~tile
+// 43/15) when read directly, and are wildly out of range if divided by 256
+// again. engn_yc has its own non-linear scale (see the "-yc: 8*yc quirk"
+// note in emit_explode_faces) and isn't meaningful here, so height is
+// ignored - only horizontal (on-screen) distance matters. range_tiles == 0
+// means unlimited (intensity gate only).
+static TbBool bullettime_explosion_is_near_view(int x, int y, int z)
+{
+    int range_tiles;
+    u32 dist;
+
+    (void)y;
+    range_tiles = bullettime_range_tiles();
+    if (range_tiles <= 0)
+        return true;
+
+    dist = map_distance_deltas_fast(x - engn_xc, 0, z - engn_zc);
+    return dist <= (u32)(range_tiles * 256);
+}
+
+// As above, but for the do_shockwave_building/vehicle/person variants, which
+// give us the affected Thing directly instead of a raw epicentre - use its
+// own position. NULL (no specific target) counts as "near".
+static TbBool bullettime_thing_is_near_view(struct Thing *p_target)
+{
+    if (p_target == NULL)
+        return true;
+    return bullettime_explosion_is_near_view((int)p_target->X, (int)p_target->Y,
+        (int)p_target->Z);
+}
+
 void do_shockwave(int x, int y, int z, int radius, int intensity, struct Thing *p_owner)
 {
+    // Big shockwaves (rockets, mines, building demolitions) pass intensity far
+    // above the small fixed value plain bullet-impact ground hits use; gate on
+    // that (and on proximity to the camera view) so bullet-time triggers on
+    // real, on-screen explosions only, not gunfire or fights elsewhere on the
+    // map that the player isn't even looking at.
+    if (bullettime_explosion_is_near_view(x, y, z))
+        bullettime_trigger(intensity);
     asm volatile (
       "push %5\n"
       "push %4\n"
@@ -89,6 +138,12 @@ void do_shockwave(int x, int y, int z, int radius, int intensity, struct Thing *
 
 void do_shockwave_building(int dist, int intensity, struct Thing *p_thing, struct Thing *p_owner)
 {
+    // Building collapse (explode_thing_building) routes its shockwave through
+    // this and the person/vehicle variants below, not the general
+    // do_shockwave() - hook here too so collapsing buildings can trigger
+    // bullet-time.
+    if (bullettime_thing_is_near_view(p_thing))
+        bullettime_trigger(intensity);
     asm volatile (
       "call ASM_do_shockwave_building\n"
         : : "a" (dist), "d" (intensity), "b" (p_thing), "c" (p_owner));
@@ -97,6 +152,8 @@ void do_shockwave_building(int dist, int intensity, struct Thing *p_thing, struc
 void do_shockwave_vehicle(int dx, int dz, int dist, int intensity,
   struct Thing *p_vevicle, struct Thing *p_owner)
 {
+    if (bullettime_thing_is_near_view(p_vevicle))
+        bullettime_trigger(intensity);
     asm volatile (
       "push %5\n"
       "push %4\n"
@@ -107,6 +164,10 @@ void do_shockwave_vehicle(int dx, int dz, int dist, int intensity,
 void do_shockwave_person(int dx, int dz, int dist, int intensity,
   struct Thing *p_person, struct Thing *p_owner)
 {
+    // The primary trigger site for building-collapse bullet-time: explode_thing_building
+    // calls this once per nearby person affected by the blast.
+    if (bullettime_thing_is_near_view(p_person))
+        bullettime_trigger(intensity);
     asm volatile (
       "push %5\n"
       "push %4\n"
