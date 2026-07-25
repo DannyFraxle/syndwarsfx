@@ -5,13 +5,10 @@ AC_PREREQ([2.69])
 m4_define([ver_major], [0])
 m4_define([ver_minor], [5])
 m4_define([ver_release], [0])
-# Build number starts at 5000 and increments by 1 with each commit.  Calculated
-# as 884 (the offset needed so the current commit count of 4116 produces 5000)
-# plus the current commit count.  Falls back to 5000 when git is unavailable
-# (e.g. no ".git" folder, or git not on PATH as in a bare MinGW32 shell) so the
-# version component is never empty — an empty VER_BUILD breaks windres on the
-# Windows resource script.
-m4_define([ver_build], m4_esyscmd_s([echo $((884 + $(git rev-list --count HEAD 2>/dev/null || echo 4116)))]))
+# Build number is a manually maintained literal, bumped by 1 for every edit made
+# during an agent session (not tied to git commit count, since edits and commits
+# don't correspond 1:1).
+m4_define([ver_build], [5100])
 
 m4_define([syndwarsfx_version],
       [ver_major.ver_minor.ver_release.ver_build])

@@ -196,7 +196,7 @@ void setup_screen_mode(TbScreenMode mode)
 
     printf("%s %d\n", __func__, (int)mode);
     mdinfo = LbScreenGetModeInfo(mode);
-    if (mdinfo->Width == 0) {
+    if ((mdinfo->Width == 0) || (mdinfo->Height == 0)) {
         LOGERR("Game video mode %d is invalid", (int)mode);
         mode = 1;
         mdinfo = LbScreenGetModeInfo(mode);

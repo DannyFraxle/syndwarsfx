@@ -1858,6 +1858,15 @@ void process_engine_unk3(void)
      * repopulates it during the build (angled building/vehicle ground shadows),
      * the FX3D renderer draws them as blended dark decals. */
     hwr_model_shadow_count = 0;
+    /* FX3D: snapshot last turn's COMPLETE overlay list (built through the previous
+     * frame's draw_hud) as "previous" for interpolation, THEN reset for this turn.
+     * Must run before the reset so the prev snapshot isn't wiped. */
+    hwr_overlay_snapshot_prev();
+    hwr_overlay_req_count = 0;
+    /* FX3D: reset the weapon-beam list (electric zap / laser); enlist_draw_laser
+     * and enlist_draw_wobble_line repopulate it during the build, drawn
+     * depth-tested by the hardware renderer. */
+    hwr_beam_count = 0;
 
     reset_drawlist();
     ingame.NextRocket = 0;
@@ -1941,7 +1950,13 @@ void process_engine_unk3(void)
     p_locplayer = &players[local_player_no];
     if ((ingame.Flags & GamF_RenderScene) != 0)
     {
-        draw_explode();
+        /* When the FX3D renderer gated the floor this frame, the exploding
+         * object panels (ex_faces[]) are emitted as depth-tested 3D geometry
+         * with 60fps interpolation via emit_explode_faces() in the GL path.
+         * Skip the SW draw_explode() so it doesn't overpaint the composite with
+         * flat, un-depth-tested fragments locked to the 16Hz sim rate. */
+        if (!hwr_floor_gated_frame)
+            draw_explode();
         draw_screen();
         draw_hud(p_locplayer->DirectControl[0]);
         if (in_network_game)

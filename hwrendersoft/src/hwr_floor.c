@@ -53,6 +53,7 @@ static const char *floor_vert_src =
     "layout(location=3) in uint aPage;\n"
     "layout(location=4) in float aLight;\n"  /* SW baked shade 0..1 (AO) */
     "layout(location=5) in float aEmissive;\n"  /* SW baked emissive 0..1 (windows) */
+    "layout(location=6) in vec2 aUVSize;\n"  /* water sub-rect texel span; (0,0)=normal */
     "uniform float uD10, uD14, uD18, uD1C;\n"
     "uniform float uScale;\n"
     "uniform vec2 uCentre;   // D3C, D40\n"
@@ -63,6 +64,10 @@ static const char *floor_vert_src =
     "out float vAO;\n"
     "out float vEmissive;\n"
     "out float vScrd;\n"
+    "out vec2 vWorldUV;\n"   /* continuous world tex-phase (aPos.xz/256) for water */
+    "out vec2 vUVOrigin;\n"  /* water sub-rect origin texels (= aUV) */
+    "out vec2 vUVSize;\n"    /* water sub-rect texel span (= aUVSize) */
+    "out float vWater;\n"    /* 1 = water tile (continuous, seamless UV) */
     "void main(){\n"
     "    float dx = aPos.x - uCtr.x;\n"
     "    float dy = aPos.y - uCtr.y;\n"
@@ -86,13 +91,23 @@ static const char *floor_vert_src =
     "    vAO = aLight;\n"
     "    vEmissive = aEmissive;\n"
     "    vScrd = scrd;                   // view depth -> SSAO occlusion test\n"
-    "    /* aDepth is the tile's scrd at its centre (already perspective-clamped\n"
-    "     * in C), matching the SW bucket sort key. scrd is small/near-zero or\n"
-    "     * negative for tiles close to the camera and asymptotes to ~16384 far\n"
-    "     * away. Map that whole range across NDC z directly - the previous\n"
-    "     * (scrd/8192 - 1) mapping clamped every near tile to -1, collapsing the\n"
-    "     * bottom half of the screen to one depth and causing z-fighting. */\n"
-    "    float ndc_z = clamp(aDepth / 16384.0, -1.0, 1.0);\n"
+    "    vWorldUV = aPos.xz / 256.0;     // continuous across tiles (tile = 256u)\n"
+    "    vUVOrigin = aUV;\n"
+    "    vUVSize = aUVSize;\n"
+    "    vWater = (aUVSize.x > 0.5 || aUVSize.y > 0.5) ? 1.0 : 0.0;\n"
+    "    /* aDepth is face_scrd(): a LINEAR, UNBOUNDED screen depth - it deliberately\n"
+    "     * omits the mode-5 perspective clamp (which is non-monotonic and would\n"
+    "     * invert occlusion in a per-pixel z-buffer). It therefore does NOT asymptote\n"
+    "     * to 16384; only the WARPED scrd does. Dividing by 16384 here clamped every\n"
+    "     * tile past that range onto the same ndc_z, collapsing them to one depth so\n"
+    "     * they z-fought - which corrupted the world-position G-buffer and, at the\n"
+    "     * camera angles where the depth spread is widest, broke water reflections.\n"
+    "     * 65536 covers the real linear range with headroom; 24-bit depth still gives\n"
+    "     * ~0.008 world units per step, far finer than any bias we use (decal 48,\n"
+    "     * sprite 512). MUST match every other pass writing this depth buffer:\n"
+    "     * the chameleon pass below, hwr_sprite.c (sprites + both shadow passes,\n"
+    "     * whose NDC-space biases scale with it), and the beams in source_sw.c. */\n"
+    "    float ndc_z = clamp(aDepth / 65536.0, -1.0, 1.0);\n"
     "    gl_Position = vec4(sx/uCentre.x - 1.0, 1.0 - sy/uCentre.y, ndc_z, 1.0);\n"
     "}\n";
 
@@ -103,8 +118,12 @@ static const char *floor_frag_src =
     "in float vAO;\n"
     "in float vEmissive;\n"
     "in float vScrd;\n"
+    "in vec2 vWorldUV;\n"
+    "in vec2 vUVOrigin;\n"
+    "in vec2 vUVSize;\n"
+    "in float vWater;\n"
     "layout(location=0) out vec4 frag;\n"
-    "layout(location=1) out vec4 fragPos;   // xyz world pos + w view depth -> SSAO\n"
+    "layout(location=1) out vec4 fragPos;   // xyz world pos + w water mask (SSR)\n"
     "uniform sampler2DArray uTex;         // R8 palette indices\n"
     "uniform sampler2D uPalette;          // RGB8 256x1, active 8-bit palette\n"
     "uniform sampler2D uSelfLit;          // R8 256x1, 1.0 for SW's fade_unaffected_colours\n"
@@ -147,9 +166,17 @@ static const char *floor_frag_src =
     "        vec2((float(idx) + 0.5) / 256.0, frow)).r * 255.0 + 0.5);\n"
     "}\n"
     "void main(){\n"
-    "    fragPos = vec4(vWorldPos, vScrd);   // G-buffer attachment 1\n"
-    "    if (vUV.z > 253.5 && vUV.z < 254.5) {  // deep-radar: flat tint, skip lighting entirely\n"
-    "        frag = vec4(pal_lookup(uDeepRadarIdx), uAlpha);\n"
+    "    fragPos = vec4(vWorldPos, vWater);   // G-buffer attachment 1 (w = water mask)\n"
+    "    if (vUV.z > 253.5 && vUV.z < 254.5) {  // deep-radar see-through building tint\n"
+    "        // Keep the distinguishable x-ray tint, but dim it by the baked shade\n"
+    "        // (vAO) so occluded buildings read dark instead of flat full-bright.\n"
+    "        // 0.35 floor keeps the silhouette legible even fully shadowed.\n"
+    "        float dr_dim = mix(0.35, 1.0, clamp(vAO, 0.0, 1.0));\n"
+    "        frag = vec4(pal_lookup(uDeepRadarIdx) * dr_dim, uAlpha);\n"
+    "        return;\n"
+    "    }\n"
+    "    if (vUV.z > 252.5 && vUV.z < 253.5) {  // solid palette colour (shrapnel), unlit\n"
+    "        frag = vec4(pal_lookup(int(vUV.x * 256.0)), uAlpha);\n"
     "        return;\n"
     "    }\n"
     "    vec3 light_col = vec3(0.0);\n"
@@ -238,8 +265,28 @@ static const char *floor_frag_src =
     "    // uShadeSat = strength (0 = plain linear, ~0.6 = SW-like depth).\n"
     "    float lv = clamp(dot(light_col, vec3(0.299, 0.587, 0.114)), 0.0, 1.97);\n"
     "    float sboost = 1.0 + uShadeSat * clamp(1.0 - lv, 0.0, 1.0);\n"
+    "    // Water: rebuild the UV from continuous world position so the texture\n"
+    "    // phase is seamless across tile boundaries (fract() done here, per\n"
+    "    // fragment - doing it per vertex would collapse to 0 at every corner).\n"
+    "    // Non-water keeps vUV exactly.\n"
+    "    vec3 fuv = vUV;\n"
+    "    if (vWater > 0.5) {\n"
+    "        vec2 local = fract(vWorldUV);\n"
+    "        fuv.xy = (vUVOrigin + local * vUVSize + 0.5) / 256.0;\n"
+    "    }\n"
+    "    if (vUV.z > 251.5 && vUV.z < 252.5) {  // SW mode-04 flat palette colour, LIT\n"
+    "        // Cells with Texture==0 (a wall/ledge stands here, no ground surface).\n"
+    "        // lvdraw3d.c draws these as RendVec_mode04 + colour_grey2 - a plain\n"
+    "        // shaded polygon, no texture.  Unlike the shrapnel page (253) this one\n"
+    "        // still takes the full lighting path, matching SW's per-corner Shade[].\n"
+    "        vec3 c = pal_lookup(int(vUV.x * 256.0));\n"
+    "        vec3 lin = c * light_col;\n"
+    "        float g = dot(lin, vec3(0.299, 0.587, 0.114));\n"
+    "        frag = vec4(max(mix(vec3(g), lin, sboost), 0.0), uAlpha);\n"
+    "        return;\n"
+    "    }\n"
     "    // Nearest: single texel with GL_NEAREST.\n"
-    "    int idx = int(texture(uTex, vUV).r * 255.0 + 0.5);\n"
+    "    int idx = int(texture(uTex, fuv).r * 255.0 + 0.5);\n"
     "    if (uFilter == 1) {\n"
     "        // Palette-correct bilinear: sample 4 nearest integer texels via\n"
     "        // texelFetch (bypasses GL filtering), convert each to RGB through\n"
@@ -248,8 +295,8 @@ static const char *floor_frag_src =
     "        // excluded from BOTH the colour blend (no dark key-colour fringe) and\n"
     "        // a coverage value, so the cutout edge follows the smooth bilinear\n"
     "        // iso-line instead of the blocky texel grid.\n"
-    "        int page = int(vUV.z);\n"
-    "        vec2 tc = vUV.xy * 256.0 - 0.5;\n"
+    "        int page = int(fuv.z);\n"
+    "        vec2 tc = fuv.xy * 256.0 - 0.5;\n"
     "        ivec2 uv0 = ivec2(floor(tc));\n"
     "        vec2  f = fract(tc);\n"
     "        ivec2 uv1 = min(uv0 + 1, ivec2(255));\n"
@@ -427,6 +474,11 @@ static int fl_init(void)
         glEnableVertexAttribArray(5);
         glVertexAttribPointer(5, 1, GL_UNSIGNED_BYTE, GL_TRUE, stride,
             (void *)offsetof(HwrVertex, emissive));
+        /* Water continuous-UV sub-rect span (location 6, aUVSize). UNnormalised
+         * (GL_FALSE): the shader wants the texel counts 0..255 directly. */
+        glEnableVertexAttribArray(6);
+        glVertexAttribPointer(6, 2, GL_UNSIGNED_BYTE, GL_FALSE, stride,
+            (void *)offsetof(HwrVertex, uv_w));
     }
     glBindVertexArray(0);
 
@@ -632,6 +684,11 @@ static void fl_setup_program(const HwrCamera *cam, const unsigned char *pal8,
     hwr_ssao_set_viewdir(cam->d1c * cam->d10,
                          cam->d18 * 65536.0f,
                          cam->d1c * cam->d14);
+    /* Feed the projection factors to the SSAO composite so the water-reflection
+     * ray-march can project marched world points back to screen UVs. */
+    hwr_ssao_set_camera(cam->d10, cam->d14, cam->d18, cam->d1c,
+                        cam->scale, cam->centre_x, cam->centre_y,
+                        cam->cx, cam->cy8, cam->cz, cam->perspective);
 }
 
 /* Stream one indexed geometry batch through the shared VBO/EBO and draw it.
@@ -806,10 +863,18 @@ int hwr_transparent_render(const unsigned char *pal8, int filter_linear)
     glUniform1f(fl_loc_alpha, tr_alpha);
     glUniform1i(fl_loc_deepradar, tr_deepradar_idx);
     {
+        /* Match the opaque floor/face paths: the per-vertex baked shade (vAO)
+         * already contains every STATIC light, so upload only DYNAMIC lights
+         * here too - passing all of them double-counts the static ones and
+         * over-brightens glass/fence faces. */
         HwrLight lights[HWR_MAX_LIGHTS];
         int nlight = (s->get_lights != NULL)
             ? s->get_lights(s->ctx, lights, HWR_MAX_LIGHTS) : 0;
-        fl_upload_lights(lights, nlight < 0 ? 0 : nlight);
+        int i, nd = 0;
+        for (i = 0; i < nlight; i++)
+            if (lights[i].dynamic)
+                lights[nd++] = lights[i];
+        fl_upload_lights(lights, nd);
     }
 
     /* Blend over the opaque scene; test depth but don't write it (so blended
@@ -872,7 +937,7 @@ static const char *refl_vert_src =
     "    vBase = aBase;\n"
     "    vWorldPos = aPos;\n"
     "    vLocalPos = aLocalPos;\n"
-    "    float ndc_z = clamp(aDepth / 16384.0, -1.0, 1.0);\n"
+    "    float ndc_z = clamp(aDepth / 65536.0, -1.0, 1.0);\n"
     "    gl_Position = vec4(sx/uCentre.x - 1.0, 1.0 - sy/uCentre.y, ndc_z, 1.0);\n"
     "}\n";
 

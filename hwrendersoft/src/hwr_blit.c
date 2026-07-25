@@ -420,98 +420,187 @@ void hwr_rain_render(void)
 
 /* ---------------------------------------------------------------------------
  * Bullet-time screen filter. Cues the player that an explosion just slowed
- * the game down on purpose (not a hitch): a cool desaturating tint that
- * deepens toward the screen edges, scaled by how far into the slow-motion
- * dip the current frame is (game_speed.c's bullettime_intensity(), 0 = normal
- * speed, 1 = deepest dip). Like the rain overlay, this only needs screen UV -
- * no G-buffer or scene sampling required. */
+ * the game down on purpose (not a hitch): a real radial "zoom blur" growing
+ * outward from screen centre (so it reads as edge blur), plus a temporal
+ * blend with the previous frame for a motion-trail/ghosting feel - both
+ * scaled by how deep into the slow-motion dip the current frame is
+ * (game_speed.c's bullettime_intensity(), 0 = normal speed, 1 = deepest
+ * dip). Unlike the rain overlay, this genuinely needs the already-rendered
+ * scene pixels, so it captures the back buffer into a texture (via
+ * glBlitFramebuffer, already used the same way for SSAO's depth blit) rather
+ * than just drawing a flat screen-space quad:
+ *
+ *   back buffer --blit--> bt_scene_tex --radial blur--> bt_blur_tex
+ *     --blend with bt_hist_tex--> back buffer --blit--> bt_hist_tex (next frame)
+ *
+ * Runs after all opaque/translucent 3D passes and the rain overlay, before
+ * debug overlays and the keyed WScreen (HUD) composite - so the HUD stays
+ * crisp on top of the blurred scene. */
 
-static const char *bullettime_vert_src =
+static const char *bt_fs_vert_src =
     "#version 330 core\n"
-    "layout(location=0) in vec2 aPos;\n"
-    "void main(){ gl_Position = vec4(aPos, 0.0, 1.0); }\n";
-
-static const char *bullettime_frag_src =
-    "#version 330 core\n"
-    "out vec4 frag;\n"
-    "uniform vec2 uResolution;\n"
-    "uniform float uIntensity;  // 0..1, current dip depth\n"
-    "uniform float uAlpha;      // max overlay opacity at full dip\n"
-    "uniform float uVignette;   // vignette strength, 0..1\n"
+    "out vec2 vUV;\n"
     "void main(){\n"
-    "    vec2 uv = gl_FragCoord.xy / uResolution;\n"
-    "    vec2 d = (uv - vec2(0.5));\n"
-    "    d.x *= uResolution.x / uResolution.y;  // aspect-correct: circular, not elliptical\n"
-    "    float dist = length(d);\n"
-    "    // 0 at screen centre, ramps up hard past ~20% of the half-diagonal so\n"
-    "    // the middle of the view stays readable and the effect reads as a\n"
-    "    // framing vignette rather than a flat colour wash.\n"
-    "    float vig = pow(clamp((dist - 0.2) / 0.55, 0.0, 1.0), 1.6) * uVignette;\n"
-    "    float uniform_tint = 0.12 * uIntensity * uAlpha;\n"
-    "    float edge = vig * uIntensity * uAlpha;\n"
-    "    float a = clamp(uniform_tint + edge, 0.0, 1.0);\n"
-    "    if (a <= 0.003)\n"
-    "        discard;\n"
-    "    // Blue-grey desaturating tint in the middle, darkening toward near-black\n"
-    "    // at the frame edges (the actual 'vignette' look).\n"
-    "    vec3 col = mix(vec3(0.55, 0.62, 0.72), vec3(0.02, 0.03, 0.06), vig);\n"
-    "    frag = vec4(col, a);\n"
+    "    vec2 p = vec2((gl_VertexID == 1) ? 3.0 : -1.0,\n"
+    "                  (gl_VertexID == 2) ? 3.0 : -1.0);\n"
+    "    vUV = p * 0.5 + 0.5;\n"
+    "    gl_Position = vec4(p, 0.0, 1.0);\n"
     "}\n";
 
-static GLuint bullettime_prog = 0;
-static GLuint bullettime_vao = 0, bullettime_vbo = 0;
-static GLint  bt_loc_res = -1, bt_loc_intensity = -1, bt_loc_alpha = -1, bt_loc_vignette = -1;
+static const char *bt_radial_frag_src =
+    "#version 330 core\n"
+    "in vec2 vUV;\n"
+    "out vec4 frag;\n"
+    "uniform sampler2D uScene;\n"
+    "uniform vec2 uResolution;\n"
+    "uniform float uIntensity;   // 0..1, current dip depth\n"
+    "uniform float uStrength;    // max blur reach (UV units) at the edge, full dip\n"
+    "void main(){\n"
+    "    vec2 aspect = vec2(uResolution.x / uResolution.y, 1.0);\n"
+    "    vec2 d = (vUV - vec2(0.5)) * aspect;\n"
+    "    float dist = length(d);\n"
+    "    vec2 dirUV = (dist > 1e-5) ? (d / dist) / aspect : vec2(0.0);\n"
+    "    // Wide dead zone covering most of the screen (radius < 0.45 = zero\n"
+    "    // blur, stays genuinely sharp), ramping up to full uStrength only in\n"
+    "    // the outer rim by dist ~0.85 (right at the edges) - unlike a plain\n"
+    "    // linear ramp from the exact centre, this keeps almost the whole view\n"
+    "    // crisp and confines the blur to a narrow edge band.\n"
+    "    float edgeFactor = smoothstep(0.45, 0.85, dist);\n"
+    "    float amount = uIntensity * uStrength * edgeFactor;\n"
+    "    vec3 sum = vec3(0.0);\n"
+    "    const int N = 10;\n"
+    "    for (int i = 0; i < N; i++) {\n"
+    "        float t = (float(i) / float(N - 1) - 0.5) * amount;\n"
+    "        vec2 uv = clamp(vUV - dirUV * t, vec2(0.001), vec2(0.999));\n"
+    "        sum += texture(uScene, uv).rgb;\n"
+    "    }\n"
+    "    frag = vec4(sum / float(N), 1.0);\n"
+    "}\n";
+
+static const char *bt_blend_frag_src =
+    "#version 330 core\n"
+    "in vec2 vUV;\n"
+    "out vec4 frag;\n"
+    "uniform sampler2D uCurrent;   // this frame's radial-blurred scene\n"
+    "uniform sampler2D uHistory;   // previous frame's final blended output\n"
+    "uniform float uTrail;         // 0..1, how much of history persists\n"
+    "void main(){\n"
+    "    vec3 cur = texture(uCurrent, vUV).rgb;\n"
+    "    vec3 hist = texture(uHistory, vUV).rgb;\n"
+    "    frag = vec4(mix(cur, hist, uTrail), 1.0);\n"
+    "}\n";
+
+static GLuint bt_radial_prog = 0, bt_blend_prog = 0;
+static GLint  btr_loc_scene = -1, btr_loc_res = -1, btr_loc_intensity = -1, btr_loc_strength = -1;
+static GLint  btb_loc_cur = -1, btb_loc_hist = -1, btb_loc_trail = -1;
+static GLuint bt_quad_vao = 0;
 static int    bullettime_ready = 0;
 
 static int   bullettime_enable = 0;
-static float bullettime_alpha = 0.5f;
-static float bullettime_vignette = 0.6f;
+static float bullettime_blur_strength = 0.06f;
+static float bullettime_trail = 0.4f;
+
+/* Capture / blur / history render targets, resized to the drawable each time
+ * it changes (mirrors hwr_ssao.c's G-buffer resize pattern). */
+static int    bt_w = 0, bt_h = 0;
+static GLuint bt_scene_fbo = 0, bt_scene_tex = 0;
+static GLuint bt_blur_fbo = 0, bt_blur_tex = 0;
+static GLuint bt_hist_fbo = 0, bt_hist_tex = 0;
+
+static GLuint bt_make_color_fbo(int w, int h, GLuint *out_tex)
+{
+    GLuint fbo, tex;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, w, h, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);   /* avoid a garbage flash on first use (esp. history) */
+
+    *out_tex = tex;
+    return fbo;
+}
+
+static void bt_free_targets(void)
+{
+    if (bt_scene_tex) { glDeleteTextures(1, &bt_scene_tex); bt_scene_tex = 0; }
+    if (bt_blur_tex)  { glDeleteTextures(1, &bt_blur_tex);  bt_blur_tex = 0; }
+    if (bt_hist_tex)  { glDeleteTextures(1, &bt_hist_tex);  bt_hist_tex = 0; }
+    if (bt_scene_fbo) { glDeleteFramebuffers(1, &bt_scene_fbo); bt_scene_fbo = 0; }
+    if (bt_blur_fbo)  { glDeleteFramebuffers(1, &bt_blur_fbo);  bt_blur_fbo = 0; }
+    if (bt_hist_fbo)  { glDeleteFramebuffers(1, &bt_hist_fbo);  bt_hist_fbo = 0; }
+}
+
+static int bt_resize(int w, int h)
+{
+    if (w == bt_w && h == bt_h && bt_scene_fbo != 0)
+        return HWR_OK;
+    bt_free_targets();
+    bt_w = w; bt_h = h;
+
+    bt_scene_fbo = bt_make_color_fbo(w, h, &bt_scene_tex);
+    bt_blur_fbo  = bt_make_color_fbo(w, h, &bt_blur_tex);
+    bt_hist_fbo  = bt_make_color_fbo(w, h, &bt_hist_tex);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (hwr_gl_check("bt_resize"))
+        return HWR_ERROR;
+    return HWR_OK;
+}
+
+static GLuint bt_link_prog(const char *frag_src)
+{
+    GLuint vs, fs, prog;
+    GLint ok = 0;
+
+    vs = compile_shader(GL_VERTEX_SHADER, bt_fs_vert_src);
+    if (vs == 0)
+        return 0;
+    fs = compile_shader(GL_FRAGMENT_SHADER, frag_src);
+    if (fs == 0) {
+        glDeleteShader(vs);
+        return 0;
+    }
+    prog = glCreateProgram();
+    glAttachShader(prog, vs);
+    glAttachShader(prog, fs);
+    glLinkProgram(prog);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        char log[512];
+        glGetProgramInfoLog(prog, sizeof(log), NULL, log);
+        hwr_set_error("bullettime program link failed: %s", log);
+        return 0;
+    }
+    return prog;
+}
 
 static int bullettime_init(void)
 {
-    GLuint vs, fs;
-    static const float quad[] = {
-        -1.0f, -1.0f,   1.0f, -1.0f,   -1.0f, 1.0f,
-        -1.0f,  1.0f,   1.0f, -1.0f,    1.0f, 1.0f,
-    };
-
-    vs = compile_shader(GL_VERTEX_SHADER, bullettime_vert_src);
-    if (vs == 0)
+    bt_radial_prog = bt_link_prog(bt_radial_frag_src);
+    bt_blend_prog  = bt_link_prog(bt_blend_frag_src);
+    if (!bt_radial_prog || !bt_blend_prog)
         return HWR_ERROR;
-    fs = compile_shader(GL_FRAGMENT_SHADER, bullettime_frag_src);
-    if (fs == 0) {
-        glDeleteShader(vs);
-        return HWR_ERROR;
-    }
-    bullettime_prog = glCreateProgram();
-    glAttachShader(bullettime_prog, vs);
-    glAttachShader(bullettime_prog, fs);
-    glLinkProgram(bullettime_prog);
-    glDeleteShader(vs);
-    glDeleteShader(fs);
-    {
-        GLint ok = 0;
-        glGetProgramiv(bullettime_prog, GL_LINK_STATUS, &ok);
-        if (!ok) {
-            char log[512];
-            glGetProgramInfoLog(bullettime_prog, sizeof(log), NULL, log);
-            hwr_set_error("bullettime program link failed: %s", log);
-            return HWR_ERROR;
-        }
-    }
-    bt_loc_res       = glGetUniformLocation(bullettime_prog, "uResolution");
-    bt_loc_intensity = glGetUniformLocation(bullettime_prog, "uIntensity");
-    bt_loc_alpha     = glGetUniformLocation(bullettime_prog, "uAlpha");
-    bt_loc_vignette  = glGetUniformLocation(bullettime_prog, "uVignette");
 
-    glGenVertexArrays(1, &bullettime_vao);
-    glBindVertexArray(bullettime_vao);
-    glGenBuffers(1, &bullettime_vbo);
-    glBindBuffer(GL_ARRAY_BUFFER, bullettime_vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(quad), quad, GL_STATIC_DRAW);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void *)0);
-    glBindVertexArray(0);
+    btr_loc_scene     = glGetUniformLocation(bt_radial_prog, "uScene");
+    btr_loc_res       = glGetUniformLocation(bt_radial_prog, "uResolution");
+    btr_loc_intensity = glGetUniformLocation(bt_radial_prog, "uIntensity");
+    btr_loc_strength  = glGetUniformLocation(bt_radial_prog, "uStrength");
+
+    btb_loc_cur   = glGetUniformLocation(bt_blend_prog, "uCurrent");
+    btb_loc_hist  = glGetUniformLocation(bt_blend_prog, "uHistory");
+    btb_loc_trail = glGetUniformLocation(bt_blend_prog, "uTrail");
+
+    glGenVertexArrays(1, &bt_quad_vao);
 
     if (hwr_gl_check("bullettime_init"))
         return HWR_ERROR;
@@ -519,18 +608,24 @@ static int bullettime_init(void)
     return HWR_OK;
 }
 
-/** Configure the bullet-time screen filter (from fx3d_lights.ini [bullettime]). */
-void hwr_bullettime_config(int enable, float alpha, float vignette)
+/** Configure the bullet-time screen filter (from fx3d_lights.ini
+ *  [bullettime]). enable toggles the pass; blur_strength is the max radial-
+ *  blur reach at the screen edge (UV units, full dip); trail is how much of
+ *  the previous frame persists into this one at full dip (0..1, motion-trail
+ *  strength). */
+void hwr_bullettime_config(int enable, float blur_strength, float trail)
 {
     bullettime_enable = enable;
-    bullettime_alpha = alpha;
-    bullettime_vignette = vignette;
+    bullettime_blur_strength = blur_strength;
+    bullettime_trail = trail;
 }
 
-/** Draw the bullet-time screen filter, alpha-blended over the already-
+/** Draw the bullet-time radial blur + motion-trail effect over the already-
  *  rendered scene. intensity is game_speed.c's bullettime_intensity() (0 =
  *  normal speed, no-op; up to 1 = deepest slow-motion dip). Call after the 3D
- *  passes, before the keyed WScreen (HUD) composite. */
+ *  passes, before debug overlays and the keyed WScreen (HUD) composite -
+ *  captures/replaces the CURRENT back buffer content, so anything drawn
+ *  after this (debug labels, HUD) stays crisp on top. */
 void hwr_bullettime_render(float intensity)
 {
     int dw = 0, dh = 0;
@@ -543,22 +638,50 @@ void hwr_bullettime_render(float intensity)
     hwr_drawable_size(&dw, &dh);
     if (dw <= 0 || dh <= 0)
         return;
+    if (bt_resize(dw, dh) != HWR_OK)
+        return;
 
     glDisable(GL_DEPTH_TEST);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-    glUseProgram(bullettime_prog);
-    glUniform2f(bt_loc_res, (float)dw, (float)dh);
-    glUniform1f(bt_loc_intensity, intensity);
-    glUniform1f(bt_loc_alpha, bullettime_alpha);
-    glUniform1f(bt_loc_vignette, bullettime_vignette);
-
-    glBindVertexArray(bullettime_vao);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-    glBindVertexArray(0);
-
     glDisable(GL_BLEND);
+    glBindVertexArray(bt_quad_vao);
+
+    /* 1) Capture the already-rendered scene into bt_scene_tex. */
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, bt_scene_fbo);
+    glBlitFramebuffer(0, 0, dw, dh, 0, 0, dw, dh, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+    /* 2) Radial/zoom blur: bt_scene_tex -> bt_blur_tex. */
+    glBindFramebuffer(GL_FRAMEBUFFER, bt_blur_fbo);
+    glViewport(0, 0, dw, dh);
+    glUseProgram(bt_radial_prog);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, bt_scene_tex);
+    glUniform1i(btr_loc_scene, 0);
+    glUniform2f(btr_loc_res, (float)dw, (float)dh);
+    glUniform1f(btr_loc_intensity, intensity);
+    glUniform1f(btr_loc_strength, bullettime_blur_strength);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    /* 3) Blend with last frame's result (motion trail) -> back buffer. */
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, dw, dh);
+    glUseProgram(bt_blend_prog);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, bt_blur_tex);
+    glUniform1i(btb_loc_cur, 0);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, bt_hist_tex);
+    glUniform1i(btb_loc_hist, 1);
+    glUniform1f(btb_loc_trail, intensity * bullettime_trail);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    /* 4) Save this frame's final result as history for next frame's trail. */
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, bt_hist_fbo);
+    glBlitFramebuffer(0, 0, dw, dh, 0, 0, dw, dh, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindVertexArray(0);
     glEnable(GL_DEPTH_TEST);
 
     hwr_gl_check("hwr_bullettime_render");

@@ -121,6 +121,14 @@ TbScreenMode LbRegisterVideoMode(const char *desc, TbScreenCoord width,
         // No free mode slots
         return Lb_SCREEN_MODE_INVALID;
     }
+    // Clamp to the resolution the software rasterizer's fixed-size buffers
+    // (polyscans[]/draw_ranges[]/xsteps_array[]/ysteps_array[], sized off
+    // these same constants) were built to support. Above this, sprite/UI
+    // scaling math can walk off the end of those buffers and crash.
+    if (width > MAX_SUPPORTED_SCREEN_WIDTH)
+        width = MAX_SUPPORTED_SCREEN_WIDTH;
+    if (height > MAX_SUPPORTED_SCREEN_HEIGHT)
+        height = MAX_SUPPORTED_SCREEN_HEIGHT;
     // Insert new mode to array
     mode = lbScreenModeInfoNum;
     lbScreenModeInfoNum++;

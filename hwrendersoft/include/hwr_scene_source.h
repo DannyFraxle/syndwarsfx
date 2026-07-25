@@ -42,6 +42,12 @@ typedef struct {
     uint8_t emissive; /* 255 for face modes SW never scene-shades (window glass,
                         * unshaded texture/flat-fill modes - see
                         * hwr_mode_is_scene_shaded in source_sw.c), 0 otherwise */
+    uint8_t uv_w, uv_h; /* Water continuous-UV: sub-rect texel span (max-min of the
+                         * tile's TMap corners). When non-zero the floor shader
+                         * derives the UV from world position (fract) instead of the
+                         * per-corner texels, so the water texture tiles seamlessly
+                         * across tile boundaries; it also flags the tile for the
+                         * specular shine. (0,0) = ordinary tile, unchanged. */
 } HwrVertex;
 
 /** The indexed texture pages backing the geometry: count layers of
@@ -170,6 +176,15 @@ typedef struct {
     float u0, v0, u1, v1;
 } HwrOverlayQuad;
 
+/** One vertex of a depth-tested weapon-beam triangle (electric zap / laser). The
+ *  position is already in clip/NDC space (x,y in [-1,1], z = scrd/16384 matching
+ *  the floor/face depth mapping) so the beam is occluded by 3D geometry. rgba is
+ *  the straight-alpha colour. Produced by get_beams as a flat triangle list. */
+typedef struct {
+    float x, y, z;
+    float r, g, b, a;
+} HwrBeamVertex;
+
 /** Pull interface implemented per game title. All getters return the number of
  *  items produced (>=0) or a negative value on error. The backend calls
  *  begin_frame() once, then the getters, every frame. Pointers handed back by
@@ -222,6 +237,12 @@ typedef struct HwrSceneSource {
      *  max quads into out[]; returns count. Drawn blended on top of the resolved
      *  3D scene. May be NULL. */
     int (*get_overlays)(void *ctx, HwrOverlayQuad *out, int max);
+
+    /** Depth-tested weapon beams (electric zap / laser) as a flat triangle list of
+     *  clip-space vertices; returns the vertex count (multiple of 3). Drawn after
+     *  the opaque 3D scene with the scene depth buffer intact, so beams are
+     *  occluded by geometry. May be NULL. */
+    int (*get_beams)(void *ctx, HwrBeamVertex *out, int max);
 } HwrSceneSource;
 
 /******************************************************************************/

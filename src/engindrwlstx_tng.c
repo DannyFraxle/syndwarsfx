@@ -114,6 +114,12 @@ void draw_frame_on_map_coords(MapCoord cor_x, MapCoord cor_y, MapCoord cor_z,
     sp.X += ((overall_scale * scr_sh_x) >> 8);
     sp.Y += ((overall_scale * scr_sh_y) >> 8);
 
+    /* FX3D: the agent-number frame is drawn by the hardware renderer as a
+     * re-projected overlay quad (captured in number_player). Skip the software
+     * blit so it isn't double-drawn at the stale 16Hz screen position. */
+    if (engine_hwr_suppress_faces)
+        return;
+
     //TODO switch to drawlists
     if (unscaled)
         draw_hud_frame_on_screen_unscaled_but_scale_pos(sp.X, sp.Y, frm, overall_scale);
@@ -169,6 +175,16 @@ void number_player(struct Thing *p_person, ubyte n)
     shift_y = 0;
 
     unscaled = (lbDisplay.GraphicsScreenHeight < 400);
+
+    /* FX3D: capture the agent number as a world-anchored HUD overlay so the
+     * hardware renderer re-projects it every present frame (60fps), tracking the
+     * agent smoothly by identity (p_person) instead of snapping at 16Hz. Mirrors
+     * the projection draw_frame_on_map_coords does: ax/az absolute map coords,
+     * dyc the frozen transform_shpoint Y arg, scr_dx/dy the zoom-scaled shift. */
+    hwr_capture_overlay(HwrOvReq_Frame, tng_cor_x, 8 * tng_cor_y - 8 * engn_yc,
+      tng_cor_z, (short)((overall_scale * shift_x) >> 8),
+      (short)((overall_scale * shift_y) >> 8), (intptr_t)p_person,
+      (int)frm, unscaled ? 1 : 0, 0, 0, NULL);
 
     draw_frame_on_map_coords(tng_cor_x, tng_cor_y, tng_cor_z,
       shift_x, shift_y, frm, unscaled);

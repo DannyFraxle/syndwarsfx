@@ -594,6 +594,19 @@ void SCANNER_draw_new_transparent_map_line(int cu_x2, int cu_y2)
     while ( 2 )
     {
         int dt_val, pv_val, cu_val;
+        /* Longest horizontal span the scanner can legitimately draw in one
+         * call: its own on-screen width (each row's Width[] entry is <= this,
+         * and pv_val = Width[row]+1). Used to reject two very different bad
+         * inputs with one bound: (a) a genuinely too-wide span - the original
+         * hard-coded 400 was sized for the classic low-res scanner and wrongly
+         * dropped valid rows once the panel scales past 400px at high
+         * resolutions (1440p+), leaving those rows as the un-drawn key colour
+         * so the 3D scene showed through as horizontal bars; and (b) the
+         * pathological million-pixel span produced by SCANNER_dnt_..._update()
+         * when the per-pixel step (sh_x/sh_y = Zoom*sin(Angle)>>8) approaches
+         * zero at certain camera angles, which must still be rejected so it
+         * can't run off the end of WScreen. */
+        int scanner_w = ingame.Scanner.X2 - ingame.Scanner.X1 + 1;
 
         flags2 = (0x01 * (SCANNER_dw06C < 0))
                | (0x02 * (SCANNER_dw06C >= 0x1000000))
@@ -618,10 +631,10 @@ void SCANNER_draw_new_transparent_map_line(int cu_x2, int cu_y2)
             SCANNER_dnt_SCANNER_dw070_update(flags1);
             cu_val = SCANNER_dw074;
             dt_val = pv_val - cu_val;
-            if ((cu_val > 0) && (cu_val <= 400)) {
+            if ((cu_val > 0) && (cu_val <= scanner_w)) {
                 SCANNER_dnt_sub1_sub2();
             }
-            if ((dt_val > 0) && (dt_val <= 400)) {
+            if ((dt_val > 0) && (dt_val <= scanner_w)) {
                 SCANNER_dw074 = dt_val;
                 SCANNER_dnt_sub1_sub3();
             }

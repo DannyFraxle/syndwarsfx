@@ -161,15 +161,20 @@ void hwr_rain_config(int enable, float alpha, float density, float speed,
  *  WScreen (HUD) composite. No-op when disabled or not ready. */
 void hwr_rain_render(void);
 
-/** Configure the bullet-time screen filter (from fx3d_lights.ini
- *  [bullettime]). enable toggles the pass; alpha is the max overlay opacity
- *  at full dip (0..1); vignette is the edge darkening/tint strength (0..1). */
-void hwr_bullettime_config(int enable, float alpha, float vignette);
+/** Configure the bullet-time radial-blur + motion-trail effect (from
+ *  fx3d_lights.ini [bullettime]). enable toggles the pass; blur_strength is
+ *  the max radial-blur reach at the screen edge (UV units) at full dip;
+ *  trail is how much of the previous frame persists into this one at full
+ *  dip (0..1, motion-trail strength). */
+void hwr_bullettime_config(int enable, float blur_strength, float trail);
 
-/** Draw the bullet-time screen filter, alpha-blended over the already-
- *  rendered 3D scene. intensity is game_speed.c's bullettime_intensity()
- *  (0 = normal speed, no-op; up to 1 = deepest slow-motion dip). Call after
- *  the opaque/translucent 3D passes, before the keyed WScreen composite. */
+/** Draw the bullet-time radial-blur + motion-trail effect over the already-
+ *  rendered 3D scene (captures and replaces the current back buffer content
+ *  - genuinely samples the rendered scene, unlike the flat-quad rain/HUD
+ *  overlays). intensity is game_speed.c's bullettime_intensity() (0 = normal
+ *  speed, no-op; up to 1 = deepest slow-motion dip). Call after the
+ *  opaque/translucent 3D passes, before debug overlays and the keyed
+ *  WScreen composite. */
 void hwr_bullettime_render(float intensity);
 
 /** Configure screen-space ambient occlusion (from fx3d_lights.ini). enable
@@ -184,6 +189,24 @@ void hwr_ssao_config(int enable, float radius, float world, float strength,
  *  toward the camera. Call once per frame before hwr_ssao_resolve. */
 void hwr_ssao_set_viewdir(float x, float y, float z);
 
+/** Configure water screen-space reflection (from fx3d_lights.ini [water]).
+ *  When enabled, the composite pass ray-marches reflections of the scene off
+ *  water pixels (tagged in the G-buffer's world-position .w channel), falling
+ *  back to the sky colour where a ray leaves the screen or hits nothing.
+ *  strength is the reflection blend (0..1, mild); sky_* is the dark blue/grey
+ *  reflected when there is no geometry. Enabling this forces the G-buffer /
+ *  composite path on even when SSAO itself is off (AO is then held at 1.0). */
+void hwr_ssao_reflect_config(int enable, float strength,
+    float sky_r, float sky_g, float sky_b, int debug, float blur);
+
+/** Feed the current camera's projection factors to the SSAO composite so the
+ *  water-reflection ray-march can project world points back to screen UVs
+ *  (reproduces transform_shpoint). Call once per frame before hwr_ssao_resolve;
+ *  hwr_floor's fl_setup_program already does this. */
+void hwr_ssao_set_camera(float d10, float d14, float d18, float d1c,
+    float scale, float centre_x, float centre_y,
+    float cx, float cy8, float cz, int perspective);
+
 /** Begin the 3D geometry pass. When SSAO is enabled this binds the G-buffer
  *  (creating/resizing it to w*h) and clears it; otherwise it is a no-op and
  *  geometry draws straight to the back buffer. Call before the floor/face passes. */
@@ -194,6 +217,12 @@ void hwr_ssao_begin(int w, int h);
  *  is already in the back buffer). Call after the floor/face passes, before the
  *  keyed HUD overlay. */
 void hwr_ssao_resolve(void);
+
+/** Blit the scene depth from the SSAO G-buffer to the back buffer so a following
+ *  depth-tested pass (weapon beams) is occluded by the 3D scene. No-op when SSAO
+ *  is inactive (the back buffer already holds the scene depth). Call after
+ *  hwr_ssao_resolve(), before hwr_beams_render(). */
+void hwr_ssao_blit_depth(void);
 
 /** Nonzero when the SSAO G-buffer (MRT: colour @0 + world-position @1) is the
  *  bound draw target between hwr_ssao_begin() and hwr_ssao_resolve(). Blended

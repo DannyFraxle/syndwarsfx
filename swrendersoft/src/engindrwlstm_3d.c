@@ -55,6 +55,60 @@ ushort zig_zag[] = {
 
 #pragma pack()
 /******************************************************************************/
+/* FX3D: record a world-anchored 2D HUD overlay (number / short tag / health bar)
+ * for the hardware renderer to re-project every present frame. No-op unless the
+ * FX3D face suppression is active (i.e. the hardware renderer is running), so the
+ * pure-software path is unaffected. ax/az are absolute world map coords; dyc is
+ * the (frozen) Y argument the caller would pass to transform_shpoint. */
+void hwr_capture_overlay(unsigned char kind, int ax, int dyc, int az,
+  short scr_dx, short scr_dy, intptr_t ident,
+  int ival, int ival2, unsigned char col, unsigned char col2, const char *text)
+{
+    struct HwrOverlayReq *r;
+    if (!engine_hwr_suppress_faces)
+        return;
+    if (hwr_overlay_req_count >= HWR_OVREQ_MAX)
+        return;
+    r = &hwr_overlay_req[hwr_overlay_req_count++];
+    r->kind = kind;
+    r->col = col;
+    r->col2 = col2;
+    r->scr_dx = scr_dx;
+    r->scr_dy = scr_dy;
+    r->ax = ax;
+    r->dyc = dyc;
+    r->az = az;
+    r->ident = ident;
+    r->ival = ival;
+    r->ival2 = ival2;
+    if (text != NULL) {
+        int k;
+        for (k = 0; k < 7 && text[k] != '\0'; k++)
+            r->text[k] = text[k];
+        r->text[k] = '\0';
+    } else {
+        r->text[0] = '\0';
+    }
+}
+
+/* FX3D: record a weapon beam segment for depth-tested hardware rendering. No-op
+ * unless FX3D face suppression is active. See struct HwrBeamSeg. */
+void hwr_capture_beam(unsigned char world, unsigned char col, short thick,
+  int ax, int ay, int az, int bx, int by, int bz)
+{
+    struct HwrBeamSeg *b;
+    if (!engine_hwr_suppress_faces)
+        return;
+    if (hwr_beam_count >= HWR_BEAM_MAX)
+        return;
+    b = &hwr_beam_list[hwr_beam_count++];
+    b->world = world;
+    b->col = col;
+    b->thick = thick;
+    b->a[0] = ax; b->a[1] = ay; b->a[2] = az;
+    b->b[0] = bx; b->b[1] = by; b->b[2] = bz;
+}
+
 ushort enlist_draw_mapwho_vect(int x1, int y1, int z1, int x2, int y2, int z2, int col)
 {
     struct ShEnginePoint sp1, sp2;
@@ -84,6 +138,12 @@ ushort enlist_draw_mapwho_vect(int x1, int y1, int z1, int x2, int y2, int z2, i
     p_sline->X2 = sp2.X;
     p_sline->Y2 = sp2.Y;
     p_sline->Col = col;
+
+    /* FX3D: impact spark (build_spark, e.g. lightning weapon) — real world
+     * endpoints (same relative convention as enlist_draw_number), captured as a
+     * world-space beam so it's re-projected at 60fps and depth-tested. */
+    hwr_capture_beam(1, (unsigned char)col, 1, x1 + engn_xc, 8 * y1 - 8 * engn_yc,
+      z1 + engn_zc, x2 + engn_xc, 8 * y2 - 8 * engn_yc, z2 + engn_zc);
 
     return sline;
 }
@@ -431,6 +491,9 @@ void enlist_draw_number(int x, int y, int z, short scr_dx, short scr_dy,
     p_sspr->Brightness = 0;
     p_sspr->Scale = 256;
     p_sspr->SrcItem = (intptr_t)num;
+
+    hwr_capture_overlay(HwrOvReq_Number, x + engn_xc, 8 * y - 8 * engn_yc,
+      z + engn_zc, scr_dx, scr_dy, 0, num, 0, colour, 0, NULL);
 }
 
 void enlist_draw_text(int x, int y, int z, short scr_dx, short scr_dy,
@@ -457,6 +520,9 @@ void enlist_draw_text(int x, int y, int z, short scr_dx, short scr_dy,
     p_sspr->Z = scr_depth;
     p_sspr->Frame = colour;
     LbMemoryCopy(&p_sspr->SrcItem, text, min(strlen(text)+1, 8));
+
+    hwr_capture_overlay(HwrOvReq_Text, x + engn_xc, 8 * y - 8 * engn_yc,
+      z + engn_zc, scr_dx, scr_dy, 0, 0, 0, colour, 0, text);
 }
 
 struct SingleObjectFace4 *build_polygon_slice(short x1, short y1,
@@ -894,6 +960,14 @@ void enlist_draw_wobble_line(int x1, int y1, int z1,
             p_sline->Shade = 32 + ((prc_cur_x1 + itime + step) & 0x1F);
             p_sline->Flags = 0;
         }
+
+        /* FX3D: capture this jagged screen-space segment (with its scrd depth) so
+         * the hardware renderer can draw it depth-tested (occluded by 3D geometry)
+         * instead of the always-on-top screen overlay. The zag is generated in
+         * screen space (endpoints arrive already projected), so it stays at the
+         * 16Hz sim rate — but is now correctly occluded. */
+        hwr_capture_beam(0, p_sline->Col, 1, p_sline->X1, p_sline->Y1,
+          prc_z1 >> 7, p_sline->X2, p_sline->Y2, prc_z1 >> 7);
     }
 }
 
@@ -963,6 +1037,13 @@ void enlist_draw_laser(int x1, int y1, int z1, int x2, int y2, int z2,
     int thick_x, thick_y;
     int i, iter_count;
     ubyte flg;
+
+    /* FX3D: the laser/ion beam has real world endpoints, so capture it as a
+     * world-space beam the hardware renderer re-projects every frame (60fps) and
+     * depth-tests against the scene. Y arg matches this function's own
+     * transform_point (Y3d = 8*y - (engn_yc>>3)). */
+    hwr_capture_beam(1, colour, 2, x1, 8 * y1 - (engn_yc >> 3), z1,
+      x2, 8 * y2 - (engn_yc >> 3), z2);
 
     ep1.Flags = 0;
     ep1.X3d = x1 - engn_xc;
@@ -1372,6 +1453,9 @@ void enlist_draw_long_health_bar(int cor_x, int cor_y, int cor_z,
 
     enlist_draw_long_health_bar_2d(sp.X, sp.Y + 20, scr_depth, bckt,
       val, val_max, p_sitm, lvl_col, bar_col);
+
+    hwr_capture_overlay(HwrOvReq_Bar, cor_x, cor_dy - 8 * engn_yc, cor_z,
+      0, 20, p_sitm, val, val_max, lvl_col, bar_col, NULL);
 }
 
 /******************************************************************************/

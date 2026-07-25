@@ -75,6 +75,7 @@ void fx3d_config_finalize(void)
 #include "hwr_thingbrowse.h"
 #include "hwr_source_sw.h"
 #include "bfscreen.h"
+#include "display.h"
 #include "enginpeff.h"
 #include "game_options.h"
 #include "game_speed.h"
@@ -176,14 +177,17 @@ static void glue_present(void)
                 d.sun_haze);
             hwr_ssao_config(d.ssao_enable, d.ssao_radius, d.ssao_world,
                 d.ssao_strength, d.ssao_bias, d.ssao_debug);
+            hwr_ssao_reflect_config(d.water_reflect_enable, d.water_reflect_strength,
+                d.water_reflect_sky_r, d.water_reflect_sky_g, d.water_reflect_sky_b,
+                d.water_reflect_debug, d.water_reflect_blur);
             hwr_transparent_config(d.transp_enable, d.transp_alpha,
                 deep_radar_surface_col);
             hwr_sprites_trans_config(d.transp_sprite_enable, d.transp_sprite_alpha);
             bullettime_config(d.bullettime_enable, d.bullettime_scale,
                 d.bullettime_hold_ms, d.bullettime_ramp_ms,
                 d.bullettime_min_intensity, d.bullettime_range_tiles);
-            hwr_bullettime_config(d.bullettime_enable, d.bullettime_alpha,
-                d.bullettime_vignette);
+            hwr_bullettime_config(d.bullettime_enable, d.bullettime_blur_strength,
+                d.bullettime_trail);
             hwr_thingno_debug(d.thingno_debug);
             hwr_sprites_debug(d.sprite_debug);
             hwr_scene_begin();
@@ -197,6 +201,8 @@ static void glue_present(void)
             hwr_transparent_render(pal, fx3d_filter_objects);  /* blended faces (Phase 8) */
             hwr_sprites_trans_render(pal, fx3d_filter_sprites); /* blended sprites (Phase 8) */
             hwr_ssao_resolve();              /* composites colour*AO to back buffer */
+            hwr_ssao_blit_depth();           /* scene depth -> back buffer for beams */
+            hwr_beams_render();              /* depth-tested weapon beams (zap/laser) */
             hwr_overlay_render();            /* screen-space tinted overlays (shield/blast) */
             {
                 /* Procedural rain: real alpha-blended GL overlay, only while it's
@@ -370,12 +376,50 @@ void hwrender_shutdown(void)
     }
 }
 
+/* Whether entering forced-SW mode dropped the game to its "low resolution"
+ * mode; set only when we made that switch ourselves, so returning to HW
+ * restores high resolution only if we're the ones who left it. */
+static TbBool hwr_sw_res_forced = false;
+
+/* game.c: reloads/rescales the HUD panel sprites, mouse pointer sprites and
+ * small font for whatever screen mode is now active. setup_screen_mode()
+ * alone resizes the window/buffers but leaves those cached at the old
+ * resolution's scale - this is the other half of the same built-in
+ * resolution-switcher screen_mode_switch_to_next() (bound to F8) uses. */
+extern TbBool adjust_mission_engine_to_video_mode(void);
+
 void hwrender_toggle(void)
 {
     if (!hwr_glue_active)
         return;
     hwr_sw_forced = !hwr_sw_forced;
-    LOGSYNC("FX3D: %s renderer active", hwr_sw_forced ? "software" : "hardware");
+
+    if (hwr_sw_forced) {
+        /* Entering forced-SW mode: the software rasterizer's fixed-size
+         * buffers and sprite-scaling code are only built/tested against the
+         * game's "low resolution" mode. Route the switch through the same
+         * runtime resolution-switcher the options menu's High Resolution
+         * toggle (and the F8 debug key) uses rather than patching individual
+         * lbDisplay fields by hand; that keeps every dependent piece of
+         * state (window size, GraphicsWindow*, mouse scale, HUD layout,
+         * vec tables, panel/pointer/font sprite scale) consistent in the
+         * same two already-proven calls. */
+        if (game_high_resolution) {
+            game_high_resolution = false;
+            setup_screen_mode(screen_mode_game_lo);
+            adjust_mission_engine_to_video_mode();
+            hwr_sw_res_forced = true;
+        }
+        LOGSYNC("FX3D: software renderer active");
+    } else {
+        if (hwr_sw_res_forced) {
+            game_high_resolution = true;
+            setup_screen_mode(screen_mode_game_hi);
+            adjust_mission_engine_to_video_mode();
+            hwr_sw_res_forced = false;
+        }
+        LOGSYNC("FX3D: hardware renderer active");
+    }
 }
 
 void hwrender_set_opaque_present(int on)

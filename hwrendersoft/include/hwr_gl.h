@@ -101,12 +101,15 @@ typedef ptrdiff_t      GLsizeiptr;
 #define GL_REPEAT                         0x2901
 #define GL_RGB16F                         0x881B
 #define GL_RGB32F                         0x8815
+#define GL_RGBA16F                        0x881A
 #define GL_RGBA32F                        0x8814
 #define GL_R16F                           0x822D
 #define GL_RGBA                           0x1908
 #define GL_HALF_FLOAT                     0x140B
 /* Framebuffer / renderbuffer objects (for the SSAO G-buffer). */
 #define GL_FRAMEBUFFER                    0x8D40
+#define GL_READ_FRAMEBUFFER               0x8CA8
+#define GL_DRAW_FRAMEBUFFER               0x8CA9
 #define GL_RENDERBUFFER                   0x8D41
 #define GL_COLOR_ATTACHMENT0              0x8CE0
 #define GL_COLOR_ATTACHMENT1              0x8CE1
@@ -199,6 +202,7 @@ typedef void   (HWR_APIENTRY *PFN_glGenFramebuffers)(GLsizei, GLuint *);
 typedef void   (HWR_APIENTRY *PFN_glDeleteFramebuffers)(GLsizei, const GLuint *);
 typedef void   (HWR_APIENTRY *PFN_glBindFramebuffer)(GLenum, GLuint);
 typedef void   (HWR_APIENTRY *PFN_glFramebufferTexture2D)(GLenum, GLenum, GLenum, GLuint, GLint);
+typedef void   (HWR_APIENTRY *PFN_glBlitFramebuffer)(GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum);
 typedef GLenum (HWR_APIENTRY *PFN_glCheckFramebufferStatus)(GLenum);
 typedef void   (HWR_APIENTRY *PFN_glDrawBuffers)(GLsizei, const GLenum *);
 typedef void   (HWR_APIENTRY *PFN_glDrawBuffer)(GLenum);

@@ -199,6 +199,12 @@ extern int32_t             game_textures_limit;
 extern struct HwrFaceTex  *game_face_textures;  /* == game_face_textures (face3) */
 extern int32_t             face_textures_limit;
 extern unsigned char      *vec_tmap[HWR_TMAP_PAGES]; /* 256x256 indexed pages */
+/* SW's flat floor colour for cells with no ground surface (Texture==0). */
+extern unsigned char       colour_grey2;
+/* Sentinel page for the floor shader's LIT solid-palette-colour path (the
+ * vUV.z 251.5..252.5 branch); distinct from HWR_SOLID_PAGE 253, which is
+ * unlit and used by shrapnel. */
+#define HWR_FLATCOL_PAGE 252
 
 /* Explosion face fragments (== ex_faces[], swrendersoft/enginfexpl.h
  * struct ExplodeFace3, sizeof 46, packed): flying object debris plus the
@@ -225,6 +231,43 @@ static struct HwrExplodeFace ex_faces_cap[HWR_EXPLODE_FACES_COUNT];
 static struct HwrExplodeFace ex_faces_prev[HWR_EXPLODE_FACES_COUNT];
 static int ex_faces_cap_valid = 0;
 static int ex_faces_prev_valid = 0;
+
+/* Explosion shrapnel chips (== shrapnel[], swrendersoft/enginshrapn.h struct
+ * Shrapnel, sizeof 24, packed): small spinning flat-coloured triangles flung by
+ * explosions. Enumerated per frame from the DrIT_SharpnlPoly draw items; each
+ * carries a world position (x/z in >>8 units, y in >>5) plus yaw/pitch. The SW
+ * path draws them as flat colour_lookup[8]/[9] tris with no depth test; the GL
+ * path re-derives world-space corners and draws them as real depth-tested
+ * geometry, interpolated to the display rate against the snapshots below. */
+#pragma pack(push, 1)
+struct HwrShrapnel {
+    int32_t  x, y, z;
+    int8_t   vx, vy, vz;
+    uint8_t  yaw, pitch;
+    int8_t   vyaw, vpitch;
+    uint8_t  type;
+    uint16_t PointOffset;
+    uint16_t child;
+};
+#pragma pack(pop)
+#define HWR_SHRAPNEL_COUNT 512
+extern struct HwrShrapnel shrapnel[HWR_SHRAPNEL_COUNT];
+extern long    lbSinTable[];     /* bfmath.h: fixed-point sine LUT */
+extern uint8_t colour_lookup[];  /* engincolour.h: TbPixel colour_lookup[] */
+extern uint32_t bw_rotl32(uint32_t n, uint8_t c);  /* bfendian.h */
+#define HWR_LBFPMATH_PI 1024     /* bfmath.h LbFPMath_PI */
+/* Snapshots of shrapnel[] for display-rate interpolation (same scheme as
+ * ex_faces): _cap = last captured turn, _prev = the turn before it. */
+static struct HwrShrapnel shrapnel_cap[HWR_SHRAPNEL_COUNT];
+static struct HwrShrapnel shrapnel_prev[HWR_SHRAPNEL_COUNT];
+static int shrapnel_cap_valid = 0;
+static int shrapnel_prev_valid = 0;
+/* Active shrapnel indices captured from the draw list at collect time. The draw
+ * list is rebuilt/reset several times before and during the GL present, so it is
+ * NOT safe to walk from emit_shrapnels() (that dropped a timing-dependent subset
+ * of chips); we snapshot the active set once, alongside the overlay collector. */
+static uint16_t hwr_shrapnel_active[HWR_SHRAPNEL_COUNT];
+static int      hwr_shrapnel_active_count = 0;
 
 extern struct HwrObject     *game_objects;       /* == game_objects        */
 extern unsigned short        next_object;        /* count of objects        */
@@ -494,6 +537,55 @@ struct HwrGlareRec { int x, y, z, r, siren; };
 extern struct HwrGlareRec hwr_glare_list[HWR_GLARE_MAX];
 extern int hwr_glare_count;
 
+/* World-anchored 2D HUD overlays (numbers over heads, short tags, vehicle health
+ * bars) captured during the SW build by the enlist_draw_* routines. Layout must
+ * match struct HwrOverlayReq in engindrwlstx.h exactly. Re-projected here every
+ * present frame with the interpolated camera; bars additionally interpolate their
+ * world anchor between the previous and current sim turn (matched by `ident`, the
+ * source Thing pointer) so they track a moving vehicle smoothly. */
+enum { HwrOvReq_Number = 0, HwrOvReq_Text = 1, HwrOvReq_Bar = 2, HwrOvReq_Frame = 3 };
+#define HWR_OVREQ_MAX 512
+struct HwrOverlayReq {
+    unsigned char kind;
+    unsigned char col, col2;
+    short scr_dx, scr_dy;
+    int   ax, dyc, az;
+    intptr_t ident;
+    int   ival, ival2;
+    char  text[8];
+};
+extern struct HwrOverlayReq hwr_overlay_req[HWR_OVREQ_MAX];
+extern int hwr_overlay_req_count;
+/* Previous sim-turn snapshot of the overlay list, for anchor interpolation. The
+ * "current" list is hwr_overlay_req itself, read live (fully populated — including
+ * the agent numbers added late in draw_hud — by present time). The snapshot is
+ * taken in the always-compiled swrender lib (engindrwlstx.c hwr_overlay_snapshot_
+ * prev, called from game.c just before the per-turn reset) so it holds the
+ * previous turn's COMPLETE list; we only read it here. */
+extern struct HwrOverlayReq hwr_ovreq_prev[HWR_OVREQ_MAX];
+extern int hwr_ovreq_prev_count;
+
+/* Software proportional font (bflibrary rom.c): `font` holds 8 bytes per glyph
+ * (6 bitmap rows + advance width at offset 6); prop_text rasterises a string
+ * into a palette-index buffer. Used to bake per-glyph atlas tiles for the GL
+ * HUD-number/text overlay. */
+extern const unsigned char font[];
+extern void prop_text(const char *text, unsigned char *out, long scanline, unsigned char colour);
+
+/* Weapon beam segments (electric zap / laser) captured during the SW build.
+ * Layout must match struct HwrBeamSeg in engindrwlstx.h. world==1: a/b are
+ * (mapX, transform Y arg, mapZ) absolute world coords re-projected each frame;
+ * world==0: a/b are (screen x, screen y, scrd depth) fixed at the 16Hz rate. */
+#define HWR_BEAM_MAX 4096
+struct HwrBeamSeg {
+    unsigned char world;
+    unsigned char col;
+    short thick;
+    int a[3], b[3];
+};
+extern struct HwrBeamSeg hwr_beam_list[HWR_BEAM_MAX];
+extern int hwr_beam_count;
+
 /* The SW sort-sprite, draw-list and frame/sprite arrays. */
 extern struct SortSprite *game_sort_sprites;
 extern unsigned short     next_sort_sprite;
@@ -631,65 +723,119 @@ static float hwr_flick_rand(void)
     return (float)((hwr_flick_seed >> 8) & 0xFFFFu) / 65535.0f;
 }
 
-/* Add one collected fire flame to the light accumulator by PROXIMITY: it joins
- * the nearest existing cluster within the merge radius, otherwise starts a new
- * one. Grid bucketing split a single fire (whose ~20 flames spread up to ~2
- * tiles) across several tile-lights; proximity merging keeps one blaze — and
- * neighbouring fires within the radius — as a single light. */
-static void hwr_firelight_add(int x, int y, int z)
+/* Burning people cast fire light too, but their flames are DrIT_Unkn15 scale
+ * sprites (not DrIT_SFireFlame), so they never reach the flame loop that feeds
+ * the ground-light accumulator. The sprite collector records each burning
+ * person's world position here; hwr_sw_collect_effects() feeds them into the
+ * same firelight clusters (with a per-person flame weight) before finalize. */
+#define HWR_BURNING_PPL_MAX     64
+#define HWR_BURNING_PERSON_FLAMES 8   /* cluster weight ~= a decent fire pool */
+static float hwr_burning_ppl[HWR_BURNING_PPL_MAX][3];
+static int   hwr_burning_ppl_count = 0;
+
+/* Persuaded people get their own cold turquoise pool, on the same clustering
+ * machinery but a separate accumulator so the colours never mix. They used to
+ * fall into the fire path because set_person_persuaded() (src/people.c) raises
+ * TngF_Unkn40000000 — the same flag a burning person carries — so a persuaded
+ * civilian lit the street orange as if alight. */
+#define HWR_PERSUADED_PPL_MAX   64
+#define HWR_PERSUADELIGHT_MAX   24
+static float hwr_persuaded_ppl[HWR_PERSUADED_PPL_MAX][3];
+static int   hwr_persuaded_ppl_count = 0;
+static struct HwrFireLightAcc hwr_persuadelight_acc[HWR_PERSUADELIGHT_MAX];
+static int hwr_persuadelight_acc_count = 0;
+static struct HwrFireLight hwr_persuadelights[HWR_PERSUADELIGHT_MAX];
+static int hwr_persuadelight_count = 0;
+static long hwr_persuadelight_merge2 = 768L * 768L;
+
+/* Proximity-merge one emitter into a cluster accumulator: it joins the nearest
+ * existing cluster within the merge radius, otherwise starts a new one. Grid
+ * bucketing split a single fire (whose ~20 flames spread up to ~2 tiles) across
+ * several tile-lights; proximity merging keeps one blaze — and neighbouring
+ * fires within the radius — as a single light. */
+static void hwr_cluster_add(struct HwrFireLightAcc *acc, int *acc_count,
+                            int acc_max, long merge2, int x, int y, int z)
 {
     int i, best = -1;
     long best_d2 = 0;
-    for (i = 0; i < hwr_firelight_acc_count; i++) {
-        struct HwrFireLightAcc *a = &hwr_firelight_acc[i];
+    for (i = 0; i < *acc_count; i++) {
+        struct HwrFireLightAcc *a = &acc[i];
         long cx = a->sx / a->n, cz = a->sz / a->n;   /* running centroid */
         long dx = (long)x - cx, dz = (long)z - cz;
         long d2 = dx*dx + dz*dz;
-        if (d2 <= hwr_firelight_merge2 && (best < 0 || d2 < best_d2)) {
+        if (d2 <= merge2 && (best < 0 || d2 < best_d2)) {
             best = i;
             best_d2 = d2;
         }
     }
     if (best >= 0) {
-        hwr_firelight_acc[best].sx += x;
-        hwr_firelight_acc[best].sy += y;
-        hwr_firelight_acc[best].sz += z;
-        hwr_firelight_acc[best].n++;
+        acc[best].sx += x;
+        acc[best].sy += y;
+        acc[best].sz += z;
+        acc[best].n++;
         return;
     }
-    if (hwr_firelight_acc_count >= HWR_FIRELIGHT_MAX)
+    if (*acc_count >= acc_max)
         return;
-    i = hwr_firelight_acc_count++;
-    hwr_firelight_acc[i].sx = x;
-    hwr_firelight_acc[i].sy = y;
-    hwr_firelight_acc[i].sz = z;
-    hwr_firelight_acc[i].n  = 1;
+    i = (*acc_count)++;
+    acc[i].sx = x;
+    acc[i].sy = y;
+    acc[i].sz = z;
+    acc[i].n  = 1;
 }
 
-/* Collapse clusters into finalized fire lights: centroid position, strength
- * that grows with flame count and saturates. Clusters with fewer than
- * firelight_min_flames flames are dropped (suppresses small/lone fires). */
-static void hwr_firelight_finalize(void)
+/* Collapse clusters into finalized point lights: centroid position, strength
+ * that grows with member count and saturates. Clusters with fewer than min_n
+ * members are dropped. `per_unit` is the member count that reaches strength
+ * 1.0 (fires: ~10 flames; persuaded crowds: ~3 people). */
+static int hwr_cluster_finalize(const struct HwrFireLightAcc *acc, int acc_count,
+                                struct HwrFireLight *out, int min_n, float per_unit)
 {
-    int i;
-    int min_flames = hwr_lights_defaults().firelight_min_flames;
-    if (min_flames < 1) min_flames = 1;
-    hwr_firelight_count = 0;
-    for (i = 0; i < hwr_firelight_acc_count; i++) {
-        struct HwrFireLightAcc *a = &hwr_firelight_acc[i];
+    int i, n = 0;
+    for (i = 0; i < acc_count; i++) {
+        const struct HwrFireLightAcc *a = &acc[i];
         struct HwrFireLight *fo;
         float strength;
-        if (a->n < min_flames)
+        if (a->n < min_n)
             continue;
-        fo = &hwr_firelights[hwr_firelight_count++];
+        fo = &out[n++];
         fo->x = (float)(a->sx / a->n);
         fo->y = (float)(a->sy / a->n);
         fo->z = (float)(a->sz / a->n);
-        strength = (float)a->n / 10.0f;   /* a big fire has ~20 flames */
+        strength = (float)a->n / per_unit;
         if (strength < 0.35f) strength = 0.35f;
         if (strength > 1.25f) strength = 1.25f;
         fo->strength = strength;
     }
+    return n;
+}
+
+static void hwr_firelight_add(int x, int y, int z)
+{
+    hwr_cluster_add(hwr_firelight_acc, &hwr_firelight_acc_count,
+                    HWR_FIRELIGHT_MAX, hwr_firelight_merge2, x, y, z);
+}
+
+static void hwr_persuadelight_add(int x, int y, int z)
+{
+    hwr_cluster_add(hwr_persuadelight_acc, &hwr_persuadelight_acc_count,
+                    HWR_PERSUADELIGHT_MAX, hwr_persuadelight_merge2, x, y, z);
+}
+
+/* Clusters with fewer than firelight_min_flames flames are dropped
+ * (suppresses small/lone fires). */
+static void hwr_firelight_finalize(void)
+{
+    int min_flames = hwr_lights_defaults().firelight_min_flames;
+    if (min_flames < 1) min_flames = 1;
+    hwr_firelight_count = hwr_cluster_finalize(hwr_firelight_acc,
+        hwr_firelight_acc_count, hwr_firelights, min_flames, 10.0f);
+}
+
+static void hwr_persuadelight_finalize(void)
+{
+    hwr_persuadelight_count = hwr_cluster_finalize(hwr_persuadelight_acc,
+        hwr_persuadelight_acc_count, hwr_persuadelights, 1, 3.0f);
 }
 
 /* Screen-space overlay quads (shield/blast/lightning special faces), snapshotted
@@ -729,7 +875,8 @@ extern struct {
  * versioning — the SW drawers (draw_frame_on_screen / draw_frame_scaled_alpha)
  * only emit elements whose version bits (Flags & 0xFE00) are zero, so we match
  * that here. *out_fw/*out_fh receive the composited (pre-xBR) pixel size. */
-static int hwr_effect_frame_slot(unsigned short frm_idx, int *out_fw, int *out_fh)
+static int hwr_effect_frame_slot(unsigned short frm_idx, int *out_fw, int *out_fh,
+    int *out_off_x, int *out_off_y)
 {
     struct Frame *frm;
     unsigned short el_idx;
@@ -771,6 +918,8 @@ static int hwr_effect_frame_slot(unsigned short frm_idx, int *out_fw, int *out_f
         return -1;
     if (out_fw) *out_fw = fw;
     if (out_fh) *out_fh = fh;
+    if (out_off_x) *out_off_x = off_x;
+    if (out_off_y) *out_off_y = off_y;
 
     slot = hwr_atlas_find(key);
     if (slot != -1)
@@ -860,6 +1009,7 @@ static void hwr_sw_collect_effects(void)
     hwr_phwoar_seen = hwr_phwoar_coll = 0;
     hwr_effect_badslot = 0;
     hwr_firelight_acc_count = 0;
+    hwr_persuadelight_acc_count = 0;
     {
         /* Flame->cluster merge radius, from the [firelight] cluster tunable
          * (tiles -> world units, 256/tile). */
@@ -867,6 +1017,10 @@ static void hwr_sw_collect_effects(void)
         long merge = (long)(ctiles * 256.0f);
         if (merge < 128) merge = 128;
         hwr_firelight_merge2 = merge * merge;
+        ctiles = hwr_lights_defaults().persuadelight_cluster;
+        merge = (long)(ctiles * 256.0f);
+        if (merge < 128) merge = 128;
+        hwr_persuadelight_merge2 = merge * merge;
     }
 
     for (i = 1; i < next_draw_item && hwr_collected_count < HWR_MAX_COLLECTED; i++) {
@@ -918,7 +1072,7 @@ static void hwr_sw_collect_effects(void)
             eff_key = (const void *)ph;
         }
 
-        slot = hwr_effect_frame_slot(frm_idx, &fw, &fh);
+        slot = hwr_effect_frame_slot(frm_idx, &fw, &fh, NULL, NULL);
         if (slot < 0) {
             hwr_effect_badslot++;
             continue;   /* leave to the SW renderer (don't set the skip bit) */
@@ -966,7 +1120,34 @@ static void hwr_sw_collect_effects(void)
             hwr_phwoar_skip_mask[off >> 3] |= (uint8_t)(1 << (off & 7));
     }
 
+    /* Burning people cast fire light too. Their flames are DrIT_Unkn15 scale
+     * sprites (not DrIT_SFireFlame), so they miss the flame loop above; the
+     * sprite collector recorded their positions in hwr_burning_ppl[]. Add each
+     * with a small flame weight so it forms (or joins) a firelight cluster. Runs
+     * after the flame loop (which reset the accumulator) and before finalize.
+     * NOTE hwr_sw_collect_effects() is called from hwr_sw_collect_sprites()
+     * AFTER its person loop, so hwr_burning_ppl[] is fully populated here. */
+    {
+        int b, w;
+        for (b = 0; b < hwr_burning_ppl_count; b++)
+            for (w = 0; w < HWR_BURNING_PERSON_FLAMES; w++)
+                hwr_firelight_add((int)hwr_burning_ppl[b][0],
+                                  (int)hwr_burning_ppl[b][1],
+                                  (int)hwr_burning_ppl[b][2]);
+    }
+
+    /* Persuaded people, same deal but into the turquoise accumulator (one
+     * emitter each — a knot of followers merges into one bigger pool). */
+    {
+        int b;
+        for (b = 0; b < hwr_persuaded_ppl_count; b++)
+            hwr_persuadelight_add((int)hwr_persuaded_ppl[b][0],
+                                  (int)hwr_persuaded_ppl[b][1],
+                                  (int)hwr_persuaded_ppl[b][2]);
+    }
+
     hwr_firelight_finalize();
+    hwr_persuadelight_finalize();
 }
 
 /* Emit the light glares (car headlights / street lamps) recorded by build_glare
@@ -1044,40 +1225,13 @@ static void hwr_sw_collect_overlays(void)
         struct HwrSpObFace4 *fc;
         HwrOverlayQuad *q;
         int k, col;
-        /* Spark lines (DrIT_Unkn11/SortLine, enlist_draw_mapwho_vect in
-         * engindrwlstm_3d.c): used by build_spark() for the impact sparkle on
-         * e.g. the lightning weapon. Drawn as a thin opaque quad along the
-         * line since the overlay pipeline has no GL_LINES path. */
-        if (itm->Type == HWR_DI_Unkn11) {
-            struct HwrSortLine *ln;
-            float dx, dy, len, nx, ny;
-            const float half_w = 1.0f;
-            if (game_sort_lines == NULL)
-                continue;
-            ln = &game_sort_lines[itm->Offset];
-            dx = (float)(ln->X2 - ln->X1);
-            dy = (float)(ln->Y2 - ln->Y1);
-            len = sqrtf(dx * dx + dy * dy);
-            if (len < 0.001f) {
-                nx = half_w; ny = 0.0f;
-            } else {
-                nx = -dy / len * half_w;
-                ny =  dx / len * half_w;
-            }
-            q = &hwr_collected_overlays[hwr_collected_overlay_count];
-            q->x[0] = (float)ln->X1 + nx; q->y[0] = (float)ln->Y1 + ny;
-            q->x[1] = (float)ln->X2 + nx; q->y[1] = (float)ln->Y2 + ny;
-            q->x[2] = (float)ln->X2 - nx; q->y[2] = (float)ln->Y2 - ny;
-            q->x[3] = (float)ln->X1 - nx; q->y[3] = (float)ln->Y1 - ny;
-            col = ln->Col;
-            q->r = (float)lbPaletteColors[col].r / 255.0f;
-            q->g = (float)lbPaletteColors[col].g / 255.0f;
-            q->b = (float)lbPaletteColors[col].b / 255.0f;
-            q->a = 1.0f;   /* SortLine draws opaque (no TRANSPAR4 flag set) */
-            q->slot = -1;
-            hwr_collected_overlay_count++;
+        /* Spark/weapon lines (DrIT_Unkn11/SortLine) are now drawn by the
+         * depth-tested beam pass (hwr_beams_render) using captured world/screen
+         * endpoints WITH depth, so they are occluded by 3D geometry instead of
+         * painting on top as a flat screen overlay. Skip them here to avoid
+         * double-drawing. */
+        if (itm->Type == HWR_DI_Unkn11)
             continue;
-        }
         if (itm->Type != HWR_DI_SpObFace4)
             continue;
         fc = &game_special_obj_faces4[itm->Offset];
@@ -1118,11 +1272,34 @@ static void hwr_sw_collect_overlays(void)
     }
 }
 
+/* Snapshot the active explosion-shrapnel indices from the draw list at collect
+ * time (DrIT_SharpnlPoly items, added by draw_bang during the SW build). Read
+ * back by emit_shrapnels() during the geometry build. Captured here rather than
+ * walked live because the draw list is reset/rebuilt before/within the present. */
+static void hwr_sw_collect_shrapnels(void)
+{
+    unsigned short i;
+    hwr_shrapnel_active_count = 0;
+    if (game_draw_list == NULL)
+        return;
+    for (i = 1; i < next_draw_item &&
+         hwr_shrapnel_active_count < HWR_SHRAPNEL_COUNT; i++) {
+        struct DrawItem *itm = &game_draw_list[i];
+        if (itm->Type != HWR_DI_SharpnlPoly)
+            continue;
+        if (itm->Offset < 1 || itm->Offset >= HWR_SHRAPNEL_COUNT)
+            continue;
+        hwr_shrapnel_active[hwr_shrapnel_active_count++] = itm->Offset;
+    }
+}
+
 void hwr_sw_collect_sprites(void)
 {
     unsigned short i;
     hwr_sw_snapshot_prev_sprites();
     hwr_collected_count = 0;
+    hwr_burning_ppl_count = 0;
+    hwr_persuaded_ppl_count = 0;
     hwr_xbr_count = 0;
     int hwr_eligible_count = 0;
     int hwr_passed_count = 0;
@@ -1180,7 +1357,7 @@ void hwr_sw_collect_sprites(void)
          * compositor) and size by the scale, as a translucent billboard. */
         if (itm->Type == HWR_DI_Unkn15) {
             int efw = 0, efh = 0;
-            int eslot = hwr_effect_frame_slot(ss->Frame, &efw, &efh);
+            int eslot = hwr_effect_frame_slot(ss->Frame, &efw, &efh, NULL, NULL);
             if (eslot >= 0) {
                 HwrBillboard *bb = &hwr_collected_billboards[hwr_collected_count];
                 float sc = (float)snap.scale;
@@ -1452,6 +1629,57 @@ void hwr_sw_collect_sprites(void)
                     if (sh > 75) sh = 75;
                     bb->shade = (uint8_t)sh;
                 }
+                /* A person on fire (PerSt_PERSON_BURNING == 0x24, or the burning
+                 * flag TngF_Unkn40000000) is engulfed in self-lit flame
+                 * billboards, but their body sprite otherwise keeps its dark
+                 * scene shade and reads as an unlit silhouette inside the flames.
+                 * Brighten the body so it glows as if lit by the fire (48 =
+                 * identity/full-bright; push overbright so it clearly reads as
+                 * lit). The flame billboards still draw on top. */
+                /* Dying/dead on the ground (PerSt_DIE/DIEING/DEAD == 0xB..0xD):
+                 * the burning flag lingers on the corpse, but the glow + fire
+                 * light should go out once the body hits the floor. */
+                int dying_or_dead = (thing && thing->State >= 0xB
+                                            && thing->State <= 0xD);
+                /* TngF_Unkn40000000 is NOT burning-exclusive: set_person_persuaded()
+                 * raises it too (and it stays up on a persuaded follower), so it
+                 * alone made every persuadertron convert glow and light the street
+                 * like a bonfire. Persuasion is identified by
+                 * PerSt_BEING_PERSUADED (0x3B) or TngF_Persuaded (0x00080000);
+                 * only an explicit PerSt_PERSON_BURNING, or the flag on someone
+                 * who is neither, counts as on fire. TngF_Persuaded stays up for
+                 * the rest of the mission, so it has to keep suppressing the
+                 * fire path — but the turquoise glow is only for the conversion
+                 * itself (state 0x3B), not for the follower afterwards. */
+                int is_persuaded = (is_person && thing && !dying_or_dead
+                                    && (thing->State == 0x3B
+                                        || (thing->Flag & 0x00080000u)));
+                int is_being_persuaded = (is_person && thing && !dying_or_dead
+                                          && thing->State == 0x3B);
+                int is_burning = (is_person && thing && !dying_or_dead
+                                  && (thing->State == 0x24
+                                      || ((thing->Flag & 0x40000000u) && !is_persuaded)));
+                if (is_burning) {
+                    if (bb->shade < 68) bb->shade = 68;
+                    /* Also let them cast fire light on their surroundings (fed
+                     * into the firelight clusters in hwr_sw_collect_effects). */
+                    if (hwr_burning_ppl_count < HWR_BURNING_PPL_MAX) {
+                        hwr_burning_ppl[hwr_burning_ppl_count][0] = wx;
+                        hwr_burning_ppl[hwr_burning_ppl_count][1] = wy;
+                        hwr_burning_ppl[hwr_burning_ppl_count][2] = wz;
+                        hwr_burning_ppl_count++;
+                    }
+                } else if (is_being_persuaded) {
+                    /* No body overbright — they are not alight, and the sprite
+                     * shader cannot tint, so a white-hot body would just look
+                     * like fire without flames. Only the ground pool. */
+                    if (hwr_persuaded_ppl_count < HWR_PERSUADED_PPL_MAX) {
+                        hwr_persuaded_ppl[hwr_persuaded_ppl_count][0] = wx;
+                        hwr_persuaded_ppl[hwr_persuaded_ppl_count][1] = wy;
+                        hwr_persuaded_ppl[hwr_persuaded_ppl_count][2] = wz;
+                        hwr_persuaded_ppl_count++;
+                    }
+                }
                 /* NOSHADOW (light emitters don't cast blob shadows) is a separate
                  * shadow-casting concern, unrelated to brightness. */
                 bb->flags = (is_emitter || is_dead_body) ? HWR_BILLBOARD_NOSHADOW : 0;
@@ -1537,6 +1765,7 @@ void hwr_sw_collect_sprites(void)
     hwr_sw_collect_effects();
     hwr_sw_collect_glares();
     hwr_sw_collect_overlays();
+    hwr_sw_collect_shrapnels();
     hwr_sw_resolve_sprite_interp();
 
     /* ---- KP-7 one-shot debug dump (xBR/billboard stats) ---- */
@@ -1737,6 +1966,16 @@ void hwr_sw_capture_explode(void)
     }
     memcpy(ex_faces_cap, ex_faces, sizeof(ex_faces_cap));
     ex_faces_cap_valid = 1;
+
+    /* Shrapnel advance in the sim step (process_things_bang) before draw_game(),
+     * so at this point (post-advance) shrapnel[] is this turn's fresh state -
+     * the same "current" the other interpolated paths capture. */
+    if (shrapnel_cap_valid) {
+        memcpy(shrapnel_prev, shrapnel_cap, sizeof(shrapnel_prev));
+        shrapnel_prev_valid = 1;
+    }
+    memcpy(shrapnel_cap, shrapnel, sizeof(shrapnel_cap));
+    shrapnel_cap_valid = 1;
 }
 
 int hwr_sw_camera_snapshot(int32_t *xc, int32_t *yc, int32_t *zc,
@@ -1829,6 +2068,7 @@ extern unsigned char hwr_obj_live_mask[8192];
 struct HwrModelShadowMirror {
     int32_t x[4], y[4], z[4];
     uint8_t u1, v1, u2, v2;
+    uint16_t obj_idx;
 };
 extern struct HwrModelShadowMirror hwr_model_shadow_list[];
 extern int hwr_model_shadow_count;
@@ -1847,62 +2087,86 @@ static int clampi(int v, int lo, int hi)
  * floor builder so floor corners share the faces' z-buffer scale. */
 static float face_scrd(float wx, float wy, float wz);
 
-static int16_t tile_alt(int gx, int gz)
-{
-    if (game_my_big_map == NULL)
-        return 0;
-    gx = clampi(gx, 0, HWR_MAP_TILE_WIDTH - 1);
-    gz = clampi(gz, 0, HWR_MAP_TILE_WIDTH - 1);
-    return game_my_big_map[HWR_MAP_TILE_WIDTH * gz + gx].Alt;
-}
-
-/* Return the Alt for a tile corner, but if the corner cell is a wall/column cell
- * (Texture==0, no floor surface), use the centre tile's Alt instead.
- * This prevents ledge-edge tiles from creating ramps down to ground level when
- * one pair of corners is adjacent to a building. */
-static int16_t corner_alt(int cx, int cz, int corner_gx, int corner_gz)
+/* Resolve which map element supplies a grid corner's height/wave state: the
+ * corner's OWN cell, always. This mirrors SW exactly - shpoint_compute_coord_y
+ * (lvdraw3d.c) is called once per grid point with game_my_big_map[gz][gx] of
+ * that point, with no Texture test and no substitution; wall/column cells carry
+ * a perfectly valid Alt, they simply have no floor texture of their own.
+ *
+ * Substituting a neighbour's Alt for Texture==0 corners (as this used to do)
+ * cannot be made symmetric. A grid point is shared by four tiles but indexes
+ * only one cell - the tile it is the *minimum* corner of. So on a wall
+ * footprint exactly one of the four corners takes the substitute and the other
+ * three do not, tilting the quad along a diagonal: the "two opposite corners
+ * inverted" look on high walls. Reading each point's own Alt is both SW-exact
+ * and inherently shared between all tiles touching the point. */
+static struct HwrMapEl *corner_mapel(int corner_gx, int corner_gz)
 {
     int cgx = clampi(corner_gx, 0, HWR_MAP_TILE_WIDTH - 1);
     int cgz = clampi(corner_gz, 0, HWR_MAP_TILE_WIDTH - 1);
-    if (game_my_big_map[HWR_MAP_TILE_WIDTH * cgz + cgx].Texture == 0)
-        return tile_alt(cx, cz);
-    return game_my_big_map[HWR_MAP_TILE_WIDTH * cgz + cgx].Alt;
+    return &game_my_big_map[HWR_MAP_TILE_WIDTH * cgz + cgx];
+}
+
+static int16_t corner_alt(int corner_gx, int corner_gz)
+{
+    return corner_mapel(corner_gx, corner_gz)->Alt;
 }
 
 /* Per-vertex water wobble, mirroring shpoint_compute_coord_y's Flags&0x10
  * branch (lvdraw3d.c) exactly, mag=8 to match the floor tile scale (8*Alt).
  * elcr_x/elcr_z are world units (tile<<8), same basis as the floor verts. */
-static int water_wobble_y(int elcr_x, int elcr_z)
+/* Raw water wobble at a world point (shpoint_compute_coord_y's Flags&0x10 branch,
+ * lvdraw3d.c). Drives BOTH the vertical displacement (mag*wobble) and the SW
+ * water "shine" (ReflShade = (wobble+32)<<9, folded into the vertex shade - the
+ * smooth brightness blobs that drift across the surface). */
+static float water_wobble_sum(uint32_t turn, int elcr_x, int elcr_z, int dvfactor)
+{
+    return (float)(waft_table2[(turn + (uint32_t)(elcr_x >> 7)) & 0x1F]
+                 + waft_table2[(turn + (uint32_t)(elcr_z >> 7)) & 0x1F]
+                 + waft_table2[(32 * turn / (uint32_t)dvfactor) & 0x1F]);
+}
+
+/* SW advances this once per 16Hz turn, so the waves (and the shine riding on
+ * them) visibly stepped while the screen runs at 60fps+. Interpolate between the
+ * previous and current turn by g_interp_alpha - the same treatment the wobbly-
+ * terrain camera waft already gets in sw_get_camera. Returns float so the
+ * displacement stays smooth instead of quantising to whole wobble units.
+ * The third table term advances only every ~4-8 turns (32/dvfactor per turn), so
+ * it is usually identical between the two turns and contributes nothing to the
+ * lerp; the first two terms are what actually animate. */
+static float water_wobble_raw(int elcr_x, int elcr_z)
 {
     uint32_t turn = render_anim_turn;
     int dvfactor = 140 + ((bw_rotl32(0x5D3BA6C3, (uint8_t)(elcr_z >> 8)) ^
                             bw_rotr32(0xA7B4D8AC, (uint8_t)(elcr_x >> 8))) & 0x7F);
-    int wobble = (waft_table2[(turn + (uint32_t)(elcr_x >> 7)) & 0x1F]
-                + waft_table2[(turn + (uint32_t)(elcr_z >> 7)) & 0x1F]
-                + waft_table2[(32 * turn / (uint32_t)dvfactor) & 0x1F]) >> 3;
-    return 8 * wobble;
+    float sc = water_wobble_sum(turn,          elcr_x, elcr_z, dvfactor);
+    float sp = water_wobble_sum(turn - 1u,     elcr_x, elcr_z, dvfactor);
+    return (sp + (sc - sp) * g_interp_alpha) / 8.0f;   /* SW's >> 3 */
+}
+
+static float water_wobble_y(int elcr_x, int elcr_z)
+{
+    return 8.0f * water_wobble_raw(elcr_x, elcr_z);   /* mag = 8, matches 8*Alt */
 }
 
 /* Y offset to add on top of 8*Alt for a grid corner, replicating
- * shpoint_compute_coord_y's Flags branches. Uses the CORNER's own map
- * element (falling back to the centre tile if the corner is a column/wall
- * cell with no floor), matching corner_alt's fallback rule, since SW
- * evaluates each grid point against its own map element. */
-static int corner_wave_y(int cx, int cz, int corner_gx, int corner_gz, int wx, int wz)
+ * shpoint_compute_coord_y's Flags branches. Uses the CORNER's own map element
+ * (with corner_mapel's neighbour substitution for column/wall cells), since SW
+ * evaluates each grid point against its own map element - and, like the Alt,
+ * it must not depend on which tile is asking or adjacent tiles would wobble
+ * their shared corner by different amounts. */
+static float corner_wave_y(int corner_gx, int corner_gz, int wx, int wz)
 {
-    int cgx = clampi(corner_gx, 0, HWR_MAP_TILE_WIDTH - 1);
-    int cgz = clampi(corner_gz, 0, HWR_MAP_TILE_WIDTH - 1);
-    struct HwrMapEl *cme = &game_my_big_map[HWR_MAP_TILE_WIDTH * cgz + cgx];
-    if (cme->Texture == 0) {
-        int tgx = clampi(cx, 0, HWR_MAP_TILE_WIDTH - 1);
-        int tgz = clampi(cz, 0, HWR_MAP_TILE_WIDTH - 1);
-        cme = &game_my_big_map[HWR_MAP_TILE_WIDTH * tgz + tgx];
-    }
+    struct HwrMapEl *cme = corner_mapel(corner_gx, corner_gz);
     if (cme->Flags & 0x10)
         return water_wobble_y(wx, wz);
-    if (cme->Flags & 0x40)
-        return waft_table[render_anim_turn & 0x1F];
-    return 0;
+    if (cme->Flags & 0x40) {
+        /* Interpolated between turns for the same reason as the water wobble. */
+        float wc = (float)waft_table[render_anim_turn & 0x1F];
+        float wp = (float)waft_table[(render_anim_turn - 1u) & 0x1F];
+        return wp + (wc - wp) * g_interp_alpha;
+    }
+    return 0.0f;
 }
 
 /* Geometric ambient occlusion for a floor corner. The grid corner (cgx,cgz) is
@@ -2158,6 +2422,23 @@ static uint8_t corner_baked_shade(int cgx, int cgz)
     const int W = HWR_MAP_TILE_WIDTH;
     struct HwrMapEl *m =
         &game_my_big_map[W * clampi(cgz, 0, W-1) + clampi(cgx, 0, W-1)];
+    /* Water (Flags&0x10): SW computes the shade LIVE every turn because the
+     * wobble-driven ReflShade term changes with gameturn - it never uses the
+     * static baked ShadeR. Reproduce shpoint_compute_shade including ReflShade =
+     * (wobble+32)<<9: a per-corner brightness that follows the wave, Gouraud-
+     * interpolated into the smooth "shine" blobs that drift across the water.
+     * water_shine_strength scales the moving component (1.0 = SW-exact); enable=0
+     * drops the term so water is flat. */
+    if (m->Flags & 0x10) {
+        HwrLightDefaults wd = hwr_lights_defaults();
+        int refl = 0;
+        if (wd.water_shine_enable) {
+            float wob = water_wobble_raw(cgx << 8, cgz << 8);
+            refl = ((int)(wob * wd.water_shine_strength) + 32) << 9;
+        }
+        return sw_shade_to_byte(((int)m->Ambient << 7) + refl + 256
+                                + sw_quicklight_sum(m->Shade));
+    }
     /* Prefer the map's baked ShadeR (the complete static shade the level was
      * authored with, shade-index scale, 32 = identity): under FX3D the SW floor
      * pass that would recompute it is skipped, so it survives from load - and
@@ -2459,21 +2740,51 @@ static int sw_get_floor(void *ctx, HwrGeometryBatch *out)
             uint16_t tile_ambient = me->Ambient;
             HwrVertex *v;
             int base;
+            int flat_colour;
 
             if (texidx >= game_textures_limit)
+                continue;
+            /* SW-exact "no floor surface here" skip (lvdraw3d.c lvdraw_do_floor:
+             * (game_perspective != 2) && (Flags & 0x80); game_perspective is 5
+             * in normal play, so this always applies). The map marks cells where
+             * a wall stands rather than ground. Emitting them meant a tile whose
+             * four grid corners straddle the top and bottom of a ledge became a
+             * big diagonal ramp wearing a borrowed wall texture - the wall
+             * texture smeared across the floor instead of a 90-degree drop.
+             * Only two of a ledge corner's four orientations showed it, because
+             * a grid point indexes the cell it is the minimum corner of. */
+            if (me->Flags & 0x80)
                 continue;
             if (floor_vert_count + 4 > HWR_FLOOR_MAX_TILES * 4)
                 break;
 
-            /* Column/building cells have Texture==0 (no floor surface). Borrow
-             * texture, shade, flags AND ambient from the nearest valid floor
-             * neighbour so the cell fills correctly (ShadeR is never set for
-             * column cells, and its own Flags/Ambient don't describe a real
-             * floor surface). */
+            /* Cells with Texture==0 have no ground surface - a wall or ledge
+             * stands there. Their four grid corners straddle the top and bottom
+             * of the drop, so the quad is a steep ramp. SW has that ramp too (a
+             * continuous height field; alt_at_point interpolates the same slope)
+             * but never lets you see it: the tile is pushed to the back of the
+             * painter's-order bucket (lvdraw3d.c, dpthalt 2500/3500 + BUCKET_MID)
+             * so the wall FACES paint over it. A z-buffer has no equivalent - the
+             * ramp intersects the wall geometrically and pokes out, chamfering
+             * ledge corners that should be square. So by default don't emit it at
+             * all; the wall faces already cover the ground there.
+             * [floor] no_surface_tiles in fx3d_lights.ini switches behaviour:
+             *   0 = skip (default), 1 = SW's flat colour_grey2 polygon,
+             *   2 = nearest floor neighbour's texture (the old behaviour). */
+            flat_colour = 0;
             if (me->Texture == 0) {
-                int ni;
-                if (!nearest_floor_neighbour(gx, gz, &ni, &inherited_shade, &tile_flags, &tile_ambient)) continue;
-                texidx = ni;
+                int mode = hwr_lights_defaults().floor_no_surface_mode;
+                if (mode == 0)
+                    continue;
+                if (mode == 1) {
+                    flat_colour = 1;
+                } else {
+                    int ni;
+                    if (!nearest_floor_neighbour(gx, gz, &ni, &inherited_shade,
+                            &tile_flags, &tile_ambient))
+                        continue;
+                    texidx = ni;
+                }
             }
             (void)tile_ambient;   /* Ambient now read per corner in corner_baked_shade */
             tx = &game_textures[texidx];
@@ -2486,14 +2797,14 @@ static int sw_get_floor(void *ctx, HwrGeometryBatch *out)
             v[1].x = (float)((gx+1) << 8); v[1].z = (float)(gz << 8);
             v[2].x = (float)((gx+1) << 8); v[2].z = (float)((gz+1) << 8);
             v[3].x = (float)(gx << 8);     v[3].z = (float)((gz+1) << 8);
-            v[0].y = (float)(8 * corner_alt(gx, gz, gx,   gz)
-                + corner_wave_y(gx, gz, gx,   gz,   (int)v[0].x, (int)v[0].z));
-            v[1].y = (float)(8 * corner_alt(gx, gz, gx+1, gz)
-                + corner_wave_y(gx, gz, gx+1, gz,   (int)v[1].x, (int)v[1].z));
-            v[2].y = (float)(8 * corner_alt(gx, gz, gx+1, gz+1)
-                + corner_wave_y(gx, gz, gx+1, gz+1, (int)v[2].x, (int)v[2].z));
-            v[3].y = (float)(8 * corner_alt(gx, gz, gx,   gz+1)
-                + corner_wave_y(gx, gz, gx,   gz+1, (int)v[3].x, (int)v[3].z));
+            v[0].y = (float)(8 * corner_alt(gx,   gz)
+                + corner_wave_y(gx,   gz,   (int)v[0].x, (int)v[0].z));
+            v[1].y = (float)(8 * corner_alt(gx+1, gz)
+                + corner_wave_y(gx+1, gz,   (int)v[1].x, (int)v[1].z));
+            v[2].y = (float)(8 * corner_alt(gx+1, gz+1)
+                + corner_wave_y(gx+1, gz+1, (int)v[2].x, (int)v[2].z));
+            v[3].y = (float)(8 * corner_alt(gx,   gz+1)
+                + corner_wave_y(gx,   gz+1, (int)v[3].x, (int)v[3].z));
             /* Per-vertex linear depth (no perspective clamp), matching the face
              * pass so floor and buildings share one monotonic z-buffer scale.
              * Per-corner (not per-tile-centre) so a tile's far edge reports its
@@ -2512,6 +2823,47 @@ static int sw_get_floor(void *ctx, HwrGeometryBatch *out)
             v[2].u = tx->TMapX2; v[2].v = tx->TMapY2;
             v[3].u = tx->TMapX1; v[3].v = tx->TMapY1;
             v[0].page = v[1].page = v[2].page = v[3].page = tx->Page;
+            /* Water (Flags&0x10): switch to continuous, world-derived UV so the
+             * texture tiles seamlessly across tile boundaries instead of each
+             * tile independently clamping its own sub-rect (the visible "seams").
+             * Collapse all 4 corners to the sub-rect origin (min texel) and pass
+             * the span in uv_w/uv_h; the floor vertex shader rebuilds the UV from
+             * fract(worldXZ/256). Non-water tiles keep uv_w/uv_h = 0 and the exact
+             * per-corner mapping above. The non-zero span also flags the specular
+             * shine in the fragment shader. */
+            if (tile_flags & 0x10) {
+                uint8_t ux0 = tx->TMapX1, ux1 = tx->TMapX1;
+                uint8_t uy0 = tx->TMapY1, uy1 = tx->TMapY1;
+                uint8_t xs[4], ys[4];
+                int k;
+                xs[0] = tx->TMapX1; xs[1] = tx->TMapX2; xs[2] = tx->TMapX3; xs[3] = tx->TMapX4;
+                ys[0] = tx->TMapY1; ys[1] = tx->TMapY2; ys[2] = tx->TMapY3; ys[3] = tx->TMapY4;
+                for (k = 0; k < 4; k++) {
+                    if (xs[k] < ux0) ux0 = xs[k];
+                    if (xs[k] > ux1) ux1 = xs[k];
+                    if (ys[k] < uy0) uy0 = ys[k];
+                    if (ys[k] > uy1) uy1 = ys[k];
+                }
+                v[0].u = v[1].u = v[2].u = v[3].u = ux0;
+                v[0].v = v[1].v = v[2].v = v[3].v = uy0;
+                v[0].uv_w = v[1].uv_w = v[2].uv_w = v[3].uv_w = (uint8_t)(ux1 - ux0);
+                v[0].uv_h = v[1].uv_h = v[2].uv_h = v[3].uv_h = (uint8_t)(uy1 - uy0);
+            } else {
+                v[0].uv_w = v[1].uv_w = v[2].uv_w = v[3].uv_w = 0;
+                v[0].uv_h = v[1].uv_h = v[2].uv_h = v[3].uv_h = 0;
+            }
+            /* SW mode-04 flat colour: sentinel page carries the palette index in
+             * u, and the floor shader still runs the full lighting path on it. */
+            if (flat_colour) {
+                int k;
+                for (k = 0; k < 4; k++) {
+                    v[k].page  = HWR_FLATCOL_PAGE;
+                    v[k].u     = colour_grey2;
+                    v[k].v     = 0;
+                    v[k].uv_w  = 0;
+                    v[k].uv_h  = 0;
+                }
+            }
             /* Per-corner geometric AO: darkens the ambient fill where the floor
              * meets buildings/columns. Replaces the SW per-tile ShadeR (which is
              * near-flat on open ground and reads as no occlusion). */
@@ -2592,6 +2944,7 @@ static void face_emit_vert(int wx, int wy, int wz, uint8_t u, uint8_t v,
     o->page = page; o->light = light;
     o->tile_depth = depth;
     o->emissive = emissive;
+    o->uv_w = o->uv_h = 0;   /* faces never use the water continuous-UV path */
 }
 
 static void emit_model_shadows(void);   /* fwd (defined with the trans sort below) */
@@ -2606,6 +2959,7 @@ static void trans_emit_vert(int wx, int wy, int wz, uint8_t u, uint8_t v,
     o->page = page; o->light = light;
     o->tile_depth = depth;
     o->emissive = emissive;
+    o->uv_w = o->uv_h = 0;   /* transparent faces never use the water UV path */
 }
 
 /* Face/tile Flags double as the SW rasterizer's RendVec_mode (vec_mode = ...
@@ -2806,10 +3160,10 @@ static void emit_floor_damage_decals(void)
             wx[1]=(float)((gx+1)<<8); wz[1]=(float)(gz<<8);
             wx[2]=(float)((gx+1)<<8); wz[2]=(float)((gz+1)<<8);
             wx[3]=(float)(gx<<8);     wz[3]=(float)((gz+1)<<8);
-            wy[0]=(float)(8*corner_alt(gx,gz, gx,   gz)   + corner_wave_y(gx,gz, gx,   gz,   (int)wx[0],(int)wz[0]));
-            wy[1]=(float)(8*corner_alt(gx,gz, gx+1, gz)   + corner_wave_y(gx,gz, gx+1, gz,   (int)wx[1],(int)wz[1]));
-            wy[2]=(float)(8*corner_alt(gx,gz, gx+1, gz+1) + corner_wave_y(gx,gz, gx+1, gz+1, (int)wx[2],(int)wz[2]));
-            wy[3]=(float)(8*corner_alt(gx,gz, gx,   gz+1) + corner_wave_y(gx,gz, gx,   gz+1, (int)wx[3],(int)wz[3]));
+            wy[0]=(float)(8*corner_alt(gx,   gz)   + corner_wave_y(gx,   gz,   (int)wx[0],(int)wz[0]));
+            wy[1]=(float)(8*corner_alt(gx+1, gz)   + corner_wave_y(gx+1, gz,   (int)wx[1],(int)wz[1]));
+            wy[2]=(float)(8*corner_alt(gx+1, gz+1) + corner_wave_y(gx+1, gz+1, (int)wx[2],(int)wz[2]));
+            wy[3]=(float)(8*corner_alt(gx,   gz+1) + corner_wave_y(gx,   gz+1, (int)wx[3],(int)wz[3]));
             /* Damage decals lie flat on the floor and ride the faces pass, which
              * now uses the unified 128-identity scale - light them with the same
              * SW per-corner floor shade so they match the ground they overlay. */
@@ -2834,6 +3188,128 @@ static void emit_floor_damage_decals(void)
             face_index[face_index_count++] = base + 3;
             face_index[face_index_count++] = base + 2;
         }
+    }
+}
+
+/* Palette-colour sentinel page for the face shader's unlit solid-colour path
+ * (the vUV.z 252.5..253.5 branch in the floor/face fragment shader). */
+#define HWR_SOLID_PAGE 253
+
+/* Append active explosion shrapnel (shrapnel[], DrIT_SharpnlPoly / draw_shrapnel)
+ * to the opaque face batch as flat palette-coloured triangles. Corner geometry
+ * mirrors enlist_draw_bang_shrapnels (engindrwlstm_3d.c) but kept in world space
+ * (x/z in >>8 units, y in >>5); the face pass transforms X/Z itself, so only Y
+ * carries the extra -snap.yc quirk shared with the ex_faces / fire collectors.
+ * SW picks the tri colour by winding (draw_trigpoly back-face cull): one side
+ * colour_lookup[8], the other [9]; GL culling is disabled, so we choose per-chip
+ * from the camera-facing sign instead. Positions + spin interpolate to the
+ * display rate against the previous turn's snapshot. */
+static void emit_shrapnels(void)
+{
+    int n;
+
+    if (!snap.valid)
+        return;
+
+    for (n = 0; n < hwr_shrapnel_active_count; n++) {
+        struct HwrShrapnel *sh, *pv;
+        int idx = hwr_shrapnel_active[n];
+        int yaw, pitch;
+        int bx, by, bz;
+        int cwx[3], cwy[3], cwz[3];
+        int sh_cc, sh_cs, sh_sc, sh_ss, sh_z;
+        int col, base, k;
+
+        if (idx < 1 || idx >= HWR_SHRAPNEL_COUNT)
+            continue;
+        sh = &shrapnel[idx];
+        if (sh->type < 1 || sh->type > 3)
+            continue;
+        if (face_vert_count + 3 > HWR_FACE_MAX_VERTS ||
+            face_index_count + 3 > HWR_FACE_MAX_INDEX)
+            return;
+
+        /* Interpolate position + spin against last turn (same slot + type). */
+        bx = sh->x; by = sh->y; bz = sh->z;
+        yaw = sh->yaw; pitch = sh->pitch;
+        pv = &shrapnel_prev[idx];
+        if (shrapnel_prev_valid && g_interp_alpha < 1.0f &&
+            pv->type == sh->type) {
+            float a = g_interp_alpha;
+            int dyaw   = (int)(int8_t)(sh->yaw   - pv->yaw);   /* wrap-safe */
+            int dpitch = (int)(int8_t)(sh->pitch - pv->pitch);
+            bx = pv->x + (int)((float)(sh->x - pv->x) * a);
+            by = pv->y + (int)((float)(sh->y - pv->y) * a);
+            bz = pv->z + (int)((float)(sh->z - pv->z) * a);
+            yaw   = (pv->yaw   + (int)((float)dyaw   * a)) & 0xFF;
+            pitch = (pv->pitch + (int)((float)dpitch * a)) & 0xFF;
+        }
+
+        /* Rotated triangle corner offsets (verbatim from
+         * enlist_draw_bang_shrapnels' fixed-point yaw/pitch rotation). */
+        {
+            int cos_yaw, cos_pitch, sin_yaw, sin_pitch, tmp;
+            short shrap_yaw   = (short)(8 * yaw);
+            short shrap_pitch = (short)(8 * pitch);
+            cos_yaw   = lbSinTable[shrap_yaw   + HWR_LBFPMATH_PI/2];
+            cos_pitch = lbSinTable[shrap_pitch + HWR_LBFPMATH_PI/2];
+            sin_pitch = lbSinTable[shrap_pitch];
+            sin_yaw   = lbSinTable[shrap_yaw];
+
+            tmp = (cos_pitch * cos_yaw) & 0xFFFF0000;
+            tmp |= (int)(((uint64_t)(cos_pitch * (int64_t)cos_yaw) >> 32) & 0xFFFF);
+            sh_cc = (int)bw_rotl32((uint32_t)tmp, 16) >> 10;
+
+            tmp = (cos_pitch * sin_yaw) & 0xFFFF0000;
+            tmp |= (int)(((uint64_t)(cos_pitch * (int64_t)sin_yaw) >> 32) & 0xFFFF);
+            sh_cs = (int)bw_rotl32((uint32_t)tmp, 16) >> 10;
+
+            tmp = (sin_pitch * cos_yaw) & 0xFFFF0000;
+            tmp |= (int)(((uint64_t)(sin_pitch * (int64_t)cos_yaw) >> 32) & 0xFFFF);
+            sh_sc = (int)bw_rotl32((uint32_t)tmp, 16) >> 10;
+
+            tmp = (sin_pitch * sin_yaw) & 0xFFFF0000;
+            tmp |= (int)(((uint64_t)(sin_pitch * (int64_t)sin_yaw) >> 32) & 0xFFFF);
+            sh_ss = (int)bw_rotl32((uint32_t)tmp, 16) >> 10;
+
+            sh_z = sin_yaw >> 10;
+        }
+
+        bx = bx >> 8;   /* SW cor_dx uses x>>8 */
+        by = by >> 5;   /* SW cor_dy uses y>>5 */
+        bz = bz >> 8;   /* SW cor_dz uses z>>8 */
+
+        /* World-space corners (== SW sp1/sp2/sp3 before camera subtraction). */
+        cwx[0] = bx + sh_cc;         cwy[0] = by - sh_sc;         cwz[0] = bz - sh_z;
+        cwx[1] = bx + sh_cs;         cwy[1] = by - sh_ss;         cwz[1] = bz;
+        cwx[2] = bx - sh_cc - sh_cs; cwy[2] = by + sh_sc + sh_ss; cwz[2] = bz + sh_z;
+
+        /* Pick the two-tone colour by which side faces the camera (snap.xc/yc/zc
+         * = world camera centre, same per-axis units as the corners). */
+        {
+            int e1x = cwx[1]-cwx[0], e1y = cwy[1]-cwy[0], e1z = cwz[1]-cwz[0];
+            int e2x = cwx[2]-cwx[0], e2y = cwy[2]-cwy[0], e2z = cwz[2]-cwz[0];
+            long nx = (long)e1y*e2z - (long)e1z*e2y;
+            long ny = (long)e1z*e2x - (long)e1x*e2z;
+            long nz = (long)e1x*e2y - (long)e1y*e2x;
+            long vx = (long)snap.xc - cwx[0];
+            long vy = (long)snap.yc - cwy[0];
+            long vz = (long)snap.zc - cwz[0];
+            long facing = nx*vx + ny*vy + nz*vz;
+            col = colour_lookup[(facing >= 0) ? 8 : 9];
+        }
+
+        base = face_vert_count;
+        for (k = 0; k < 3; k++) {
+            int wx = cwx[k];
+            int wy = cwy[k] - snap.yc;   /* extra -yc quirk (see ex_faces note) */
+            int wz = cwz[k];
+            face_emit_vert(wx, wy, wz, (uint8_t)col, 0, HWR_SOLID_PAGE, 128,
+                face_scrd((float)wx, (float)wy, (float)wz), 0);
+        }
+        face_index[face_index_count++] = base + 0;
+        face_index[face_index_count++] = base + 1;
+        face_index[face_index_count++] = base + 2;
     }
 }
 
@@ -3483,6 +3959,7 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
      * overlay the base floor/faces already emitted this pass. */
     emit_floor_damage_decals();
     emit_explode_faces();
+    emit_shrapnels();
     emit_model_shadows();
 
     out->verts = face_verts;
@@ -3534,12 +4011,37 @@ static void emit_model_shadows(void)
         cu[1]=ms->u2; cv[1]=ms->v1;
         cu[2]=ms->u2; cv[2]=ms->v2;
         cu[3]=ms->u1; cv[3]=ms->v2;
-        base = trans_vert_count;
-        for (k = 0; k < 4; k++) {
-            float dep = face_scrd((float)ms->x[k], (float)ms->y[k],
-                (float)ms->z[k]) - HWR_DECAL_DEPTH_BIAS;
-            trans_emit_vert(ms->x[k], ms->y[k], ms->z[k], cu[k], cv[k],
-                4 /* shadow art page */, 128 /* identity */, dep, 0);
+        /* The corners were captured at the vehicle's 16Hz position, but the
+         * vehicle BODY is drawn at the interpolated display position (see the
+         * obj_snap lerp in the object loop). Shift the shadow by the same
+         * horizontal delta so it tracks the body instead of stuttering a turn
+         * behind - and so its depth-bias is computed from the SAME position the
+         * body uses, which stops the decal intermittently sinking into the floor.
+         * Horizontal (X/Z) only: Y stays the captured ground height under the
+         * shadow. Teleport-guarded and snapped when there's no prior snapshot. */
+        {
+            int sx = 0, sz = 0;
+            unsigned oi = ms->obj_idx;
+            if (obj_snap_valid && oi < obj_snap_count && obj_snap[oi].is_dynamic &&
+                obj_snap_prev_valid && oi < obj_snap_prev_count &&
+                obj_snap_prev[oi].is_dynamic && g_interp_alpha < 1.0f) {
+                int dtx = obj_snap[oi].tx - obj_snap_prev[oi].tx;
+                int dtz = obj_snap[oi].tz - obj_snap_prev[oi].tz;
+                if (abs(dtx) < (2 << 8) && abs(dtz) < (2 << 8)) {
+                    float a1 = g_interp_alpha - 1.0f;   /* interp - current */
+                    sx = (int)((float)dtx * a1);
+                    sz = (int)((float)dtz * a1);
+                }
+            }
+            base = trans_vert_count;
+            for (k = 0; k < 4; k++) {
+                int cx = ms->x[k] + sx;
+                int cz = ms->z[k] + sz;
+                float dep = face_scrd((float)cx, (float)ms->y[k],
+                    (float)cz) - HWR_DECAL_DEPTH_BIAS;
+                trans_emit_vert(cx, ms->y[k], cz, cu[k], cv[k],
+                    4 /* shadow art page */, 128 /* identity */, dep, 0);
+            }
         }
         trans_index[trans_index_count++] = base + 0;
         trans_index[trans_index_count++] = base + 1;
@@ -3675,6 +4177,12 @@ static int sw_get_lights(void *ctx, HwrLight *out, int max)
             if (ddx*ddx + ddz*ddz <= VEH_CULL_RANGE2) fire_reserve++;
         }
         if (fire_reserve > 16) fire_reserve = 16;      /* cap */
+        for (fi = 0; fi < hwr_persuadelight_count; fi++) {
+            long ddx = (long)hwr_persuadelights[fi].x - veh_cull_cx;
+            long ddz = (long)hwr_persuadelights[fi].z - veh_cull_cz;
+            if (ddx*ddx + ddz*ddz <= VEH_CULL_RANGE2) fire_reserve++;
+        }
+        if (fire_reserve > 24) fire_reserve = 24;      /* cap incl. persuade pools */
     }
 
     /* --- Debug: dump all light IDs when light_debug is enabled --- */
@@ -4102,6 +4610,42 @@ static int sw_get_lights(void *ctx, HwrLight *out, int max)
         }
     }
 
+    /* --- Persuaded-person lights ------------------------------------------
+     * Cold turquoise pool under people converted by the persuadertron. They
+     * share the burning flag (TngF_Unkn40000000) with people who are alight, so
+     * before this they emitted orange fire light; the sprite collector now
+     * routes them into their own cluster set. Steady by default apart from a
+     * slow breath — this is a control glow, not a fire. */
+    {
+        HwrLightDefaults pld = hwr_lights_defaults();
+        if (pld.persuadelight_enable) {
+            float radius_scale = pld.persuadelight_radius / 21.0f;
+            float base_dist2   = 4194304.0f * radius_scale;
+            int pi;
+            for (pi = 0; pi < hwr_persuadelight_count && nnearest < max; pi++) {
+                struct HwrFireLight *pli = &hwr_persuadelights[pi];
+                long ddx = (long)pli->x - veh_cull_cx;
+                long ddz = (long)pli->z - veh_cull_cz;
+                float pulse, b;
+                if (ddx*ddx + ddz*ddz > VEH_CULL_RANGE2)
+                    continue;
+                pulse = 1.0f - pld.persuadelight_pulse * hwr_flick_rand();
+                b = pld.persuadelight_brightness * pli->strength * pulse;
+                out[nnearest].x = pli->x;
+                out[nnearest].y = pli->y;
+                out[nnearest].z = pli->z;
+                out[nnearest].r = pld.persuadelight_r * b;
+                out[nnearest].g = pld.persuadelight_g * b;
+                out[nnearest].b = pld.persuadelight_b * b;
+                out[nnearest].radius = 1.0f;   /* >0 = positive round light */
+                out[nnearest].fdx = 0.0f; out[nnearest].fdz = 0.0f;
+                out[nnearest].max_dist2 = base_dist2 * (0.65f + 0.35f * pli->strength);
+                out[nnearest].dynamic = 1;
+                nnearest++;
+            }
+        }
+    }
+
     return nnearest;
 }
 
@@ -4318,6 +4862,302 @@ static int hwr_targetbox_slot(int variant, int *out_dim)
     return hwr_atlas_register(key, tile, TILE, TILE);
 }
 
+/* Reproduce transform_shpoint() (engintrns.c) in float using the interpolated
+ * camera factors, giving the on-screen pixel position of a world anchor. dxc/dzc
+ * are camera-relative (world minus the interpolated camera centre); dyc is the
+ * frozen Y argument the software path used. No clamping — GL clips off-screen. */
+static void hwr_ovreq_project(const HwrCamera *cam, int dxc, int dyc, int dzc,
+    float *out_x, float *out_y, float *out_scrd)
+{
+    float fctr_a = (cam->d14 * dxc - cam->d10 * dzc) / 65536.0f;
+    float fctr_b = (cam->d10 * dxc + cam->d14 * dzc) / 65536.0f;
+    float fctr_c = (cam->d1c * dyc - cam->d18 * fctr_b) / 65536.0f;
+    float scr_d  = (cam->d18 * dyc + cam->d1c * fctr_b) / 65536.0f;
+    float sca_x = cam->scale * fctr_a;
+    float sca_y = cam->scale * fctr_c;
+    float scr_shx, scr_shy;
+    if (cam->perspective == 5 && scr_d > (float)(0x4000 / 16))
+        scr_d = 16384.0f * scr_d / (scr_d + 16384.0f);
+    scr_shx = sca_x / 2048.0f;
+    scr_shy = sca_y / 2048.0f;
+    if (cam->perspective == 5) {
+        scr_shx = scr_shx * (16384.0f - scr_d) / 16384.0f;
+        scr_shy = scr_shy * (16384.0f - scr_d) / 16384.0f;
+    }
+    *out_x = cam->centre_x + scr_shx;
+    *out_y = cam->centre_y - scr_shy;
+    if (out_scrd)
+        *out_scrd = scr_d;
+}
+
+/* Interpolate an overlay's world anchor (ax/az) between the previous and current
+ * sim turn by g_interp_alpha, matched on `ident` (the source Thing), so a bar
+ * tracks its moving vehicle smoothly rather than snapping once per 16Hz turn.
+ * Falls back to the current anchor when there is no identity or no prev match. */
+static void hwr_ovreq_interp_anchor(const struct HwrOverlayReq *r,
+    float *out_ax, float *out_az)
+{
+    float a = g_interp_alpha;
+    *out_ax = (float)r->ax;
+    *out_az = (float)r->az;
+    if (a >= 1.0f || r->ident == 0)
+        return;
+    if (a < 0.0f) a = 0.0f;
+    {
+        int i;
+        for (i = 0; i < hwr_ovreq_prev_count; i++) {
+            const struct HwrOverlayReq *p = &hwr_ovreq_prev[i];
+            if (p->ident != r->ident || p->kind != r->kind)
+                continue;
+            /* Teleport guard: don't interpolate across a large jump (same 512²
+             * world-unit threshold the sprite/vehicle interpolation uses). */
+            {
+                int ddx = r->ax - p->ax, ddz = r->az - p->az;
+                if (ddx * ddx + ddz * ddz > 512 * 512)
+                    return;
+            }
+            *out_ax = (float)p->ax + ((float)r->ax - (float)p->ax) * a;
+            *out_az = (float)p->az + ((float)r->az - (float)p->az) * a;
+            return;
+        }
+    }
+}
+
+/* Register (or fetch cached) an 8x6 RGBA atlas tile for one glyph `ch` baked in
+ * palette colour `col`, using the software proportional font. Index 0 (unset
+ * font pixels) becomes fully transparent; the ovt shader alpha-tests it out. */
+static int hwr_glyph_slot(unsigned char ch, unsigned char col)
+{
+    enum { GW = 8, GH = 6 };
+    uint32_t key = 0xFFD00000u | ((uint32_t)col << 8) | (uint32_t)ch;
+    int slot = hwr_atlas_find(key);
+    unsigned char idx[GW * GH];
+    unsigned char tile[GW * GH * 4];
+    char s[2];
+    int i;
+    if (slot != -1)
+        return slot;   /* cached (>=0) or blacklisted (-2) */
+    if (ch < 32)
+        return -1;
+    memset(idx, 0, sizeof(idx));
+    s[0] = (char)ch; s[1] = '\0';
+    prop_text(s, idx, GW, col);
+    for (i = 0; i < GW * GH; i++) {
+        unsigned char p = idx[i];
+        if (p != 0) {
+            tile[i * 4 + 0] = lbPaletteColors[p].r;
+            tile[i * 4 + 1] = lbPaletteColors[p].g;
+            tile[i * 4 + 2] = lbPaletteColors[p].b;
+            tile[i * 4 + 3] = 255;
+        } else {
+            tile[i * 4 + 0] = 0; tile[i * 4 + 1] = 0;
+            tile[i * 4 + 2] = 0; tile[i * 4 + 3] = 0;
+        }
+    }
+    return hwr_atlas_register(key, tile, GW, GH);
+}
+
+/* Emit a string as a run of per-glyph textured overlay quads starting at screen
+ * (px,py), advancing by each glyph's proportional width. Returns the new quad
+ * count. Glyphs are drawn at the software font's native pixel size (unscaled),
+ * matching the SW draw_text look. */
+static int hwr_emit_text_quads(HwrOverlayQuad *out, int n, int max,
+    const char *s, unsigned char col, float px, float py)
+{
+    enum { GW = 8, GH = 6 };
+    const char *c;
+    for (c = s; *c != '\0'; c++) {
+        unsigned char ch = (unsigned char)*c;
+        int slot;
+        if (ch >= 32) {
+            slot = hwr_glyph_slot(ch, col);
+            if (slot >= 0 && n < max) {
+                float u0, v0, u1, v1;
+                HwrOverlayQuad *q = &out[n++];
+                hwr_atlas_uv(slot, &u0, &v0, &u1, &v1);
+                q->x[0] = px;        q->y[0] = py;        /* TL */
+                q->x[1] = px + GW;   q->y[1] = py;        /* TR */
+                q->x[2] = px + GW;   q->y[2] = py + GH;   /* BR */
+                q->x[3] = px;        q->y[3] = py + GH;   /* BL */
+                q->u0 = u0; q->v0 = v0; q->u1 = u1; q->v1 = v1;
+                q->slot = slot;
+                q->r = q->g = q->b = 1.0f;
+                q->a = 1.0f;
+            }
+            px += (float)font[8 * ((ch - 32) & 0xFF) + 6];
+        } else {
+            px += 4.0f;   /* space/control: nominal advance */
+        }
+    }
+    return n;
+}
+
+/* Emit one flat coloured overlay quad (screen rect x,y,w,h in pixels). */
+static int hwr_emit_box_quad(HwrOverlayQuad *out, int n, int max,
+    float x, float y, float w, float h, unsigned char col)
+{
+    HwrOverlayQuad *q;
+    if (w <= 0.0f || h <= 0.0f || n >= max)
+        return n;
+    q = &out[n++];
+    q->x[0] = x;     q->y[0] = y;
+    q->x[1] = x + w; q->y[1] = y;
+    q->x[2] = x + w; q->y[2] = y + h;
+    q->x[3] = x;     q->y[3] = y + h;
+    q->r = lbPaletteColors[col].r / 255.0f;
+    q->g = lbPaletteColors[col].g / 255.0f;
+    q->b = lbPaletteColors[col].b / 255.0f;
+    q->a = 1.0f;
+    q->slot = -1;
+    return n;
+}
+
+/* Re-project and emit the world-anchored HUD overlays (numbers/tags/bars). */
+static int hwr_emit_overlay_reqs(HwrOverlayQuad *out, int n, int max)
+{
+    HwrCamera cam;
+    int i;
+    if (sw_get_camera(NULL, &cam) != 0)
+        return n;
+    for (i = 0; i < hwr_overlay_req_count && n < max; i++) {
+        const struct HwrOverlayReq *r = &hwr_overlay_req[i];
+        float ax, az, sx, sy;
+        hwr_ovreq_interp_anchor(r, &ax, &az);
+        hwr_ovreq_project(&cam, (int)(ax - cam.cx), r->dyc, (int)(az - cam.cz),
+            &sx, &sy, NULL);
+        sx += r->scr_dx;
+        sy += r->scr_dy;
+        if (r->kind == HwrOvReq_Bar) {
+            /* Reproduce draw_horiz_level_bar (engindrwlstx_spr.c): a background
+             * box plus an inset level box, sized by the live zoom (cam.scale). */
+            int scale = (int)cam.scale;
+            int max_lvl = r->ival2 <= 0 ? 1 : r->ival2;
+            int lvl = r->ival;
+            int bar_w = (44 * scale) >> 8;
+            int bar_h = (5 * scale) >> 8;
+            int range_w = ((44 * 15 / 16) * scale) >> 8;
+            int range_h = ((5 * 12 / 16) * scale) >> 8;
+            int level_x;
+            if (lvl < 0) lvl = 0;
+            else if (lvl > max_lvl) lvl = max_lvl + 1;
+            if (bar_w & 1) range_w |= 1; else range_w &= ~1;
+            if (bar_h & 1) range_h |= 1; else range_h &= ~1;
+            n = hwr_emit_box_quad(out, n, max, sx - bar_w / 2.0f, sy,
+                (float)bar_w, (float)bar_h, r->col2);
+            level_x = range_w * lvl / max_lvl;
+            n = hwr_emit_box_quad(out, n, max, sx - bar_w / 2.0f,
+                sy + (bar_h - range_h) / 2.0f, (float)level_x, (float)range_h,
+                r->col);
+        } else if (r->kind == HwrOvReq_Number) {
+            char locstr[16];
+            sprintf(locstr, "%d", r->ival);
+            n = hwr_emit_text_quads(out, n, max, locstr, r->col, sx, sy);
+        } else if (r->kind == HwrOvReq_Frame) {
+            /* Agent selection number (number_player): a HUD sprite frame drawn at
+             * the agent's re-projected screen position. Composite the frame into
+             * one atlas tile and emit a single textured quad. Element positions
+             * scale by cam.scale/256 (matching draw_frame_on_map_coords' >>9 on
+             * el.X); sprite size is native when the SW path was unscaled, else
+             * scaled by cam.scale/512 (matching draw_hud_frame_on_screen's >>9). */
+            int fw = 0, fh = 0, offx = 0, offy = 0;
+            int slot = hwr_effect_frame_slot((unsigned short)r->ival, &fw, &fh,
+                &offx, &offy);
+            if (slot >= 0 && n < max) {
+                float pscale = cam.scale / 256.0f;
+                float sf = r->ival2 ? 1.0f : cam.scale / 512.0f;
+                float x0 = sx + offx * pscale;
+                float y0 = sy + offy * pscale;
+                float w = fw * sf, h = fh * sf;
+                float u0, v0, u1, v1;
+                HwrOverlayQuad *q = &out[n++];
+                hwr_atlas_uv(slot, &u0, &v0, &u1, &v1);
+                q->x[0] = x0;     q->y[0] = y0;
+                q->x[1] = x0 + w; q->y[1] = y0;
+                q->x[2] = x0 + w; q->y[2] = y0 + h;
+                q->x[3] = x0;     q->y[3] = y0 + h;
+                q->u0 = u0; q->v0 = v0; q->u1 = u1; q->v1 = v1;
+                q->slot = slot;
+                q->r = q->g = q->b = 1.0f;
+                q->a = 1.0f;
+            }
+        } else { /* HwrOvReq_Text */
+            char locstr[9];
+            memcpy(locstr, r->text, 8);
+            locstr[8] = '\0';
+            n = hwr_emit_text_quads(out, n, max, locstr, r->col, sx, sy);
+        }
+    }
+    return n;
+}
+
+/* Build the depth-tested weapon beams as a clip-space triangle list. Each segment
+ * becomes a thick screen-space quad (2 triangles) with per-endpoint depth so it is
+ * occluded by 3D geometry. World beams (laser) re-project with the live camera
+ * every frame (60fps); screen beams (electric zag) use their captured 16Hz screen
+ * position + depth. */
+static int sw_get_beams(void *ctx, HwrBeamVertex *out, int max)
+{
+    HwrCamera cam;
+    int i, n = 0;
+    float cx, cy;
+    (void)ctx;
+    if (out == NULL || max < 6 || hwr_beam_count <= 0)
+        return 0;
+    if (sw_get_camera(NULL, &cam) != 0)
+        return 0;
+    cx = cam.centre_x; cy = cam.centre_y;
+    if (cx <= 0.0f || cy <= 0.0f)
+        return 0;
+    for (i = 0; i < hwr_beam_count && n + 6 <= max; i++) {
+        const struct HwrBeamSeg *b = &hwr_beam_list[i];
+        float x1, y1, d1, x2, y2, d2, dx, dy, len, px, py, hw;
+        float r, g, bl;
+        float p1ax, p1ay, p1bx, p1by, p2ax, p2ay, p2bx, p2by;
+        float z1, z2;
+        if (b->world) {
+            hwr_ovreq_project(&cam, b->a[0] - (int)cam.cx, b->a[1],
+                b->a[2] - (int)cam.cz, &x1, &y1, &d1);
+            hwr_ovreq_project(&cam, b->b[0] - (int)cam.cx, b->b[1],
+                b->b[2] - (int)cam.cz, &x2, &y2, &d2);
+            hw = (float)b->thick * (cam.scale / 256.0f);
+        } else {
+            x1 = (float)b->a[0]; y1 = (float)b->a[1]; d1 = (float)b->a[2];
+            x2 = (float)b->b[0]; y2 = (float)b->b[1]; d2 = (float)b->b[2];
+            hw = (float)b->thick;
+        }
+        if (hw < 1.0f) hw = 1.0f;
+        dx = x2 - x1; dy = y2 - y1;
+        len = sqrtf(dx * dx + dy * dy);
+        if (len < 0.001f)
+            continue;
+        px = -dy / len * hw; py = dx / len * hw;
+        r = (float)lbPaletteColors[b->col].r / 255.0f;
+        g = (float)lbPaletteColors[b->col].g / 255.0f;
+        bl = (float)lbPaletteColors[b->col].b / 255.0f;
+        /* /65536: shared linear-depth -> NDC scale (see floor_vert_src ndc_z).
+         * Must match every other pass writing this depth buffer. */
+        z1 = d1 / 65536.0f; if (z1 < -1.0f) z1 = -1.0f; if (z1 > 1.0f) z1 = 1.0f;
+        z2 = d2 / 65536.0f; if (z2 < -1.0f) z2 = -1.0f; if (z2 > 1.0f) z2 = 1.0f;
+        /* Corner screen positions -> NDC. */
+        p1ax = (x1 + px) / cx - 1.0f; p1ay = 1.0f - (y1 + py) / cy;
+        p1bx = (x1 - px) / cx - 1.0f; p1by = 1.0f - (y1 - py) / cy;
+        p2ax = (x2 + px) / cx - 1.0f; p2ay = 1.0f - (y2 + py) / cy;
+        p2bx = (x2 - px) / cx - 1.0f; p2by = 1.0f - (y2 - py) / cy;
+#define HWR_BEAM_V(vx, vy, vz) do { \
+            HwrBeamVertex *v = &out[n++]; \
+            v->x = (vx); v->y = (vy); v->z = (vz); \
+            v->r = r; v->g = g; v->b = bl; v->a = 1.0f; } while (0)
+        HWR_BEAM_V(p1ax, p1ay, z1);
+        HWR_BEAM_V(p2ax, p2ay, z2);
+        HWR_BEAM_V(p2bx, p2by, z2);
+        HWR_BEAM_V(p1ax, p1ay, z1);
+        HWR_BEAM_V(p2bx, p2by, z2);
+        HWR_BEAM_V(p1bx, p1by, z1);
+#undef HWR_BEAM_V
+    }
+    return n;
+}
+
 static int sw_get_overlays(void *ctx, HwrOverlayQuad *out, int max)
 {
     int n = hwr_collected_overlay_count;
@@ -4380,6 +5220,10 @@ static int sw_get_overlays(void *ctx, HwrOverlayQuad *out, int max)
         q->r = q->g = q->b = 1.0f;
         q->a = 0.5f;   /* 50% transparent */
     }
+
+    /* World-anchored HUD overlays (numbers over heads, short tags, vehicle health
+     * bars), re-projected with the interpolated camera for full-frame-rate motion. */
+    n = hwr_emit_overlay_reqs(out, n, max);
     return n;
 }
 
@@ -4397,6 +5241,7 @@ static HwrSceneSource sw_source = {
     sw_get_texture_pages,
     sw_get_key_index,
     sw_get_overlays,
+    sw_get_beams,
 };
 
 /** Return the Syndicate Wars scene source, configured for the given viewport. */

@@ -96,6 +96,19 @@ typedef struct {
     int   firelight_min_flames; /**< A cluster needs at least this many flames to emit
                                      a light — raise it to drop small/lone fires and
                                      only light real blazes. Default 1 (light all). */
+    /* Persuaded-person light ([persuadelight] section). People converted by the
+     * persuadertron carry the same TngF_Unkn40000000 flag as a burning person,
+     * so they used to emit fire light; they now get their own cold, steady
+     * turquoise pool instead. */
+    int   persuadelight_enable;     /**< 1 = persuaded people cast a ground light. */
+    float persuadelight_brightness; /**< RGB gain (default 0.8 — half the fire gain). */
+    float persuadelight_radius;     /**< Reach multiplier, 21 convention (default 8). */
+    float persuadelight_pulse;      /**< Gentle breathing depth, 0..1 (default 0.15; 0 = steady). */
+    float persuadelight_cluster;    /**< Merge radius in tiles; a knot of followers
+                                         becomes one pool. Default 2. */
+    float persuadelight_r;          /**< Turquoise colour, normalized (default 0.10). */
+    float persuadelight_g;          /**< (default 0.95). */
+    float persuadelight_b;          /**< (default 0.85). */
     float face_ao;              /**< Building/object face baked-shade strength:
                                      1.0 = SW-linear, >1 = power curve (darker),
                                      independent of the floor ao. */
@@ -131,6 +144,13 @@ typedef struct {
                                      nominal; size ∝ scale/this. <=0 disables
                                      the zoom scaling (old zoom-independent
                                      behaviour). Default 468. */
+    float sprite_persp_max_scale; /**< Hard ceiling on the CPU perspective-cancel
+                                     multiplier, as a multiple of the zoom base.
+                                     The cancel term divides by (16384-scrd)/16384,
+                                     which collapses toward its 0.05 divide-guard
+                                     floor for far/edge sprites — without a ceiling
+                                     that yields a ~14x scale spike (the "giant
+                                     sprite" glitch). Default 3.0; <=0 disables. */
     /* Procedural rain overlay ([rain] section). Replaces the SW pixel-block
      * rain (which the GL keyed composite could only draw fully opaque) with a
      * genuine alpha-blended fullscreen shader pass. */
@@ -147,16 +167,53 @@ typedef struct {
      * bullettime_hold_ms, then eases back over bullettime_ramp_ms; these
      * screen-filter fields drive the accompanying GL vignette/tint so it's
      * clear the slow-down is a deliberate effect, not a hitch. */
-    int   bullettime_enable;        /**< 1 = enable the effect (sim dip + screen filter). */
-    float bullettime_scale;         /**< world_dt multiplier while fully dipped (default 0.25). */
-    int   bullettime_hold_ms;       /**< Milliseconds held at full dip (default 700). */
-    int   bullettime_ramp_ms;       /**< Milliseconds easing back to normal speed (default 900). */
+    int   bullettime_enable;        /**< 1 = enable the effect (sim dip + screen filter), default on. */
+    float bullettime_scale;         /**< world_dt multiplier while fully dipped (default 0.66). */
+    int   bullettime_hold_ms;       /**< Milliseconds held at full dip (default 2500). */
+    int   bullettime_ramp_ms;       /**< Milliseconds easing back to normal speed (default 1500). */
     int   bullettime_min_intensity; /**< do_shockwave() intensity threshold to trigger (default 100). */
     int   bullettime_range_tiles;   /**< Max distance (tiles) from the local player's controlled
-                                          agent an explosion can be and still trigger (default 15;
+                                          agent an explosion can be and still trigger (default 20;
                                           0 = unlimited, intensity gate only). */
-    float bullettime_alpha;         /**< Screen filter max opacity at full dip, 0..1 (default 0.5). */
-    float bullettime_vignette;      /**< Vignette strength (edge darkening/tint), 0..1 (default 0.6). */
+    float bullettime_blur_strength; /**< Radial zoom-blur max reach at the screen edge, UV units,
+                                          at full dip (default 0.06; try 0.03-0.12). */
+    float bullettime_trail;         /**< Motion-trail/ghosting strength at full dip, 0..1
+                                          (fraction of the previous frame blended in; default 0.4). */
+    /* Water surface ([water] section). Water floor tiles get continuous
+     * world-derived UVs (seamless tiling) plus a view-angle specular highlight. */
+    int   water_shine_enable;       /**< 1 = add SW's wobble-driven shine to water. */
+    float water_shine_strength;     /**< Scales the wobble component of SW's ReflShade
+                                          term (default 1.0 = software-exact; higher =
+                                          stronger drifting shine blobs; enable=0 =
+                                          flat water). */
+    int   water_reflect_enable;     /**< 1 = screen-space reflection on water. Forces
+                                          the G-buffer/composite path on even if SSAO
+                                          is off. */
+    float water_reflect_strength;   /**< Reflection blend, 0..1 (mild ~0.25). */
+    float water_reflect_sky_r;      /**< Sky fallback colour (no geometry hit), 0..1. */
+    float water_reflect_sky_g;      /**< Dark blue/grey by default. */
+    float water_reflect_sky_b;
+    float water_reflect_blur;       /**< Reflection blur reach in pixels. Softens the
+                                          binary hit/miss polygon edges into a smooth
+                                          watery reflection. 0 = sharp/off. */
+    int   water_reflect_debug;      /**< 1 = colour water by reflection-ray outcome
+                                          (green hit / red behind-camera / blue off-screen /
+                                          magenta too-thick / yellow ran-out). */
+    int   floor_no_surface_mode;    /**< What to do with floor cells that have no
+                                          ground surface (Texture==0 - a wall or
+                                          ledge stands there). Such a cell's four
+                                          grid corners straddle the top and bottom
+                                          of the drop, so its quad is a steep ramp.
+                                          SW hides that ramp by shoving the tile to
+                                          the back of the painter's-order bucket
+                                          (lvdraw3d.c dpthalt) so the wall faces
+                                          paint over it; a z-buffer cannot do that,
+                                          and the ramp pokes out and chamfers ledge
+                                          corners.
+                                          0 = skip the tile entirely (default),
+                                          1 = emit it as SW's flat colour_grey2,
+                                          2 = emit it with the nearest floor
+                                              neighbour's texture (old behaviour). */
 } HwrLightDefaults;
 
 /** Reset every entry to white (1,1,1) at scale 1.0 and defaults to sane values. */

@@ -622,7 +622,7 @@ static const char *spr_vert_src =
     "     * camera now moving continuously (not in discrete 16Hz steps) small\n"
     "     * per-frame precision noise used to flip a marginal 64-unit bias every\n"
     "     * frame -> visible flicker. Widened for headroom. */\n"
-    "    float ndc_z = clamp((aDepth - 512.0) / 16384.0, -1.0, 1.0);\n"
+    "    float ndc_z = clamp((aDepth - 512.0) / 65536.0, -1.0, 1.0);\n"
     "    gl_Position = vec4(sx/uCentre.x - 1.0, 1.0 - sy/uCentre.y, ndc_z, 1.0);\n"
     "}\n";
 
@@ -656,7 +656,7 @@ static const char *spr_frag_src =
     "uniform float uAlpha;\n"            /* output alpha (1 = opaque; <1 = translucent) */
     "uniform int  uUnlit;\n"             /* 1 = self-lit (ignore scene lights) — effects */
     "void main(){\n"
-    "    fragPos = vec4(vWorldPos, vScrd);\n"
+    "    fragPos = vec4(vWorldPos, -1.0);\n"  /* w: 1=water, 0=3D geom, -1=sprite/billboard */
     "    vec4 atex = texture(uAtlas, vUV);\n"
     "    if (atex.a < 0.5) discard;\n"
     "    vec3 c = atex.rgb;\n"
@@ -743,7 +743,7 @@ static const char *shadow_vert_src =
     "        shx = shx*(16384.0 - scrd) / 16384.0;\n"
     "        shy = shy*(16384.0 - scrd) / 16384.0;\n"
     "    }\n"
-    "    float ndc_z = clamp(scrd_raw / 16384.0 - 0.04, -1.0, 1.0);\n"  /* bias so it
+    "    float ndc_z = clamp(scrd_raw / 65536.0 - 0.01, -1.0, 1.0);\n"  /* bias so it
                                         reliably beats the floor's own depth despite
                                         per-frame animation jitter in the sprite's
                                         reported y/height (ground_y wobbles a little
@@ -799,7 +799,7 @@ static const char *psh_vert_src =
     "        shx = shx*(16384.0 - scrd) / 16384.0;\n"
     "        shy = shy*(16384.0 - scrd) / 16384.0;\n"
     "    }\n"
-    "    float ndc_z = clamp(scrd_raw / 16384.0 - 0.04, -1.0, 1.0);\n"  /* bias so it
+    "    float ndc_z = clamp(scrd_raw / 65536.0 - 0.01, -1.0, 1.0);\n"  /* bias so it
                                         reliably beats the floor's own depth despite
                                         per-frame animation jitter in the sprite's
                                         reported y/height (ground_y wobbles a little
@@ -1226,7 +1226,19 @@ static float hwr_billboard_dist_scale(const HwrCamera *cam, float bx, float by, 
     /* effective_mult = 1 + strength*(mult-1); dscale is what the CPU applies
      * now so that (dscale * mult), which is what actually reaches the screen
      * after the shader's own multiply, equals effective_mult. Times zoom. */
-    return zoom * (1.0f + strength * (mult - 1.0f)) / mult;
+    {
+        float dscale = zoom * (1.0f + strength * (mult - 1.0f)) / mult;
+        /* The 0.05 floor above only guards the divide; it does NOT bound the
+         * result. As s approaches 16384 (far/edge sprites, and continuously
+         * now that positions are interpolated) the denominator collapses toward
+         * 0.05 while the numerator stays near zoom*0.715, so dscale can spike to
+         * ~14x zoom - the intermittent "giant sprite". Cap the final value to a
+         * sane multiple of the zoom base. */
+        float max_scale = hwr_lights_defaults().sprite_persp_max_scale;
+        if (max_scale > 0.0f && dscale > zoom * max_scale)
+            dscale = zoom * max_scale;
+        return dscale;
+    }
 }
 
 /* =========================================================================
@@ -1560,8 +1572,23 @@ int hwr_shadows_render(void)
     /* Sun direction for shadow offset */
     float sun_dir_x = 0.0f, sun_dir_y = 1.0f, sun_dir_z = 0.0f;
     int    sun_active = hwr_sun_enabled();
+    int    gbuf = hwr_ssao_active();
     if (sun_active)
         hwr_sun_get_direction(&sun_dir_x, &sun_dir_y, &sun_dir_z);
+
+    /* Both shadow shaders declare only `out vec4 frag` (location 0) - they never
+     * write the world-position attachment. Drawing them into the MRT G-buffer
+     * therefore leaves attachment 1 UNDEFINED at every shadow pixel, stamping
+     * garbage world positions in a ring at each sprite's base. SSAO mostly
+     * tolerated it, but water SSR reads those positions and turned each ring into
+     * a chain of false reflection hits receding to infinity. Shadows are decals:
+     * the real surface is the floor underneath, whose position must survive. So
+     * restrict the draw to colour attachment 0 and restore MRT afterwards (same
+     * pattern as the blended sprite pass above). */
+    if (gbuf) {
+        static const GLenum draw1[1] = { GL_COLOR_ATTACHMENT0 };
+        glDrawBuffers(1, draw1);
+    }
 
     /* ---- Pass 1: radial-gradient blob shadows ---- */
     {
@@ -1768,44 +1795,56 @@ int hwr_shadows_render(void)
                     if (maxd2 <= 0.0f) maxd2 = 4194304.0f;
                     if (dist2 > maxd2 * 1.5f) continue;
 
-                    float ldy = center_y - ly;
-                    if (fabsf(ldy) < 0.001f) ldy = 0.001f;
-                    float t = (ground_y - ly) / ldy;
-                    float sh_x, sh_z, stretch;
-                    if (t > 1.0f && t <= 5.0f && fabsf(center_y - ly) >= hh * 0.5f) {
-                        /* Light clearly elevated above the character (e.g. a
-                         * streetlamp) — proper ray/plane cast through the body
-                         * down onto the floor. */
-                        sh_x = lx + t * (sx - lx);
-                        sh_z = lz + t * (sz - lz);
-                        stretch = 1.0f + (t - 1.0f) * 0.6f;
+                    /* Horizontal offset from the light to the character — this
+                     * is the direction the shadow is cast in (away from the
+                     * light) and, for an elevated light, the quantity that
+                     * decides how COMPRESSED the shadow is. */
+                    float hdx = sx - lx, hdz = sz - lz;
+                    float hlen = sqrtf(hdx*hdx + hdz*hdz);
+                    float lh = ly - ground_y;   /* light height above the floor */
+                    float shadow_len, stretch;
+
+                    if (lh >= hh_true * 0.5f) {
+                        /* Elevated light (streetlamp, window, etc.) — true
+                         * perspective projection of a pole of height 2*hh_true
+                         * standing at the character's feet:
+                         *
+                         *     shadow_len = body_height * (horiz_dist / light_height)
+                         *
+                         * so the shadow length scales with how far OFF-AXIS the
+                         * character is from the lamp.  Standing right under the
+                         * lamp the ratio → 0 and the shadow compresses to a small
+                         * pool at the feet (light nearly overhead); walking away
+                         * stretches it out.  The old ray/plane form used only the
+                         * light/body height ratio for `stretch` and then clamped
+                         * the cast distance to hw*3, so the shadow saturated at a
+                         * fixed length and never compressed near the lamp. */
+                        if (hlen < 0.001f) hlen = 0.001f;
+                        stretch = hlen / lh;
+                        if (stretch < 0.12f) { stretch = 0.12f; }
+                        if (stretch > 3.0f) { stretch = 3.0f; }
+                        /* Body half-height, not full height: projecting the
+                         * full 2*hh_true pole read as roughly double the
+                         * length it should be on screen. */
+                        shadow_len = hh_true * stretch;
                     } else {
-                        /* Light at/near floor height (fire; vehicle headlights
-                         * — sw_get_lights sets their Y to the vehicle's own
-                         * body Y, i.e. ~ground level) — the ray/plane cast
-                         * degenerates for a light this low (t collapses toward
-                         * 0), so every such light was silently skipped. Fall
-                         * back to a simple shadow cast directly away from the
-                         * light along the ground (same idea as the sun-shadow
-                         * branch above), rather than no shadow at all. */
-                        float hdx = sx - lx, hdz = sz - lz;
-                        float hlen = sqrtf(hdx*hdx + hdz*hdz);
+                        /* Light at/near floor height (fire; vehicle headlights —
+                         * sw_get_lights sets their Y to the vehicle's own body Y,
+                         * i.e. ~ground level).  There is no meaningful "overhead"
+                         * angle for these, so they keep a fixed-length shadow cast
+                         * directly away from the light along the ground. */
                         if (hlen < hw * 0.25f) continue;   /* light ~on top of the character */
-                        hdx /= hlen; hdz /= hlen;
-                        sh_x = sx + hdx * (hh_true * 2.0f);
-                        sh_z = sz + hdz * (hh_true * 2.0f);
+                        shadow_len = hh_true * 2.0f;
                         stretch = 1.4f;
                     }
 
-                    /* Raw direction from sprite to projected shadow (unclamped) */
-                    float ndx = sh_x - sx, ndz = sh_z - sz;
-                    float raw_ndl = sqrtf(ndx*ndx + ndz*ndz);
-                    if (raw_ndl < hw * 0.125f) continue;
-                    float nx = ndx / raw_ndl, nz = ndz / raw_ndl;
+                    if (hlen < 0.001f) continue;
+                    float nx = hdx / hlen, nz = hdz / hlen;
                     float px = -nz, pz = nx;
 
-                    /* Clamp distance only (not direction) to prevent breathing */
-                    float ndl = (raw_ndl > hw * 3.0f) ? hw * 3.0f : raw_ndl;
+                    /* Match the sprite's own distance/zoom falloff, as the
+                     * widths (hw/hh) already do. */
+                    float ndl = shadow_len * dscale;
 
                     float nd = dist2 / maxd2;
                     float opacity = (1.0f - nd) * 0.20f;
@@ -1814,8 +1853,12 @@ int hwr_shadows_render(void)
                     /* Stretch — trapezoid: bottom at sprite feet, top projected away
                      * (stretch itself computed above, per which cast path applied). */
                     float bottom_w = hw * 0.7f;
-                    float top_w   = bottom_w * stretch;
-                    float length  = ndl * stretch;  /* project from feet to shadow × stretch */
+                    /* Width flares only mildly with the cast angle — the
+                     * compression must show up in the LENGTH, not the width,
+                     * otherwise an overhead light produces a thin sliver
+                     * instead of a compact pool. */
+                    float top_w   = bottom_w * (0.85f + stretch * 0.25f);
+                    float length  = ndl;   /* stretch is already baked into ndl */
                     float verts[4][3] = {
                         {sx - px*bottom_w, ground_y, sz - pz*bottom_w},
                         {sx + px*bottom_w, ground_y, sz + pz*bottom_w},
@@ -1875,6 +1918,10 @@ int hwr_shadows_render(void)
     }
 
     glDepthFunc(0x0203); /* GL_LEQUAL — restore for subsequent passes */
+    if (gbuf) {          /* restore MRT for the passes that follow */
+        static const GLenum draw2[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+        glDrawBuffers(2, draw2);
+    }
     hwr_gl_check("hwr_shadows_render");
     return 1;
 }
@@ -2059,9 +2106,93 @@ int hwr_overlay_render(void)
     return 1;
 }
 
+/* --- Depth-tested weapon beams (electric zap / laser) ---------------------- */
+static const char *beam_vert_src =
+    "#version 330 core\n"
+    "layout(location=0) in vec3 aPos;\n"   /* clip/NDC (xy screen, z = scrd/16384) */
+    "layout(location=1) in vec4 aCol;\n"
+    "out vec4 vCol;\n"
+    "void main(){ vCol = aCol; gl_Position = vec4(aPos, 1.0); }\n";
+
+static const char *beam_frag_src =
+    "#version 330 core\n"
+    "in vec4 vCol;\n"
+    "out vec4 frag;\n"
+    "void main(){ frag = vCol; }\n";
+
+static GLuint beam_prog = 0, beam_vao = 0, beam_vbo = 0;
+static int    beam_ready = 0;
+#define BEAM_MAX_VERTS (4096 * 6)
+static HwrBeamVertex beam_verts[BEAM_MAX_VERTS];
+
+static int beam_init(void)
+{
+    GLuint vs, fs;
+    GLint ok = 0;
+    vs = spr_compile(GL_VERTEX_SHADER, beam_vert_src);
+    if (!vs) return HWR_ERROR;
+    fs = spr_compile(GL_FRAGMENT_SHADER, beam_frag_src);
+    if (!fs) { glDeleteShader(vs); return HWR_ERROR; }
+    beam_prog = glCreateProgram();
+    glAttachShader(beam_prog, vs);
+    glAttachShader(beam_prog, fs);
+    glLinkProgram(beam_prog);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    glGetProgramiv(beam_prog, GL_LINK_STATUS, &ok);
+    if (!ok) { hwr_set_error("beam program link failed"); return HWR_ERROR; }
+    glGenVertexArrays(1, &beam_vao);
+    glBindVertexArray(beam_vao);
+    glGenBuffers(1, &beam_vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, beam_vbo);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 28, (void *)0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 28, (void *)12);
+    glBindVertexArray(0);
+    beam_ready = 1;
+    return HWR_OK;
+}
+
+/* Draw weapon beams (electric zap / laser) as depth-tested triangles so 3D
+ * geometry occludes them. Must run while the scene depth buffer is still intact
+ * (after the opaque pass, before the depth-less HUD overlay pass). */
+int hwr_beams_render(void)
+{
+    const HwrSceneSource *s = hwr_source;
+    int nv;
+    if (!hwr_is_ready() || s == NULL || s->get_beams == NULL)
+        return 0;
+    nv = s->get_beams(s->ctx, beam_verts, BEAM_MAX_VERTS);
+    if (nv < 3)
+        return 0;
+    if (!beam_ready && beam_init() != HWR_OK)
+        return 0;
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_FALSE);          /* beams don't write depth */
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glUseProgram(beam_prog);
+    glBindVertexArray(beam_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, beam_vbo);
+    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)nv * 7 * sizeof(float),
+        beam_verts, GL_STREAM_DRAW);
+    glDrawArrays(GL_TRIANGLES, 0, nv);
+    glBindVertexArray(0);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+    hwr_gl_check("hwr_beams_render");
+    return 1;
+}
+
 void hwr_sprites_reset(void)
 {
     hwr_atlas_reset();
+    if (beam_prog) { glDeleteProgram(beam_prog); beam_prog = 0; }
+    if (beam_vao)  { glDeleteVertexArrays(1, &beam_vao); beam_vao = 0; }
+    if (beam_vbo)  { glDeleteBuffers(1, &beam_vbo); beam_vbo = 0; }
+    beam_ready = 0;
     if (psh_prog) { glDeleteProgram(psh_prog); psh_prog = 0; }
     if (psh_vao)  { glDeleteVertexArrays(1, &psh_vao); psh_vao = 0; }
     if (psh_vbo)  { glDeleteBuffers(1, &psh_vbo); psh_vbo = 0; }

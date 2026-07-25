@@ -28,6 +28,7 @@ int  hwr_shadows_render(void);
 /* Screen-space coloured overlay quads (shield-hit spheres / blast rings /
  * lightning). Call after the scene is resolved to the back buffer. */
 int  hwr_overlay_render(void);
+int  hwr_beams_render(void);
 void hwr_sprites_reset(void);
 
 #endif

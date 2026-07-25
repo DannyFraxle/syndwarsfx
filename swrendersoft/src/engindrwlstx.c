@@ -104,6 +104,35 @@ int hwr_glare_flag_pos = 0;
 struct HwrModelShadow hwr_model_shadow_list[HWR_MODEL_SHADOW_MAX];
 int hwr_model_shadow_count = 0;
 
+/* FX3D: world-anchored 2D HUD overlay capture (see header). Filled by
+ * enlist_draw_number / enlist_draw_text / enlist_draw_long_health_bar during the
+ * drawlist build; cleared at frame start in process_engine_unk3 (game.c). The SW
+ * draw of these items (DrIT_Number/DrIT_ShortText/DrIT_LongPropBar) is suppressed
+ * under FX3D (see drawitem_is_suppressed_hud) so they render only as re-projected
+ * GL overlay quads. */
+struct HwrOverlayReq hwr_overlay_req[HWR_OVREQ_MAX];
+int hwr_overlay_req_count = 0;
+
+/* Previous turn's complete overlay list, snapshotted by hwr_overlay_snapshot_prev
+ * just before the per-turn reset; the FX3D renderer reads it to interpolate each
+ * bar/number anchor between turns. Lives here (always-compiled) so game.c can
+ * snapshot it without a libhwrender dependency in software-only builds. */
+struct HwrOverlayReq hwr_ovreq_prev[HWR_OVREQ_MAX];
+int hwr_ovreq_prev_count = 0;
+
+void hwr_overlay_snapshot_prev(void)
+{
+    int nc = hwr_overlay_req_count;
+    if (nc > HWR_OVREQ_MAX) nc = HWR_OVREQ_MAX;
+    memcpy(hwr_ovreq_prev, hwr_overlay_req, (size_t)nc * sizeof(hwr_ovreq_prev[0]));
+    hwr_ovreq_prev_count = nc;
+}
+
+/* FX3D: weapon beam segments (see header) captured during the drawlist build,
+ * drawn depth-tested by the hardware renderer. Reset in process_engine_unk3. */
+struct HwrBeamSeg hwr_beam_list[HWR_BEAM_MAX];
+int hwr_beam_count = 0;
+
 /* True for the opaque face draw-item types the FX3D renderer takes over. */
 static TbBool drawitem_is_suppressed_face(ubyte type)
 {
@@ -131,6 +160,10 @@ static TbBool drawitem_is_suppressed_face(ubyte type)
      * paint over the 3D scene. */
     case DrIT_ObFace3Tran:
     case DrIT_ObFace4Tran:
+    /* Explosion shrapnel chips: the FX3D renderer draws them as depth-tested,
+     * interpolated 3D triangles (emit_shrapnels), so suppress the flat SW draw
+     * that would otherwise paint them over the 3D scene at the 16Hz sim rate. */
+    case DrIT_SharpnlPoly:
         return true;
     default:
         return false;
@@ -165,6 +198,29 @@ static TbBool drawitem_is_suppressed_glare(const struct DrawItem *itm)
          * (laser/lightning) and 17 = shaded circle fans (shield-hit / blast /
          * recoil / nuclear discs) -> GL overlay quads. */
         return (fl == 9 || fl == 10 || fl == 15 || fl == 17);
+    }
+}
+
+/* Returns true for the world-anchored 2D HUD/effect draw-items the FX3D renderer
+ * takes over: numbers over heads (DrIT_Number), short tags (DrIT_ShortText) and
+ * vehicle health bars (DrIT_LongPropBar) — re-drawn as re-projected GL overlay
+ * quads (hwr_overlay_req) — plus screen-space sort-lines (DrIT_Unkn11: the
+ * electric-zap / laser-spark segments), which are already collected as GL overlay
+ * quads (hwr_sw_collect_overlays). Suppressing the SW draw stops them being
+ * double-drawn, at the stale 16Hz position, over the hardware pass. */
+static TbBool drawitem_is_suppressed_hud(ubyte type)
+{
+    if (!engine_hwr_suppress_faces)
+        return false;
+    switch (type)
+    {
+    case DrIT_Number:
+    case DrIT_ShortText:
+    case DrIT_LongPropBar:
+    case DrIT_Unkn11:
+        return true;
+    default:
+        return false;
     }
 }
 
@@ -274,6 +330,8 @@ void draw_drawitem_1(ushort dihead)
           continue;
       if (drawitem_is_suppressed_glare(itm))
           continue;
+      if (drawitem_is_suppressed_hud(itm->Type))
+          continue;
       switch (itm->Type)
       {
       case DrIT_ObFace3Txtr:
@@ -355,6 +413,8 @@ void draw_drawitem_2(ushort dihead)
       if (drawitem_is_suppressed_effect(itm))
           continue;
       if (drawitem_is_suppressed_glare(itm))
+          continue;
+      if (drawitem_is_suppressed_hud(itm->Type))
           continue;
       switch (itm->Type)
       {

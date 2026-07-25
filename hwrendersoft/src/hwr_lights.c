@@ -97,6 +97,15 @@ static HwrLightDefaults hwr_defaults = {
     0.30f,          /* firelight_flicker */
     3.0f,           /* firelight_cluster (merge radius, tiles) */
     1,              /* firelight_min_flames (light all clusters) */
+    /* --- persuaded-person light --- */
+    1,              /* persuadelight_enable */
+    0.8f,           /* persuadelight_brightness (half the fire gain) */
+    8.0f,           /* persuadelight_radius */
+    0.15f,          /* persuadelight_pulse */
+    2.0f,           /* persuadelight_cluster (merge radius, tiles) */
+    0.10f,          /* persuadelight_r */
+    0.95f,          /* persuadelight_g */
+    0.85f,          /* persuadelight_b (turquoise) */
     1.0f,           /* face_ao (1.0 = SW-linear building shade, >1 = darker curve) */
     0.6f,           /* shade_sat (shadow saturation boost; 0 = plain linear) */
     1.6f,           /* shadow_depth (baked floor-shadow gamma; 1 = linear SW) */
@@ -106,6 +115,9 @@ static HwrLightDefaults hwr_defaults = {
     468.0f,         /* sprite_persp_zoom_ref (zoom/scale at which sprite size is
                      * nominal; size ∝ scale/ref. <=0 disables zoom scaling.
                      * Tune live via [sprites] persp_zoom_ref). */
+    3.0f,           /* sprite_persp_max_scale (ceiling on the perspective-cancel
+                     * multiplier as a multiple of zoom; bounds the "giant sprite"
+                     * spike. <=0 disables. Tune via [sprites] persp_max_scale). */
     /* --- procedural rain overlay --- */
     1,              /* rain_enable */
     0.35f,          /* rain_alpha (translucent) */
@@ -115,14 +127,25 @@ static HwrLightDefaults hwr_defaults = {
     0.05f,          /* rain_length (fraction of screen height) */
     0.0f,           /* rain_angle (degrees, 0 = straight down) */
     /* --- bullet-time-on-explosion --- */
-    0,              /* bullettime_enable — off by default */
-    0.25f,          /* bullettime_scale (quarter speed while dipped) */
-    700,            /* bullettime_hold_ms */
-    900,            /* bullettime_ramp_ms */
+    1,              /* bullettime_enable */
+    0.66f,          /* bullettime_scale (two-thirds speed while dipped) */
+    2500,           /* bullettime_hold_ms */
+    1500,           /* bullettime_ramp_ms */
     100,            /* bullettime_min_intensity (filters out plain bullet hits) */
-    15,             /* bullettime_range_tiles (explosions further than this never trigger it) */
-    0.6f,           /* bullettime_alpha (screen filter max opacity) */
-    0.75f,          /* bullettime_vignette (edge darkening/tint strength) */
+    20,             /* bullettime_range_tiles (explosions further than this never trigger it) */
+    0.06f,          /* bullettime_blur_strength (radial zoom-blur max reach, UV units) */
+    0.4f,           /* bullettime_trail (motion-trail/ghosting strength) */
+    /* --- water surface --- */
+    1,              /* water_shine_enable */
+    1.0f,           /* water_shine_strength (scales SW's wobble-driven ReflShade;
+                     * 1.0 = software-exact, higher = stronger shine blobs) */
+    0,              /* water_reflect_enable (SSR off by default) */
+    0.25f,          /* water_reflect_strength (mild) */
+    0.10f,          /* water_reflect_sky_r  (dark blue/grey) */
+    0.13f,          /* water_reflect_sky_g */
+    0.18f,          /* water_reflect_sky_b */
+    2.0f,           /* water_reflect_blur (pixels; softens reflection edges) */
+    0,              /* water_reflect_debug */
 };
 
 static void table_defaults(void)
@@ -148,7 +171,44 @@ void hwr_lights_clear(void)
 }
 
 /* Section ids for the simple line-by-line parser. */
-enum { SEC_NONE = 0, SEC_LIGHTS, SEC_DEFAULTS, SEC_SSAO, SEC_SUN, SEC_CATEGORIES, SEC_SPRITES, SEC_TRANSP, SEC_GLARE, SEC_FIRELIGHT, SEC_RAIN, SEC_BULLETTIME };
+enum { SEC_NONE = 0, SEC_LIGHTS, SEC_DEFAULTS, SEC_SSAO, SEC_SUN, SEC_CATEGORIES, SEC_SPRITES, SEC_TRANSP, SEC_GLARE, SEC_FIRELIGHT, SEC_PERSUADELIGHT, SEC_RAIN, SEC_BULLETTIME, SEC_WATER, SEC_FLOOR };
+
+static void parse_floor_line(const char *p)
+{
+    int iv;
+    if (sscanf(p, "no_surface_tiles = %d", &iv) == 1) {
+        if (iv < 0) iv = 0;
+        if (iv > 2) iv = 2;
+        hwr_defaults.floor_no_surface_mode = iv;
+    }
+}
+
+static void parse_water_line(const char *p)
+{
+    float fv, r, g, b;
+    int iv;
+    if (sscanf(p, "enable = %d", &iv) == 1) {
+        hwr_defaults.water_shine_enable = (iv != 0) ? 1 : 0;
+    } else if (sscanf(p, "shine_strength = %f", &fv) == 1) {
+        if (fv < 0.0f) fv = 0.0f;
+        hwr_defaults.water_shine_strength = fv;
+    } else if (sscanf(p, "reflect_enable = %d", &iv) == 1) {
+        hwr_defaults.water_reflect_enable = (iv != 0) ? 1 : 0;
+    } else if (sscanf(p, "reflect_strength = %f", &fv) == 1) {
+        if (fv < 0.0f) fv = 0.0f;
+        if (fv > 1.0f) fv = 1.0f;
+        hwr_defaults.water_reflect_strength = fv;
+    } else if (sscanf(p, "reflect_sky = %f %f %f", &r, &g, &b) == 3) {
+        hwr_defaults.water_reflect_sky_r = r;
+        hwr_defaults.water_reflect_sky_g = g;
+        hwr_defaults.water_reflect_sky_b = b;
+    } else if (sscanf(p, "reflect_blur = %f", &fv) == 1) {
+        if (fv < 0.0f) fv = 0.0f;
+        hwr_defaults.water_reflect_blur = fv;
+    } else if (sscanf(p, "reflect_debug = %d", &iv) == 1) {
+        hwr_defaults.water_reflect_debug = (iv != 0) ? 1 : 0;
+    }
+}
 
 static void parse_transp_line(const char *p)
 {
@@ -220,6 +280,37 @@ static void parse_firelight_line(const char *p)
     }
 }
 
+static void parse_persuadelight_line(const char *p)
+{
+    float fv;
+    int iv;
+    if (sscanf(p, "enable = %d", &iv) == 1) {
+        hwr_defaults.persuadelight_enable = (iv != 0) ? 1 : 0;
+    } else if (sscanf(p, "brightness = %f", &fv) == 1) {
+        if (fv < 0.0f) fv = 0.0f;
+        hwr_defaults.persuadelight_brightness = fv;
+    } else if (sscanf(p, "radius = %f", &fv) == 1) {
+        if (fv < 1.0f) fv = 1.0f;
+        hwr_defaults.persuadelight_radius = fv;
+    } else if (sscanf(p, "pulse = %f", &fv) == 1) {
+        if (fv < 0.0f) fv = 0.0f;
+        if (fv > 1.0f) fv = 1.0f;
+        hwr_defaults.persuadelight_pulse = fv;
+    } else if (sscanf(p, "cluster = %f", &fv) == 1) {
+        if (fv < 0.5f) fv = 0.5f;
+        hwr_defaults.persuadelight_cluster = fv;
+    } else if (sscanf(p, "colour_r = %f", &fv) == 1) {
+        if (fv < 0.0f) fv = 0.0f;
+        hwr_defaults.persuadelight_r = fv;
+    } else if (sscanf(p, "colour_g = %f", &fv) == 1) {
+        if (fv < 0.0f) fv = 0.0f;
+        hwr_defaults.persuadelight_g = fv;
+    } else if (sscanf(p, "colour_b = %f", &fv) == 1) {
+        if (fv < 0.0f) fv = 0.0f;
+        hwr_defaults.persuadelight_b = fv;
+    }
+}
+
 static void parse_rain_line(const char *p)
 {
     float fv;
@@ -269,14 +360,14 @@ static void parse_bullettime_line(const char *p)
     } else if (sscanf(p, "range_tiles = %d", &iv) == 1) {
         if (iv < 0) iv = 0;
         hwr_defaults.bullettime_range_tiles = iv;
-    } else if (sscanf(p, "alpha = %f", &fv) == 1) {
+    } else if (sscanf(p, "blur_strength = %f", &fv) == 1) {
+        if (fv < 0.0f) fv = 0.0f;
+        if (fv > 0.5f) fv = 0.5f;
+        hwr_defaults.bullettime_blur_strength = fv;
+    } else if (sscanf(p, "trail = %f", &fv) == 1) {
         if (fv < 0.0f) fv = 0.0f;
         if (fv > 1.0f) fv = 1.0f;
-        hwr_defaults.bullettime_alpha = fv;
-    } else if (sscanf(p, "vignette = %f", &fv) == 1) {
-        if (fv < 0.0f) fv = 0.0f;
-        if (fv > 1.0f) fv = 1.0f;
-        hwr_defaults.bullettime_vignette = fv;
+        hwr_defaults.bullettime_trail = fv;
     }
 }
 
@@ -458,6 +549,8 @@ static void parse_sprites_line(const char *p)
         hwr_defaults.sprite_persp_strength = fv;
     } else if (sscanf(p, "persp_zoom_ref = %f", &fv) == 1) {
         hwr_defaults.sprite_persp_zoom_ref = fv;
+    } else if (sscanf(p, "persp_max_scale = %f", &fv) == 1) {
+        hwr_defaults.sprite_persp_max_scale = fv;
     }
 }
 
@@ -578,10 +671,16 @@ void hwr_lights_load(const char *path)
                 section = SEC_GLARE;
             else if (strncmp(p, "[firelight]", 11) == 0)
                 section = SEC_FIRELIGHT;
+            else if (strncmp(p, "[persuadelight]", 15) == 0)
+                section = SEC_PERSUADELIGHT;
             else if (strncmp(p, "[rain]", 6) == 0)
                 section = SEC_RAIN;
             else if (strncmp(p, "[bullettime]", 12) == 0)
                 section = SEC_BULLETTIME;
+            else if (strncmp(p, "[water]", 7) == 0)
+                section = SEC_WATER;
+            else if (strncmp(p, "[floor]", 7) == 0)
+                section = SEC_FLOOR;
             else
                 section = SEC_NONE;
             continue;
@@ -616,10 +715,16 @@ void hwr_lights_load(const char *path)
             parse_glare_line(p);
         } else if (section == SEC_FIRELIGHT) {
             parse_firelight_line(p);
+        } else if (section == SEC_PERSUADELIGHT) {
+            parse_persuadelight_line(p);
         } else if (section == SEC_RAIN) {
             parse_rain_line(p);
         } else if (section == SEC_BULLETTIME) {
             parse_bullettime_line(p);
+        } else if (section == SEC_WATER) {
+            parse_water_line(p);
+        } else if (section == SEC_FLOOR) {
+            parse_floor_line(p);
         }
     }
     fclose(f);

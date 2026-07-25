@@ -162,6 +162,10 @@ void draw_b_line(long x1, long y1, long x2, long y2, TbPixel colour)
 TbResult LbDrawLine(long X1, long Y1, long X2, long Y2, TbPixel colour)
 {
     TbResult result = Lb_OK;
+    // A zero-sized graphics window has no valid pixel to clip against, and
+    // the clipping divisions below assume width_max/height_max are >= 0.
+    if ((lbDisplay.GraphicsWindowWidth <= 0) || (lbDisplay.GraphicsWindowHeight <= 0))
+        return 1;
     // Adjusting X-dimension coordinates
     long width_max = lbDisplay.GraphicsWindowWidth - 1;
     if ( X1 >= 0 )

@@ -172,9 +172,79 @@ extern int hwr_glare_flag_pos;
 struct HwrModelShadow {
     int x[4], y[4], z[4];          /* absolute world corners (y = 8*alt space) */
     unsigned char u1, v1, u2, v2;  /* page-4 texture rect (X1,Y1)-(X2,Y2) */
+    unsigned short obj_idx;        /* game_objects[] slot of the casting object, so
+                                      the GL renderer can interpolate the shadow's
+                                      position to match the vehicle body (obj_snap). */
 };
 extern struct HwrModelShadow hwr_model_shadow_list[HWR_MODEL_SHADOW_MAX];
 extern int hwr_model_shadow_count;
+
+/* FX3D: world-anchored 2D HUD overlays (numbers over heads, short tags, vehicle
+ * health bars) captured during the drawlist build by the enlist_draw_* routines.
+ * The FX3D renderer re-projects each anchor with the live (interpolated) camera
+ * every present frame so these overlays scroll in lockstep with the 3D scene at
+ * full frame-rate, instead of being frozen at the 16Hz software screen position.
+ * ax/az are absolute world map coords; dyc is the (frozen) transformed Y arg the
+ * software path passed to transform_shpoint (vertical camera motion is
+ * negligible for HUD anchors, so it is not re-interpolated). scr_dx/scr_dy is
+ * the screen-space offset applied after projection. ident is the source Thing
+ * pointer (or 0) — an interpolation identity so a bar tracks its moving vehicle
+ * smoothly rather than lagging one sim turn behind the interpolated body. */
+enum HwrOverlayReqKind {
+    HwrOvReq_Number = 0,
+    HwrOvReq_Text   = 1,
+    HwrOvReq_Bar    = 2,
+    /* A HUD sprite frame anchored in the world (agent selection number over an
+     * agent's head, number_player). ival = frame index, ival2 = "unscaled" flag,
+     * scr_dx/scr_dy = the already-zoom-scaled screen shift. */
+    HwrOvReq_Frame  = 3,
+};
+#define HWR_OVREQ_MAX 512
+struct HwrOverlayReq {
+    unsigned char kind;
+    unsigned char col, col2;
+    short scr_dx, scr_dy;
+    int   ax, dyc, az;
+    intptr_t ident;
+    int   ival, ival2;
+    char  text[8];
+};
+extern struct HwrOverlayReq hwr_overlay_req[HWR_OVREQ_MAX];
+extern int hwr_overlay_req_count;
+extern struct HwrOverlayReq hwr_ovreq_prev[HWR_OVREQ_MAX];
+extern int hwr_ovreq_prev_count;
+/* Snapshot the completed overlay list as the previous turn for next turn's
+ * interpolation. Call once per turn just before hwr_overlay_req_count is reset,
+ * AFTER the whole build (so late additions like draw_hud's agent numbers are
+ * included). Always compiled (swrender lib); no libhwrender dependency. */
+void hwr_overlay_snapshot_prev(void);
+/* Record one world-anchored HUD overlay for FX3D re-projection (no-op unless the
+ * hardware renderer is active). Defined in engindrwlstm_3d.c. */
+void hwr_capture_overlay(unsigned char kind, int ax, int dyc, int az,
+  short scr_dx, short scr_dy, intptr_t ident,
+  int ival, int ival2, unsigned char col, unsigned char col2, const char *text);
+
+/* FX3D: weapon beam segments (electric zap, laser / ion beam) captured during the
+ * drawlist build so the hardware renderer can draw them as DEPTH-TESTED quads
+ * (occluded by 3D geometry, unlike the always-on-top screen overlay). Two endpoint
+ * conventions: `world`=1 -> a[]/b[] are (mapX, transform Y arg, mapZ) absolute
+ * world coords, re-projected with the live camera every present frame (60fps,
+ * used by the laser which has real world endpoints); `world`=0 -> a[]/b[] are
+ * (screen x, screen y, scrd depth) captured at the 16Hz sim rate (used by the
+ * electric zag whose jagged segments are generated in screen space by ASM). */
+#define HWR_BEAM_MAX 4096
+struct HwrBeamSeg {
+    unsigned char world;
+    unsigned char col;
+    short thick;          /* half-thickness in screen pixels (at capture zoom) */
+    int a[3], b[3];
+};
+extern struct HwrBeamSeg hwr_beam_list[HWR_BEAM_MAX];
+extern int hwr_beam_count;
+/* Append one beam segment (no-op unless the hardware renderer is active).
+ * Defined in engindrwlstm_3d.c. */
+void hwr_capture_beam(unsigned char world, unsigned char col, short thick,
+  int ax, int ay, int az, int bx, int by, int bz);
 
 extern short word_1A5834;
 extern short word_1A5836;

@@ -213,7 +213,7 @@ void get_object_shadow_bound_points_y(struct SortMapPoint *p_cor1,
 }
 
 void draw_object_model_shadow(struct SortMapPoint *p_tngcor, ushort obmodl,
-  short matx, int bckt)
+  short matx, int bckt, ushort obj_idx)
 {
     struct SortMapPoint cor1, cor2, cor3, cor4;
     struct ShadowTexture *p_shtextr;
@@ -253,6 +253,7 @@ void draw_object_model_shadow(struct SortMapPoint *p_tngcor, ushort obmodl,
             }
             ms->u1 = p_shtextr->X1; ms->v1 = p_shtextr->Y1;
             ms->u2 = p_shtextr->X2; ms->v2 = p_shtextr->Y2;
+            ms->obj_idx = obj_idx;   /* game_objects[] slot, for GL interpolation */
         }
         return;
     }
@@ -294,7 +295,8 @@ void draw_vehicle_shadow(ushort veh, int bckt)
     else
         get_flat_surface_height_below_point_cb = get_flat_surface_height_at_ground_callback;
 
-    draw_object_model_shadow(&tngcor, obmodl, matx, bckt);
+    draw_object_model_shadow(&tngcor, obmodl, matx, bckt,
+      (ushort)p_vehicle->U.UVehicle.Object);
 }
 
 void build_vehicle(struct Thing *p_thing)
