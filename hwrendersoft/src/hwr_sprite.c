@@ -569,6 +569,187 @@ void hwr_atlas_reset(void)
 }
 
 /* =========================================================================
+ * Palette recolour (infrared/thermal view, brightness changes)
+ * =========================================================================
+ * The atlas is a cache keyed by sprite identity, so a tile's pixels are frozen
+ * at whatever palette was live when it was first baked. The game does swap the
+ * palette mid-mission — thermal/infrared view loads pal3, brightness changes
+ * reload it — and the floor/face passes follow instantly because they store
+ * palette INDICES and depalettise in the shader. Cached sprite tiles cannot:
+ * they hold RGB, so they kept the colours of whichever palette happened to be
+ * live when they were baked (only sprites seen for the very first time during
+ * thermal came out thermal-coloured — the "odd frame that changes and then
+ * lingers").
+ *
+ * Re-baking the whole atlas on every palette swap would stall, so instead
+ * tiles are always baked against ONE frozen palette (the bake palette, see
+ * sw_bake_palette() in source_sw.c) and the shader maps their colours back
+ * through it at draw time:
+ *
+ *     baked RGB --uInvPal--> palette index --uPalLive--> live palette RGB
+ *
+ * uInvPal is a 64^3 lookup of "nearest bake-palette index" for a colour. The
+ * game palette is 6 bits per channel, so every exact palette colour lands in
+ * its own cell and the round trip is lossless; the cells in between (reached
+ * only by xBR-blended edge pixels, which the software renderer never had) are
+ * filled by a flood fill outwards from the seeded cells. */
+
+#define INVPAL_DIM 64
+
+static uint8_t at_bake_pal[768];    /* palette the atlas tiles were baked with */
+static uint8_t at_live_pal[768];    /* palette the game is displaying now */
+static int     at_bake_pal_ready = 0;
+static int     at_recolour = 0;     /* live palette differs from the bake one */
+static GLuint  at_invpal_tex = 0;   /* 64^3 R8: colour -> bake palette index */
+static GLuint  at_pallive_tex = 0;  /* 256x1 RGB8: the live palette */
+static int     at_invpal_dirty = 1;
+static int     at_pallive_dirty = 1;
+
+void hwr_atlas_set_palettes(const uint8_t *bake_pal, const uint8_t *live_pal)
+{
+    if (bake_pal == NULL || live_pal == NULL)
+        return;
+    if (!at_bake_pal_ready || memcmp(at_bake_pal, bake_pal, 768) != 0) {
+        memcpy(at_bake_pal, bake_pal, 768);
+        at_bake_pal_ready = 1;
+        at_invpal_dirty = 1;
+    }
+    if (memcmp(at_live_pal, live_pal, 768) != 0) {
+        memcpy(at_live_pal, live_pal, 768);
+        at_pallive_dirty = 1;
+    }
+    at_recolour = (memcmp(at_bake_pal, at_live_pal, 768) != 0);
+}
+
+/* Build the inverse-palette volume from the bake palette. Renderer thread. */
+static void invpal_build(void)
+{
+    const int D = INVPAL_DIM;
+    const int N = D * D * D;
+    static const int nb[6][3] = {
+        {1,0,0}, {-1,0,0}, {0,1,0}, {0,-1,0}, {0,0,1}, {0,0,-1}
+    };
+    uint8_t  *lut    = (uint8_t *)malloc((size_t)N);
+    uint8_t  *filled = (uint8_t *)calloc(1, (size_t)N);
+    uint32_t *queue  = (uint32_t *)malloc(sizeof(uint32_t) * (size_t)N);
+    int head = 0, tail = 0, i;
+
+    if (lut == NULL || filled == NULL || queue == NULL) {
+        free(lut); free(filled); free(queue);
+        return;
+    }
+    memset(lut, 0, (size_t)N);
+
+    /* Seed one cell per palette entry. Duplicate colours: first index wins. */
+    for (i = 0; i < 256; i++) {
+        int r = at_bake_pal[i * 3 + 0] >> 2;
+        int g = at_bake_pal[i * 3 + 1] >> 2;
+        int b = at_bake_pal[i * 3 + 2] >> 2;
+        int c = (b * D + g) * D + r;
+        if (filled[c])
+            continue;
+        filled[c] = 1;
+        lut[c] = (uint8_t)i;
+        queue[tail++] = (uint32_t)c;
+    }
+    /* Flood the rest: 6-neighbour BFS, so each cell inherits the index of its
+     * nearest seed by city-block distance. */
+    while (head < tail) {
+        int c = (int)queue[head++];
+        int r = c % D, g = (c / D) % D, b = c / (D * D);
+        int k;
+        for (k = 0; k < 6; k++) {
+            int nr = r + nb[k][0], ng = g + nb[k][1], nbz = b + nb[k][2];
+            int nc;
+            if (nr < 0 || nr >= D || ng < 0 || ng >= D || nbz < 0 || nbz >= D)
+                continue;
+            nc = (nbz * D + ng) * D + nr;
+            if (filled[nc])
+                continue;
+            filled[nc] = 1;
+            lut[nc] = lut[c];
+            queue[tail++] = (uint32_t)nc;
+        }
+    }
+
+    if (at_invpal_tex == 0)
+        glGenTextures(1, &at_invpal_tex);
+    glActiveTexture(GL_TEXTURE6);
+    glBindTexture(GL_TEXTURE_3D, at_invpal_tex);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_R8, D, D, D, 0, GL_RED,
+                 GL_UNSIGNED_BYTE, lut);
+    glActiveTexture(GL_TEXTURE0);
+
+    free(lut); free(filled); free(queue);
+    at_invpal_dirty = 0;
+}
+
+/* Bind the recolour uniforms/textures for a program that samples the atlas.
+ * Returns nonzero if the recolour is active this frame. */
+static int spr_bind_recolour(GLint loc_invpal, GLint loc_pallive, GLint loc_on)
+{
+    int on = at_recolour && at_bake_pal_ready;
+
+    if (loc_on >= 0)
+        glUniform1i(loc_on, on);
+    if (!on)
+        return 0;
+
+    if (at_invpal_dirty)
+        invpal_build();
+    if (at_invpal_tex == 0)
+        return 0;
+
+    glActiveTexture(GL_TEXTURE6);
+    glBindTexture(GL_TEXTURE_3D, at_invpal_tex);
+
+    if (at_pallive_tex == 0) {
+        glGenTextures(1, &at_pallive_tex);
+        at_pallive_dirty = 1;
+    }
+    glActiveTexture(GL_TEXTURE7);
+    glBindTexture(GL_TEXTURE_2D, at_pallive_tex);
+    if (at_pallive_dirty) {
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, 256, 1, 0, GL_RGB,
+                     GL_UNSIGNED_BYTE, at_live_pal);
+        at_pallive_dirty = 0;
+    }
+    glActiveTexture(GL_TEXTURE0);
+
+    if (loc_invpal >= 0)
+        glUniform1i(loc_invpal, 6);
+    if (loc_pallive >= 0)
+        glUniform1i(loc_pallive, 7);
+    return 1;
+}
+
+/* GLSL helper shared by every program that samples the atlas. */
+#define RECOLOUR_GLSL \
+    "uniform sampler3D uInvPal;\n" \
+    "uniform sampler2D uPalLive;\n" \
+    "uniform int uRecolour;\n" \
+    "vec3 atlas_recolour(vec3 c) {\n" \
+    "    if (uRecolour == 0) return c;\n" \
+    /* Round to the 8-bit value first: c*255 alone lands just under the integer
+     * for some texels and would drop a whole cell (252 -> 62 instead of 63). */ \
+    "    vec3 v8 = floor(clamp(c, 0.0, 1.0) * 255.0 + 0.5);\n" \
+    "    vec3 cell = (floor(v8 * 0.25) + 0.5) / 64.0;\n" \
+    "    float idx = floor(texture(uInvPal, cell).r * 255.0 + 0.5);\n" \
+    "    return texture(uPalLive, vec2((idx + 0.5) / 256.0, 0.5)).rgb;\n" \
+    "}\n"
+
+/* =========================================================================
  * Billboard shaders
  * =========================================================================
  * Vertex shader reproduces transform_shpoint() exactly (same as floor_vert_src)
@@ -615,14 +796,14 @@ static const char *spr_vert_src =
     "    vShade = aShade;\n"
     "    vScrd = scrd;\n"
     "    /* Depth uses centre scrd (aDepth, uniform across quad) to prevent\n"
-    "     * floor from clipping one half of the sprite.  Push sprite depth\n"
-    "     * forward with a generous epsilon to always win z-fights. Sprites lying\n"
-    "     * near-flush with the floor (corpses, dropped items) have almost no\n"
-    "     * natural depth separation from the floor beneath them, so with the\n"
-    "     * camera now moving continuously (not in discrete 16Hz steps) small\n"
-    "     * per-frame precision noise used to flip a marginal 64-unit bias every\n"
-    "     * frame -> visible flicker. Widened for headroom. */\n"
-    "    float ndc_z = clamp((aDepth - 512.0) / 65536.0, -1.0, 1.0);\n"
+    "     * floor from clipping one half of the sprite.  Only a SMALL forward\n"
+    "     * epsilon here: a large one (this was 512) makes a person or crate\n"
+    "     * standing just behind a wall or vehicle draw in front of it, since\n"
+    "     * faces sit at their true depth. The headroom that flat-lying sprites\n"
+    "     * (corpses, dropped items) need against the floor comes from pushing\n"
+    "     * the FLOOR pass away instead - see HWR_FLOOR_DEPTH_PUSHBACK in\n"
+    "     * hwr_floor.c; the two sum to the old 512-unit floor margin. */\n"
+    "    float ndc_z = clamp((aDepth - 64.0) / 65536.0, -1.0, 1.0);\n"
     "    gl_Position = vec4(sx/uCentre.x - 1.0, 1.0 - sy/uCentre.y, ndc_z, 1.0);\n"
     "}\n";
 
@@ -655,11 +836,15 @@ static const char *spr_frag_src =
     "uniform float uSunHaze;\n"
     "uniform float uAlpha;\n"            /* output alpha (1 = opaque; <1 = translucent) */
     "uniform int  uUnlit;\n"             /* 1 = self-lit (ignore scene lights) — effects */
+    RECOLOUR_GLSL
     "void main(){\n"
     "    fragPos = vec4(vWorldPos, -1.0);\n"  /* w: 1=water, 0=3D geom, -1=sprite/billboard */
     "    vec4 atex = texture(uAtlas, vUV);\n"
     "    if (atex.a < 0.5) discard;\n"
-    "    vec3 c = atex.rgb;\n"
+    /* Remap the tile's frozen bake-palette colours to the live palette, so
+     * infrared/thermal view (and brightness changes) recolour cached sprites
+     * exactly like the software renderer's palette swap. */
+    "    vec3 c = atlas_recolour(atex.rgb);\n"
     "    /* Effects (smoke/fire/glow) are self-lit like the software renderer: the\n"
     "     * baked colour at full brightness, with the per-sprite shade used as an\n"
     "     * ALPHA multiplier so particles can fade out over their life. */\n"
@@ -743,16 +928,17 @@ static const char *shadow_vert_src =
     "        shx = shx*(16384.0 - scrd) / 16384.0;\n"
     "        shy = shy*(16384.0 - scrd) / 16384.0;\n"
     "    }\n"
-    "    float ndc_z = clamp(scrd_raw / 65536.0 - 0.01, -1.0, 1.0);\n"  /* bias so it
+    "    float ndc_z = clamp(scrd_raw / 65536.0 - 0.003, -1.0, 1.0);\n"  /* bias so it
                                         reliably beats the floor's own depth despite
                                         per-frame animation jitter in the sprite's
                                         reported y/height (ground_y wobbles a little
                                         each walk-cycle frame even with a still camera).
-                                        Widened 4x (was -0.01): shadows sit flush on the
-                                        floor with near-zero natural separation, and with
-                                        the camera now moving continuously instead of in
-                                        discrete 16Hz steps, per-frame precision noise
-                                        flipped that marginal bias every frame -> flicker. */
+                                        Most of the margin over the floor now comes
+                                        from HWR_FLOOR_DEPTH_PUSHBACK (hwr_floor.c) pushing
+                                        the floor pass away instead, so this stays small and
+                                        the shadow does not bleed onto walls standing on the
+                                        same tile; the two still sum to the ~655-unit floor
+                                        separation that stopped the 60fps flicker. */
     "    gl_Position = vec4((uCentre.x + shx)/uCentre.x - 1.0, 1.0 - (uCentre.y - shy)/uCentre.y, ndc_z, 1.0);\n"
     "    vUV = aUV;\n"
     "}\n";
@@ -799,16 +985,17 @@ static const char *psh_vert_src =
     "        shx = shx*(16384.0 - scrd) / 16384.0;\n"
     "        shy = shy*(16384.0 - scrd) / 16384.0;\n"
     "    }\n"
-    "    float ndc_z = clamp(scrd_raw / 65536.0 - 0.01, -1.0, 1.0);\n"  /* bias so it
+    "    float ndc_z = clamp(scrd_raw / 65536.0 - 0.003, -1.0, 1.0);\n"  /* bias so it
                                         reliably beats the floor's own depth despite
                                         per-frame animation jitter in the sprite's
                                         reported y/height (ground_y wobbles a little
                                         each walk-cycle frame even with a still camera).
-                                        Widened 4x (was -0.01): shadows sit flush on the
-                                        floor with near-zero natural separation, and with
-                                        the camera now moving continuously instead of in
-                                        discrete 16Hz steps, per-frame precision noise
-                                        flipped that marginal bias every frame -> flicker. */
+                                        Most of the margin over the floor now comes
+                                        from HWR_FLOOR_DEPTH_PUSHBACK (hwr_floor.c) pushing
+                                        the floor pass away instead, so this stays small and
+                                        the shadow does not bleed onto walls standing on the
+                                        same tile; the two still sum to the ~655-unit floor
+                                        separation that stopped the 60fps flicker. */
     "    gl_Position = vec4((uCentre.x + shx)/uCentre.x - 1.0, 1.0 - (uCentre.y - shy)/uCentre.y, ndc_z, 1.0);\n"
     "    vUV = aUV;\n"
     "    vOpacity = aOpacity;\n"
@@ -841,6 +1028,7 @@ static GLint spr_loc_sun_mvp = -1, spr_loc_sun_bright = -1, spr_loc_sun_ambient 
 static GLint spr_loc_sun_bias = -1, spr_loc_sun_enable = -1, spr_loc_sun_pcf = -1;
 static GLint spr_loc_sun_debug = -1, spr_loc_sun_haze = -1;
 static GLint spr_loc_alpha = -1;
+static GLint spr_loc_invpal = -1, spr_loc_pallive = -1, spr_loc_recolour = -1;
 static GLint spr_loc_unlit = -1;
 static int   spr_ready = 0;
 
@@ -929,6 +1117,9 @@ static int spr_init(void)
     spr_loc_sun_haze   = glGetUniformLocation(spr_prog, "uSunHaze");
     spr_loc_alpha      = glGetUniformLocation(spr_prog, "uAlpha");
     spr_loc_unlit      = glGetUniformLocation(spr_prog, "uUnlit");
+    spr_loc_invpal     = glGetUniformLocation(spr_prog, "uInvPal");
+    spr_loc_pallive    = glGetUniformLocation(spr_prog, "uPalLive");
+    spr_loc_recolour   = glGetUniformLocation(spr_prog, "uRecolour");
 
     glGenVertexArrays(1, &spr_vao);
     glBindVertexArray(spr_vao);
@@ -1128,6 +1319,10 @@ static void spr_setup_program(const HwrCamera *cam,
     /* Atlas on unit 4 */
     hwr_atlas_bind(4);
     glUniform1i(spr_loc_atlas, 4);
+
+    /* Live-palette remap of the atlas colours (units 6/7) — see
+     * hwr_atlas_set_palettes(). No-op unless the palette has been swapped. */
+    spr_bind_recolour(spr_loc_invpal, spr_loc_pallive, spr_loc_recolour);
 
     /* Shadow map on unit 3 */
     glActiveTexture(GL_TEXTURE3);
@@ -1960,11 +2155,14 @@ static const char *ovt_frag_src =
     "in vec2 vUV; in float vA;\n"
     "out vec4 frag;\n"
     "uniform sampler2D uAtlas;\n"
-    "void main(){ vec4 t = texture(uAtlas, vUV); if (t.a < 0.5) discard; frag = vec4(t.rgb, vA); }\n";
+    RECOLOUR_GLSL
+    "void main(){ vec4 t = texture(uAtlas, vUV); if (t.a < 0.5) discard;\n"
+    "              frag = vec4(atlas_recolour(t.rgb), vA); }\n";
 
 static GLuint ov_prog = 0, ov_vao = 0, ov_vbo = 0;
 static GLuint ovt_prog = 0, ovt_vao = 0, ovt_vbo = 0;
 static GLint  ovt_loc_atlas = -1;
+static GLint  ovt_loc_invpal = -1, ovt_loc_pallive = -1, ovt_loc_recolour = -1;
 static int    ov_ready = 0;
 
 #define OV_MAX_QUADS 4096
@@ -2011,6 +2209,9 @@ static int ov_init(void)
     glGetProgramiv(ovt_prog, GL_LINK_STATUS, &ok);
     if (!ok) { hwr_set_error("overlay-tex program link failed"); return HWR_ERROR; }
     ovt_loc_atlas = glGetUniformLocation(ovt_prog, "uAtlas");
+    ovt_loc_invpal   = glGetUniformLocation(ovt_prog, "uInvPal");
+    ovt_loc_pallive  = glGetUniformLocation(ovt_prog, "uPalLive");
+    ovt_loc_recolour = glGetUniformLocation(ovt_prog, "uRecolour");
     glGenVertexArrays(1, &ovt_vao);
     glBindVertexArray(ovt_vao);
     glGenBuffers(1, &ovt_vbo);
@@ -2093,6 +2294,7 @@ int hwr_overlay_render(void)
         glUseProgram(ovt_prog);
         hwr_atlas_bind(4);
         glUniform1i(ovt_loc_atlas, 4);
+        spr_bind_recolour(ovt_loc_invpal, ovt_loc_pallive, ovt_loc_recolour);
         glBindVertexArray(ovt_vao);
         glBindBuffer(GL_ARRAY_BUFFER, ovt_vbo);
         glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)tvc * 5 * sizeof(float), ovt_vbuf, GL_STREAM_DRAW);

@@ -161,6 +161,18 @@ void hwr_rain_config(int enable, float alpha, float density, float speed,
  *  WScreen (HUD) composite. No-op when disabled or not ready. */
 void hwr_rain_render(void);
 
+/** Configure the distance fog overlay (from fx3d_lights.ini [fog]). enable
+ *  toggles the pass; r/g/b is the haze tint; density is the maximum opacity at
+ *  full distance (0..1); start/end are the world-unit distance ramp used when
+ *  the SSAO/water G-buffer is available; scr_start/scr_end are the screen-Y
+ *  ramp (0 = top of screen) used as the geometry-free fallback. */
+void hwr_fog_config(int enable, float r, float g, float b, float density,
+    float start, float end, float scr_start, float scr_end);
+
+/** Draw the distance fog, alpha-blended over the already-rendered 3D scene.
+ *  Call after the 3D passes, before hwr_rain_render(). */
+void hwr_fog_render(void);
+
 /** Configure the bullet-time radial-blur + motion-trail effect (from
  *  fx3d_lights.ini [bullettime]). enable toggles the pass; blur_strength is
  *  the max radial-blur reach at the screen edge (UV units) at full dip;
@@ -229,6 +241,16 @@ void hwr_ssao_blit_depth(void);
  *  passes that share the G-buffer use this to restrict their draw to the colour
  *  attachment so they don't corrupt the world-position attachment. */
 int hwr_ssao_active(void);
+
+/** The G-buffer world-position texture (xyz world pos, w = water mask), still
+ *  valid after hwr_ssao_resolve(). Returns 0 when the G-buffer path is off.
+ *  Used by the distance fog to get true per-pixel world positions. */
+unsigned int hwr_ssao_position_texture(void);
+
+/** The camera centre (look-at point) and unit view direction in world space.
+ *  dot(P - ctr, dir) is the view depth: 0 at the screen-centre look-at point,
+ *  growing into the distance. This is what distance fog ramps on. */
+void hwr_ssao_get_view(float ctr[3], float dir[3]);
 
 /** Configure the directional sun and shadow map (from fx3d_lights.ini [sun]).
  *  enable toggles the whole shadow-map path; brightness is the lit-ground

@@ -126,6 +126,15 @@ static HwrLightDefaults hwr_defaults = {
     0.6f,           /* rain_width (very thin streaks, pixels) */
     0.05f,          /* rain_length (fraction of screen height) */
     0.0f,           /* rain_angle (degrees, 0 = straight down) */
+    /* --- distance fog (weather haze, drawn with the rain) --- */
+    1,              /* fog_enable */
+    0.55f, 0.58f, 0.62f,  /* fog_r/g/b (cool grey mist) */
+    0.55f,          /* fog_density (max opacity at full distance) */
+    -1500.0f,       /* fog_start (view depth; 0 = screen-centre look-at point,
+                     * negative starts the haze nearer than mid-screen) */
+    6000.0f,        /* fog_end (view depth of full haze) */
+    0.0f,           /* fog_scr_start (fallback screen-Y ramp, 0 = top) */
+    0.55f,          /* fog_scr_end */
     /* --- bullet-time-on-explosion --- */
     1,              /* bullettime_enable */
     0.66f,          /* bullettime_scale (two-thirds speed while dipped) */
@@ -171,7 +180,7 @@ void hwr_lights_clear(void)
 }
 
 /* Section ids for the simple line-by-line parser. */
-enum { SEC_NONE = 0, SEC_LIGHTS, SEC_DEFAULTS, SEC_SSAO, SEC_SUN, SEC_CATEGORIES, SEC_SPRITES, SEC_TRANSP, SEC_GLARE, SEC_FIRELIGHT, SEC_PERSUADELIGHT, SEC_RAIN, SEC_BULLETTIME, SEC_WATER, SEC_FLOOR };
+enum { SEC_NONE = 0, SEC_LIGHTS, SEC_DEFAULTS, SEC_SSAO, SEC_SUN, SEC_CATEGORIES, SEC_SPRITES, SEC_TRANSP, SEC_GLARE, SEC_FIRELIGHT, SEC_PERSUADELIGHT, SEC_RAIN, SEC_FOG, SEC_BULLETTIME, SEC_WATER, SEC_FLOOR };
 
 static void parse_floor_line(const char *p)
 {
@@ -336,6 +345,33 @@ static void parse_rain_line(const char *p)
         hwr_defaults.rain_length = fv;
     } else if (sscanf(p, "angle = %f", &fv) == 1) {
         hwr_defaults.rain_angle = fv;
+    }
+}
+
+static void parse_fog_line(const char *p)
+{
+    float fv;
+    int iv;
+    if (sscanf(p, "enable = %d", &iv) == 1) {
+        hwr_defaults.fog_enable = (iv != 0) ? 1 : 0;
+    } else if (sscanf(p, "colour_r = %f", &fv) == 1) {
+        hwr_defaults.fog_r = fv;
+    } else if (sscanf(p, "colour_g = %f", &fv) == 1) {
+        hwr_defaults.fog_g = fv;
+    } else if (sscanf(p, "colour_b = %f", &fv) == 1) {
+        hwr_defaults.fog_b = fv;
+    } else if (sscanf(p, "density = %f", &fv) == 1) {
+        if (fv < 0.0f) fv = 0.0f;
+        if (fv > 1.0f) fv = 1.0f;
+        hwr_defaults.fog_density = fv;
+    } else if (sscanf(p, "start = %f", &fv) == 1) {
+        hwr_defaults.fog_start = fv;   /* may be negative: fog before mid-screen */
+    } else if (sscanf(p, "end = %f", &fv) == 1) {
+        hwr_defaults.fog_end = fv;
+    } else if (sscanf(p, "scr_start = %f", &fv) == 1) {
+        hwr_defaults.fog_scr_start = fv;
+    } else if (sscanf(p, "scr_end = %f", &fv) == 1) {
+        hwr_defaults.fog_scr_end = fv;
     }
 }
 
@@ -675,6 +711,8 @@ void hwr_lights_load(const char *path)
                 section = SEC_PERSUADELIGHT;
             else if (strncmp(p, "[rain]", 6) == 0)
                 section = SEC_RAIN;
+            else if (strncmp(p, "[fog]", 5) == 0)
+                section = SEC_FOG;
             else if (strncmp(p, "[bullettime]", 12) == 0)
                 section = SEC_BULLETTIME;
             else if (strncmp(p, "[water]", 7) == 0)
@@ -719,6 +757,8 @@ void hwr_lights_load(const char *path)
             parse_persuadelight_line(p);
         } else if (section == SEC_RAIN) {
             parse_rain_line(p);
+        } else if (section == SEC_FOG) {
+            parse_fog_line(p);
         } else if (section == SEC_BULLETTIME) {
             parse_bullettime_line(p);
         } else if (section == SEC_WATER) {

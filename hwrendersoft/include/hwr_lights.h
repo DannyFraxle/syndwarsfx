@@ -161,6 +161,19 @@ typedef struct {
     float rain_width;           /**< Streak thickness in pixels (default 1.5). */
     float rain_length;          /**< Streak length, fraction of screen height (default 0.10). */
     float rain_angle;           /**< Wind slant in degrees, 0 = straight down (default 0). */
+    /* Distance fog ([fog] section). Weather haze drawn with the rain: greys out
+     * far geometry so the street fades into mist. Uses the G-buffer's world
+     * positions for true per-pixel distance when the SSAO/water composite path
+     * is on, and a screen-Y gradient otherwise. */
+    int   fog_enable;           /**< 1 = draw distance fog while raining. */
+    float fog_r, fog_g, fog_b;  /**< Haze tint (default cool grey). */
+    float fog_density;          /**< Max fog opacity at full distance, 0..1 (default 0.55). */
+    float fog_start;            /**< View depth where the haze starts; 0 = the
+                                     screen-centre look-at point, negative starts
+                                     it nearer the camera (default -1500). */
+    float fog_end;              /**< View depth of full haze (default 6000). */
+    float fog_scr_start;        /**< Fallback screen-Y ramp start, 0 = top (default 0.0). */
+    float fog_scr_end;          /**< Fallback screen-Y ramp end (default 0.55). */
     /* Bullet-time-on-explosion ([bullettime] section). A big explosion (see
      * bullettime_trigger() in game_speed.c, fed from do_shockwave() intensity)
      * dips the sim's world_dt/dt_units toward bullettime_scale for

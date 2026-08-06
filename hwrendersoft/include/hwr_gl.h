@@ -120,6 +120,9 @@ typedef ptrdiff_t      GLsizeiptr;
 #define GL_TEXTURE3                       0x84C3
 #define GL_TEXTURE4                       0x84C4
 #define GL_TEXTURE5                       0x84C5
+#define GL_TEXTURE6                       0x84C6
+#define GL_TEXTURE7                       0x84C7
+#define GL_TEXTURE_3D                     0x806F
 #define GL_POLYGON_OFFSET_FILL            0x8037
 
 /* GL entry points use the platform's GL calling convention. On Windows that is

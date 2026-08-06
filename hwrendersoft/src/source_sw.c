@@ -74,6 +74,53 @@ extern unsigned char  display_palette[768];
 /* 8-bit-per-channel palette (SDL_Color equivalent) for xBR RGBA conversion. */
 extern struct { unsigned char r, g, b, a; } lbPaletteColors[256];
 
+/* The palette every atlas tile is baked against. Frozen as soon as a full
+ * mission palette is available and used for every bake after that, so the
+ * cache stays colour-consistent even when the game swaps the palette
+ * mid-mission (infrared/thermal view loads pal3,
+ * brightness reloads it). The swap is applied at draw time by the sprite
+ * shaders instead — see hwr_atlas_set_palettes() in hwr_sprite.c. Without
+ * this, cached tiles kept whichever palette baked them and only the handful of
+ * sprites first seen during thermal came out thermal-coloured. */
+static unsigned char sw_bake_pal[768];
+static int           sw_bake_pal_ready = 0;
+
+/* Flatten lbPaletteColors into a 256*3 RGB array. */
+static void sw_snapshot_palette(unsigned char *out)
+{
+    int i;
+    for (i = 0; i < 256; i++) {
+        out[i * 3 + 0] = lbPaletteColors[i].r;
+        out[i * 3 + 1] = lbPaletteColors[i].g;
+        out[i * 3 + 2] = lbPaletteColors[i].b;
+    }
+}
+
+/* True once the palette holds a near-white entry, i.e. it is a real mission
+ * palette and not a mid-fade one. Freezing a faded palette would give every
+ * atlas tile washed-out bake colours (and a degenerate inverse lookup), so the
+ * freeze waits for a full-range palette; until then tiles bake against the
+ * live palette exactly as they did before. */
+static int sw_palette_is_full(const unsigned char *pal)
+{
+    int i, max = 0;
+    for (i = 0; i < 768; i++) {
+        if (pal[i] > max)
+            max = pal[i];
+    }
+    return max >= 240;
+}
+
+static const unsigned char *sw_bake_palette(void)
+{
+    if (!sw_bake_pal_ready) {
+        sw_snapshot_palette(sw_bake_pal);
+        if (sw_palette_is_full(sw_bake_pal))
+            sw_bake_pal_ready = 1;
+    }
+    return sw_bake_pal;
+}
+
 /* Map grid and floor textures. Layouts mirror src/bigmap.h and
  * swrendersoft/include/enginsngtxtr.h exactly (sizeof 18 each, packed). */
 #define HWR_MAP_TILE_WIDTH  128
@@ -949,6 +996,7 @@ static int hwr_effect_frame_slot(unsigned short frm_idx, int *out_fw, int *out_f
                             /* Effects are self-lit — bake the raw full-bright palette
                              * colour (no fade-table dim) so fire stays bright; the
                              * billboard shade is set to full at draw time. */
+                            const unsigned char *bp = sw_bake_palette();
                             for (row = 0; row < spr_h && el_y + row < fh; row++) {
                                 for (col = 0; col < spr_w && el_x + col < fw; col++) {
                                     int idx = row * spr_w + col;
@@ -956,9 +1004,9 @@ static int hwr_effect_frame_slot(unsigned short frm_idx, int *out_fw, int *out_f
                                     int dst = ((el_y + row) * fw + dst_x) * 4;
                                     int pixel = temp[idx];
                                     if (opq[idx]) {
-                                        comp[dst + 0] = lbPaletteColors[pixel].r;
-                                        comp[dst + 1] = lbPaletteColors[pixel].g;
-                                        comp[dst + 2] = lbPaletteColors[pixel].b;
+                                        comp[dst + 0] = bp[pixel * 3 + 0];
+                                        comp[dst + 1] = bp[pixel * 3 + 1];
+                                        comp[dst + 2] = bp[pixel * 3 + 2];
                                         comp[dst + 3] = 255;
                                     }
                                 }
@@ -1293,10 +1341,31 @@ static void hwr_sw_collect_shrapnels(void)
     }
 }
 
+/* Hand the atlas the bake palette and the palette in use right now, once per
+ * turn. Equal palettes (the normal case) cost the shaders nothing. */
+static void sw_update_atlas_palettes(void)
+{
+    unsigned char live[768];
+    const unsigned char *bake = sw_bake_palette();
+    sw_snapshot_palette(live);
+    /* Freeze the bake palette as soon as a full-range one is available, even if
+     * nothing has been baked yet, so the atlas and the shader agree from the
+     * first tile onwards. */
+    if (!sw_bake_pal_ready && sw_palette_is_full(live)) {
+        memcpy(sw_bake_pal, live, sizeof(sw_bake_pal));
+        sw_bake_pal_ready = 1;
+        bake = sw_bake_pal;
+    }
+    hwr_atlas_set_palettes(bake, live);
+}
+
 void hwr_sw_collect_sprites(void)
 {
     unsigned short i;
     hwr_sw_snapshot_prev_sprites();
+    /* Keep the atlas informed of the live palette (thermal view / brightness /
+     * fades) so cached tiles are remapped at draw time rather than going stale. */
+    sw_update_atlas_palettes();
     hwr_collected_count = 0;
     hwr_burning_ppl_count = 0;
     hwr_persuaded_ppl_count = 0;
@@ -1530,6 +1599,7 @@ void hwr_sw_collect_sprites(void)
                                      * palette colours; brightness is applied at draw time. */
                                     int bri = 32;
                                     int use_remap = frv_idx != 4;
+                                    const unsigned char *bp = sw_bake_palette();
                                     for (row = 0; row < spr_h && el_y + row < fh; row++) {
                                         for (col = 0; col < spr_w && el_x + col < fw; col++) {
                                             int idx = row * spr_w + col;
@@ -1539,9 +1609,9 @@ void hwr_sw_collect_sprites(void)
                                             if (use_remap)
                                                 pixel = pixmap.fade_table[bri * 256 + pixel];
                                             if (opq[idx]) {
-                                                comp[dst + 0] = lbPaletteColors[pixel].r;
-                                                comp[dst + 1] = lbPaletteColors[pixel].g;
-                                                comp[dst + 2] = lbPaletteColors[pixel].b;
+                                                comp[dst + 0] = bp[pixel * 3 + 0];
+                                                comp[dst + 1] = bp[pixel * 3 + 1];
+                                                comp[dst + 2] = bp[pixel * 3 + 2];
                                                 comp[dst + 3] = 255;
                                             }
                                         }
@@ -3614,6 +3684,124 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
         /* --- Quads (face4) --- */
         for (f = 0; f < obj->NumbFaces4; f++) {
             struct HwrObjFace4 *fc = &game_object_faces4[obj->StartFace4 + f];
+            /* POLE faces (FGFlg_Unkn08) - train-line struts, lamp posts, masts.
+             * These are NOT real quads: only PointNo[0]/[1] are point indices (the
+             * two ends of the pole); PointNo[2]/[3] hold the half-WIDTH at each end
+             * as a scalar. SW (draw_object_face4_pole) projects the two endpoints
+             * and expands them sideways in screen space by (overall_scale*r)>>8.
+             * Emitting them as ordinary quads read points [2]/[3] as vertex indices,
+             * dragging two corners off to arbitrary geometry - the corrupted polygons
+             * under the train lines.
+             *
+             * Rebuild as a view-facing world-space strip instead. The vertex shader's
+             * screen X comes from fa = (D14*dx - D10*dz)/65536, shx = scale*fa/2048,
+             * so a world offset of d along the unit (D14,-D10) direction moves the
+             * vertex by scale*d/2048 pixels. Matching SW's scale*r/256 gives d = 8*r,
+             * i.e. the half-width in world units is 8x the stored radius. Offsetting
+             * perpendicular to the view keeps the pole depth-correct in 3D.
+             *
+             * Gate on !is_dynamic exactly as SW does. draw_object_faces_rot()
+             * (engindrwlstm_wrp.c) CLEARS FGFlg_Unkn08 on every face of a moving
+             * object before drawing it, so SW can never take the pole path for a
+             * vehicle; only the static-object path calls enlist_draw_face4_pole.
+             * GFlags is mutable state on the shared face record and that clear
+             * only runs on frames where SW actually draws the object - so when a
+             * vehicle leaves the visible set (drives off the side of the screen)
+             * the bit is left stale, and testing it alone sent vehicle quads down
+             * this path. PointNo[2]/[3] are then real point INDICES (hundreds to
+             * thousands), read as half-widths and multiplied by 8: tens of
+             * thousands of world units of offset along screen-right, i.e. the
+             * vehicle-coloured streaks running horizontally across the screen at
+             * a constant screen Y for the frame or two before it was culled. */
+            if ((fc->GFlags & 0x08) && !is_dynamic) {
+                struct HwrSinglePoint *pp[2];
+                int pwx[2], pwy[2], pwz[2], pk, pbase;
+                float rx, rz, plen, hw[2];
+                uint8_t ppg, pu[4], pv[4], plit;
+                struct HwrFloorTex *ptx;
+                int ptex = fc->Texture;
+
+                if (face_vert_count + 4 > HWR_FACE_MAX_VERTS ||
+                    face_index_count + 6 > HWR_FACE_MAX_INDEX)
+                    break;
+
+                for (pk = 0; pk < 2; pk++) {
+                    pp[pk] = &game_object_points[fc->PointNo[pk]];
+                    if (obj_mat != NULL) {
+                        int dx, dy, dz;
+                        hwr_rotate_point(obj_mat, pp[pk]->X, pp[pk]->Y, pp[pk]->Z,
+                            &dx, &dy, &dz);
+                        pwx[pk] = obj_tx + dx; pwy[pk] = obj_ty + dy; pwz[pk] = obj_tz + dz;
+                    } else {
+                        pwx[pk] = obj_tx + (int)pp[pk]->X;
+                        pwy[pk] = obj_ty + (int)pp[pk]->Y;
+                        pwz[pk] = obj_tz + (int)pp[pk]->Z;
+                    }
+                }
+                /* Half-widths: PointNo[2] belongs to end 0, PointNo[3] to end 1.
+                 * Belt and braces after the is_dynamic gate above: these fields
+                 * are point INDICES on any face that is not really a pole, so a
+                 * stale flag here would smear the quad clean across the screen.
+                 * Real struts and lamp posts are a fraction of a tile wide; cap
+                 * at two tiles (512 world units) of half-width and skip anything
+                 * claiming more rather than emitting a monster. */
+                hw[0] = 8.0f * (float)fc->PointNo[2];
+                hw[1] = 8.0f * (float)fc->PointNo[3];
+                if (hw[0] > 512.0f || hw[1] > 512.0f)
+                    continue;
+
+                /* Screen-right direction in the world XZ plane. */
+                rx = (float)snap.D14; rz = -(float)snap.D10;
+                plen = sqrtf(rx * rx + rz * rz);
+                if (plen < 1.0f)
+                    continue;               /* degenerate camera - skip, don't corrupt */
+                rx /= plen; rz /= plen;
+
+                /* SW uses set_floor_texture_uv(tex, e0left, e0right, e1right, e1left)
+                 * -> TMap1..TMap4 in that order, and (unlike the quad path) never
+                 * applies the FGFlg_Unkn20 swap. */
+                if (ptex != 0 && ptex >= game_textures_limit)
+                    ptex = 0;
+                if (ptex == 0) {
+                    ppg = 255;              /* flat-shaded sentinel, no texture sample */
+                    pu[0]=pv[0]=pu[1]=pv[1]=pu[2]=pv[2]=pu[3]=pv[3] = 0;
+                } else {
+                    ptx = &game_textures[ptex];
+                    ppg = ptx->Page;
+                    pu[0]=ptx->TMapX1; pv[0]=ptx->TMapY1;
+                    pu[1]=ptx->TMapX2; pv[1]=ptx->TMapY2;
+                    pu[2]=ptx->TMapX3; pv[2]=ptx->TMapY3;
+                    pu[3]=ptx->TMapX4; pv[3]=ptx->TMapY4;
+                }
+                /* SW writes S = 0x200000 on all four corners: a flat identity shade
+                 * (128<<14) with no quicklight chain. */
+                plit = sw_face_shade(128, 0);
+
+                pbase = face_vert_count;
+                {
+                    /* v0 = end0 left, v1 = end0 right, v2 = end1 right, v3 = end1 left */
+                    const int ei[4] = {0, 0, 1, 1};
+                    const float sgn[4] = {-1.0f, 1.0f, 1.0f, -1.0f};
+                    for (pk = 0; pk < 4; pk++) {
+                        int e = ei[pk];
+                        float ox = sgn[pk] * hw[e] * rx;
+                        float oz = sgn[pk] * hw[e] * rz;
+                        int vx = pwx[e] + (int)ox;
+                        int vy = pwy[e];
+                        int vz = pwz[e] + (int)oz;
+                        face_emit_vert(vx, vy, vz, pu[pk], pv[pk], ppg, plit,
+                            face_scrd((float)vx, (float)vy, (float)vz), 0);
+                    }
+                }
+                /* SW draws (p1,p2,p3) + (p4,p1,p3) = (v2,v1,v0) + (v3,v2,v0). */
+                face_index[face_index_count++] = pbase + 2;
+                face_index[face_index_count++] = pbase + 1;
+                face_index[face_index_count++] = pbase + 0;
+                face_index[face_index_count++] = pbase + 3;
+                face_index[face_index_count++] = pbase + 2;
+                face_index[face_index_count++] = pbase + 0;
+                continue;
+            }
             /* Reflective ("chameleon") paint faces (FGFlg_Unkn80) are diverted to
              * the reflective batch and drawn by the chameleon pass (view-angle hue
              * shift + sheen) instead of as plain textured geometry. SW is told to
@@ -3758,11 +3946,32 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
                  * flat syndicate tint (page sentinel 254); glass/fence (mode 6)
                  * stay textured. */
                 uint8_t epg = obj_transp ? (uint8_t)254 : pg;
+                /* Blended faces get the SAME per-vertex shade as the opaque
+                 * pass (a flat 200 + emissive here left glass/statue parts
+                 * unlit and glowing). The deep-radar tint (page 254) is a flat
+                 * syndicate colour with no texture, so it keeps the fixed 200. */
+                uint8_t tl0, tl1, tl2, tl3;
+                uint8_t tem[4] = {0, 0, 0, 0};
+                if (obj_transp) {
+                    tl0 = tl1 = tl2 = tl3 = 200;
+                    tem[0] = em[0]; tem[1] = em[1];
+                    tem[2] = em[2]; tem[3] = em[3];
+                } else if (obj_mat != NULL) {
+                    tl0 = sw_face_shade_dynamic(fc->Shade0, obj_mat);
+                    tl1 = sw_face_shade_dynamic(fc->Shade1, obj_mat);
+                    tl2 = sw_face_shade_dynamic(fc->Shade2, obj_mat);
+                    tl3 = sw_face_shade_dynamic(fc->Shade3, obj_mat);
+                } else {
+                    tl0 = sw_face_shade(fc->Shade0, (uint16_t)fc->Light0);
+                    tl1 = sw_face_shade(fc->Shade1, (uint16_t)fc->Light1);
+                    tl2 = sw_face_shade(fc->Shade2, (uint16_t)fc->Light2);
+                    tl3 = sw_face_shade(fc->Shade3, (uint16_t)fc->Light3);
+                }
                 base = trans_vert_count;
-                trans_emit_vert(wx[0], wy[0], wz[0], u0, v0c, epg, 200, sd[0], em[0]);
-                trans_emit_vert(wx[1], wy[1], wz[1], u1, v1c, epg, 200, sd[1], em[1]);
-                trans_emit_vert(wx[2], wy[2], wz[2], u2, v2c, epg, 200, sd[2], em[2]);
-                trans_emit_vert(wx[3], wy[3], wz[3], u3, v3c, epg, 200, sd[3], em[3]);
+                trans_emit_vert(wx[0], wy[0], wz[0], u0, v0c, epg, tl0, sd[0], tem[0]);
+                trans_emit_vert(wx[1], wy[1], wz[1], u1, v1c, epg, tl1, sd[1], tem[1]);
+                trans_emit_vert(wx[2], wy[2], wz[2], u2, v2c, epg, tl2, sd[2], tem[2]);
+                trans_emit_vert(wx[3], wy[3], wz[3], u3, v3c, epg, tl3, sd[3], tem[3]);
                 trans_index[trans_index_count++] = base + 0;
                 trans_index[trans_index_count++] = base + 2;
                 trans_index[trans_index_count++] = base + 1;
@@ -3914,10 +4123,25 @@ static int sw_get_faces(void *ctx, HwrGeometryBatch *out)
 
             if (is_transp) {
                 uint8_t epg = obj_transp ? (uint8_t)254 : pg;
+                /* Real per-vertex shade for textured blended faces; see face4. */
+                uint8_t tl0, tl1, tl2;
+                uint8_t tem3[3] = {0, 0, 0};
+                if (obj_transp) {
+                    tl0 = tl1 = tl2 = 200;
+                    tem3[0] = em3[0]; tem3[1] = em3[1]; tem3[2] = em3[2];
+                } else if (obj_mat != NULL) {
+                    tl0 = sw_face_shade_dynamic(fc->Shade0, obj_mat);
+                    tl1 = sw_face_shade_dynamic(fc->Shade1, obj_mat);
+                    tl2 = sw_face_shade_dynamic(fc->Shade2, obj_mat);
+                } else {
+                    tl0 = sw_face_shade(fc->Shade0, (uint16_t)fc->Light0);
+                    tl1 = sw_face_shade(fc->Shade1, (uint16_t)fc->Light1);
+                    tl2 = sw_face_shade(fc->Shade2, (uint16_t)fc->Light2);
+                }
                 base = trans_vert_count;
-                trans_emit_vert(wx[0], wy[0], wz[0], u0, v0c, epg, 200, sd[0], em3[0]);
-                trans_emit_vert(wx[1], wy[1], wz[1], u1, v1c, epg, 200, sd[1], em3[1]);
-                trans_emit_vert(wx[2], wy[2], wz[2], u2, v2c, epg, 200, sd[2], em3[2]);
+                trans_emit_vert(wx[0], wy[0], wz[0], u0, v0c, epg, tl0, sd[0], tem3[0]);
+                trans_emit_vert(wx[1], wy[1], wz[1], u1, v1c, epg, tl1, sd[1], tem3[1]);
+                trans_emit_vert(wx[2], wy[2], wz[2], u2, v2c, epg, tl2, sd[2], tem3[2]);
                 trans_index[trans_index_count++] = base + 0;
                 trans_index[trans_index_count++] = base + 1;
                 trans_index[trans_index_count++] = base + 2;
@@ -4850,9 +5074,9 @@ static int hwr_targetbox_slot(int variant, int *out_dim)
                     if (dx < 0 || dy < 0 || dx >= TILE || dy >= TILE) continue;
                     if (!dop[k][si]) continue;
                     di = (dy * TILE + dx) * 4;
-                    tile[di + 0] = lbPaletteColors[dec[k][si]].r;
-                    tile[di + 1] = lbPaletteColors[dec[k][si]].g;
-                    tile[di + 2] = lbPaletteColors[dec[k][si]].b;
+                    tile[di + 0] = sw_bake_palette()[dec[k][si] * 3 + 0];
+                    tile[di + 1] = sw_bake_palette()[dec[k][si] * 3 + 1];
+                    tile[di + 2] = sw_bake_palette()[dec[k][si] * 3 + 2];
                     tile[di + 3] = 255;
                 }
             }
@@ -4945,9 +5169,10 @@ static int hwr_glyph_slot(unsigned char ch, unsigned char col)
     for (i = 0; i < GW * GH; i++) {
         unsigned char p = idx[i];
         if (p != 0) {
-            tile[i * 4 + 0] = lbPaletteColors[p].r;
-            tile[i * 4 + 1] = lbPaletteColors[p].g;
-            tile[i * 4 + 2] = lbPaletteColors[p].b;
+            const unsigned char *bp = sw_bake_palette();
+            tile[i * 4 + 0] = bp[p * 3 + 0];
+            tile[i * 4 + 1] = bp[p * 3 + 1];
+            tile[i * 4 + 2] = bp[p * 3 + 2];
             tile[i * 4 + 3] = 255;
         } else {
             tile[i * 4 + 0] = 0; tile[i * 4 + 1] = 0;

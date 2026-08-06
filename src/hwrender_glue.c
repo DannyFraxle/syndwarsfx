@@ -210,6 +210,12 @@ static void glue_present(void)
                  * pixel-block draw off whenever hwrender is active, regardless
                  * of weather, so this is the only rain path in that case). */
                 int raining = (gamep_scene_effect_type == ScEff_RAIN);
+                /* Weather haze first, so the rain streaks stay crisp in front
+                 * of the fog rather than being greyed out by it. */
+                hwr_fog_config(raining && d.fog_enable, d.fog_r, d.fog_g,
+                    d.fog_b, d.fog_density, d.fog_start, d.fog_end,
+                    d.fog_scr_start, d.fog_scr_end);
+                hwr_fog_render();
                 hwr_rain_config(raining && d.rain_enable, d.rain_alpha,
                     d.rain_density, d.rain_speed, d.rain_width, d.rain_length,
                     d.rain_angle * 0.0174533f);

@@ -59,6 +59,7 @@ static const char *floor_vert_src =
     "uniform vec2 uCentre;   // D3C, D40\n"
     "uniform vec3 uCtr;      // camera centre: cx, 8*yc, cz\n"
     "uniform int  uPersp;\n"
+    "uniform float uDepthBias;\n"   /* scrd units pushed AWAY from camera (floor pass) */
     "out vec3 vUV;\n"
     "out vec3 vWorldPos;\n"
     "out float vAO;\n"
@@ -104,10 +105,10 @@ static const char *floor_vert_src =
     "     * camera angles where the depth spread is widest, broke water reflections.\n"
     "     * 65536 covers the real linear range with headroom; 24-bit depth still gives\n"
     "     * ~0.008 world units per step, far finer than any bias we use (decal 48,\n"
-    "     * sprite 512). MUST match every other pass writing this depth buffer:\n"
+    "     * sprite 64, floor push-back uDepthBias). MUST match every other pass writing this depth buffer:\n"
     "     * the chameleon pass below, hwr_sprite.c (sprites + both shadow passes,\n"
     "     * whose NDC-space biases scale with it), and the beams in source_sw.c. */\n"
-    "    float ndc_z = clamp(aDepth / 65536.0, -1.0, 1.0);\n"
+    "    float ndc_z = clamp((aDepth + uDepthBias) / 65536.0, -1.0, 1.0);\n"
     "    gl_Position = vec4(sx/uCentre.x - 1.0, 1.0 - sy/uCentre.y, ndc_z, 1.0);\n"
     "}\n";
 
@@ -364,6 +365,12 @@ static GLint  fl_loc_sun_pcf   = -1;
 static GLint  fl_loc_sun_debug = -1;
 static GLint  fl_loc_sun_haze  = -1;
 static GLint  fl_loc_filter   = -1;
+static GLint  fl_loc_depthbias = -1;
+/* Floor-tile depth push-back, in scrd units (same space as face_scrd / aDepth).
+ * Applied to the floor pass only, so ground-hugging sprites clear the floor
+ * without being pushed in front of walls. Keep in sync with the sprite bias in
+ * hwr_sprite.c (spr_vert_src): the two sum to the sprite/floor margin. */
+#define HWR_FLOOR_DEPTH_PUSHBACK 448.0f
 static GLint  fl_loc_alpha    = -1;
 static GLint  fl_loc_deepradar = -1;
 static int    fl_filter = -1;            /* 0 = params applied, non-zero = need update */
@@ -443,7 +450,7 @@ static int fl_init(void)
     fl_loc_sun_debug  = glGetUniformLocation(fl_prog, "uSunDebug");
     fl_loc_sun_haze   = glGetUniformLocation(fl_prog, "uSunHaze");
     fl_loc_filter     = glGetUniformLocation(fl_prog, "uFilter");
-    fl_loc_alpha      = glGetUniformLocation(fl_prog, "uAlpha");
+    fl_loc_depthbias  = glGetUniformLocation(fl_prog, "uDepthBias");    fl_loc_alpha      = glGetUniformLocation(fl_prog, "uAlpha");
     fl_loc_deepradar  = glGetUniformLocation(fl_prog, "uDeepRadarIdx");
 
     glGenVertexArrays(1, &fl_vao);
@@ -658,7 +665,7 @@ static void fl_setup_program(const HwrCamera *cam, const unsigned char *pal8,
     glUniform1f(fl_loc_shadesat, hwr_lights_defaults().shade_sat);
     glUniform1i(fl_loc_transkey, trans_key);
     glUniform1f(fl_loc_alpha, 1.0f);    /* opaque by default; transparent pass overrides */
-
+    glUniform1f(fl_loc_depthbias, 0.0f); /* faces sit at their true depth; floor pass overrides */
     /* Sun shadow map on texture unit 3. */
     glActiveTexture(GL_TEXTURE3);
     glBindTexture(GL_TEXTURE_2D, (GLuint)hwr_sun_texture());
@@ -738,6 +745,14 @@ int hwr_floor_render(const unsigned char *pal8, int filter_linear)
     fl_upload_pages(&pages, filter_linear);
     fl_setup_program(&cam, pal8, -1);   /* floor tiles are fully opaque */
     glUniform1i(fl_loc_filter, filter_linear);
+    /* Sprites need a healthy depth margin over the floor: corpses and dropped
+     * items lie near-flush with it, and with a continuously-moving camera a
+     * marginal bias flips every frame -> flicker. That margin used to be a big
+     * forward push on the SPRITE (512 scrd units), which also pushed sprites in
+     * front of walls and vehicles they stood behind. Instead push only the FLOOR
+     * away from the camera here: sprites keep the full margin over the floor
+     * while staying honest against faces (which draw with uDepthBias = 0). */
+    glUniform1f(fl_loc_depthbias, HWR_FLOOR_DEPTH_PUSHBACK);
     {
         /* The floor's per-vertex shade (vAO) is the COMPLETE static SW light
          * (Ambient + every map lamp + anti-light shadows, from the engine's
@@ -875,6 +890,18 @@ int hwr_transparent_render(const unsigned char *pal8, int filter_linear)
             if (lights[i].dynamic)
                 lights[nd++] = lights[i];
         fl_upload_lights(lights, nd);
+        {
+            /* fl_upload_lights leaves uAmbient/uAO at the tuning defaults; the
+             * floor and face passes override them to the SW-exact absolute
+             * level. Blended faces carry the SAME per-vertex shade scale
+             * (byte 128 = identity), so they need the same reconstruction -
+             * without it glass/statue faces shade at half the ambient through
+             * the wrong AO curve and read far too dark against their opaque
+             * neighbours. */
+            HwrLightDefaults d = hwr_lights_defaults();
+            glUniform1f(fl_loc_ambient, 2.0f * d.ambient);
+            glUniform1f(fl_loc_ao, 1.0f);   /* linear vAO: the SW value as-is */
+        }
     }
 
     /* Blend over the opaque scene; test depth but don't write it (so blended

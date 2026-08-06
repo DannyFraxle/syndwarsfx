@@ -681,6 +681,31 @@ int hwr_ssao_active(void)
     return (ss_effective() && ss_ready) ? 1 : 0;
 }
 
+/* The world-position G-buffer stays valid after hwr_ssao_resolve() (nothing
+ * overwrites it until the next hwr_ssao_begin()), so later screen-space passes
+ * — the distance fog — can sample it to recover each pixel's world position.
+ * Returns 0 when the G-buffer path is off, and the caller must fall back to a
+ * geometry-free approximation. */
+unsigned int hwr_ssao_position_texture(void)
+{
+    return (ss_effective() && ss_ready) ? (unsigned int)g_pos : 0u;
+}
+
+/* Camera centre + view direction, the pair the composite's view_depth() uses:
+ * dot(P - ctr, dir) is 0 at the screen-centre look-at point and grows into the
+ * distance (the camera eye itself sits at about -16384). Distance fog wants
+ * this, NOT the distance from the eye — that constant 16384 offset dwarfs the
+ * on-screen depth spread and would fog the whole view uniformly. */
+void hwr_ssao_get_view(float ctr[3], float dir[3])
+{
+    ctr[0] = ss_cam_cx;
+    ctr[1] = ss_cam_cy8;
+    ctr[2] = ss_cam_cz;
+    dir[0] = ss_viewdir[0];
+    dir[1] = ss_viewdir[1];
+    dir[2] = ss_viewdir[2];
+}
+
 void hwr_ssao_set_viewdir(float x, float y, float z)
 {
     float len = (float)sqrt((double)(x*x + y*y + z*z));

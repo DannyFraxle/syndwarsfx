@@ -419,6 +419,208 @@ void hwr_rain_render(void)
 }
 
 /* ---------------------------------------------------------------------------
+ * Distance fog (weather haze). Rain in the real world comes with a wall of
+ * mist that swallows the far end of the street, so this pass greys out
+ * geometry by its distance from the camera.
+ *
+ * Two modes, because the true per-pixel distance is only available when the
+ * SSAO/water G-buffer path is running:
+ *   - G-buffer present: sample the world-position attachment and fog by VIEW
+ *     DEPTH, dot(P - centre, viewdir), between uStart and uEnd (world units).
+ *     View depth is 0 at the screen-centre look-at point and grows into the
+ *     distance, so start = 0 means "clear up to mid-screen, haze beyond".
+ *     Do NOT use distance from the camera eye: the eye sits ~16384 units back
+ *     from the centre, and that constant offset swamps the on-screen depth
+ *     spread, flattening the whole view to one shade of fog. Background pixels
+ *     (no geometry written) are left alone so the void beyond the map edge
+ *     doesn't turn into a grey frame.
+ *   - No G-buffer: fall back to a screen-space vertical gradient. The camera's
+ *     tilt is fixed, so screen Y tracks distance closely enough for a haze;
+ *     the trade-off is that tall near buildings get slightly over-fogged at
+ *     their tops. */
+
+static const char *fog_frag_src =
+    "#version 330 core\n"
+    "out vec4 frag;\n"
+    "uniform vec2  uResolution;\n"
+    "uniform sampler2D uPosition;  // xyz world pos (w = water mask)\n"
+    "uniform int   uHasPos;        // 1 = uPosition is valid this frame\n"
+    "uniform vec3  uCtr;           // camera centre / look-at point, world\n"
+    "uniform vec3  uViewDir;       // unit view direction, into the screen\n"
+    "uniform vec3  uColour;\n"
+    "uniform float uDensity;       // max fog opacity, 0..1\n"
+    "uniform float uStart, uEnd;   // view-depth ramp (uHasPos == 1)\n"
+    "uniform float uScrStart, uScrEnd; // screen-Y ramp, 0 = top (uHasPos == 0)\n"
+    "void main(){\n"
+    "    vec2 uv = gl_FragCoord.xy / uResolution;\n"
+    "    float t;\n"
+    "    if (uHasPos == 1) {\n"
+    "        vec4 pw = texture(uPosition, uv);\n"
+    "        if (dot(pw.xyz, pw.xyz) < 1.0)\n"
+    "            discard;                       // background / no geometry\n"
+    "        float d = dot(pw.xyz - uCtr, uViewDir);   // 0 at screen centre\n"
+    "        t = clamp((d - uStart) / max(uEnd - uStart, 1.0), 0.0, 1.0);\n"
+    "    } else {\n"
+    "        float sy = 1.0 - uv.y;             // 0 = top of screen\n"
+    "        t = 1.0 - smoothstep(uScrStart, uScrEnd, sy);\n"
+    "    }\n"
+    "    /* Square the ramp so the near half stays clear and the haze builds up\n"
+    "     * toward the horizon instead of washing the whole scene evenly. */\n"
+    "    float a = t * t * uDensity;\n"
+    "    if (a <= 0.003)\n"
+    "        discard;\n"
+    "    frag = vec4(uColour, a);\n"
+    "}\n";
+
+static GLuint fog_prog = 0;
+static GLuint fog_vao = 0, fog_vbo = 0;
+static GLint  fog_loc_res = -1, fog_loc_pos = -1, fog_loc_haspos = -1;
+static GLint  fog_loc_ctr = -1, fog_loc_viewdir = -1;
+static GLint  fog_loc_colour = -1, fog_loc_density = -1;
+static GLint  fog_loc_start = -1, fog_loc_end = -1;
+static GLint  fog_loc_scrstart = -1, fog_loc_scrend = -1;
+static int    fog_ready = 0;
+
+static int   fog_enable = 0;
+static float fog_colour[3] = { 0.55f, 0.58f, 0.62f };
+static float fog_density = 0.55f;
+static float fog_start = -1500.0f;  /* view depth 0 = screen centre; negative
+                                     * pulls the haze nearer than mid-screen */
+static float fog_end = 6000.0f;
+static float fog_scr_start = 0.0f;
+static float fog_scr_end = 0.55f;
+
+static int fog_init(void)
+{
+    GLuint vs, fs;
+    static const float quad[] = {
+        -1.0f, -1.0f,   1.0f, -1.0f,   -1.0f, 1.0f,
+        -1.0f,  1.0f,   1.0f, -1.0f,    1.0f, 1.0f,
+    };
+
+    /* The rain vertex shader is a bare fullscreen quad - reuse its source. */
+    vs = compile_shader(GL_VERTEX_SHADER, rain_vert_src);
+    if (vs == 0)
+        return HWR_ERROR;
+    fs = compile_shader(GL_FRAGMENT_SHADER, fog_frag_src);
+    if (fs == 0) {
+        glDeleteShader(vs);
+        return HWR_ERROR;
+    }
+    fog_prog = glCreateProgram();
+    glAttachShader(fog_prog, vs);
+    glAttachShader(fog_prog, fs);
+    glLinkProgram(fog_prog);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    {
+        GLint ok = 0;
+        glGetProgramiv(fog_prog, GL_LINK_STATUS, &ok);
+        if (!ok) {
+            char log[512];
+            glGetProgramInfoLog(fog_prog, sizeof(log), NULL, log);
+            hwr_set_error("fog program link failed: %s", log);
+            return HWR_ERROR;
+        }
+    }
+    fog_loc_res      = glGetUniformLocation(fog_prog, "uResolution");
+    fog_loc_pos      = glGetUniformLocation(fog_prog, "uPosition");
+    fog_loc_haspos   = glGetUniformLocation(fog_prog, "uHasPos");
+    fog_loc_ctr      = glGetUniformLocation(fog_prog, "uCtr");
+    fog_loc_viewdir  = glGetUniformLocation(fog_prog, "uViewDir");
+    fog_loc_colour   = glGetUniformLocation(fog_prog, "uColour");
+    fog_loc_density  = glGetUniformLocation(fog_prog, "uDensity");
+    fog_loc_start    = glGetUniformLocation(fog_prog, "uStart");
+    fog_loc_end      = glGetUniformLocation(fog_prog, "uEnd");
+    fog_loc_scrstart = glGetUniformLocation(fog_prog, "uScrStart");
+    fog_loc_scrend   = glGetUniformLocation(fog_prog, "uScrEnd");
+
+    glGenVertexArrays(1, &fog_vao);
+    glBindVertexArray(fog_vao);
+    glGenBuffers(1, &fog_vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, fog_vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(quad), quad, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void *)0);
+    glBindVertexArray(0);
+
+    if (hwr_gl_check("fog_init"))
+        return HWR_ERROR;
+    fog_ready = 1;
+    return HWR_OK;
+}
+
+/** Configure the distance fog overlay (from fx3d_lights.ini [fog]). enable
+ *  toggles the pass; colour is the haze tint; density is the maximum opacity
+ *  at full distance (0..1); start/end are the world-unit VIEW-DEPTH ramp used
+ *  when the G-buffer is available (0 = the screen-centre look-at point);
+ *  scr_start/scr_end are the screen-Y ramp (0 = top of screen) used as the
+ *  geometry-free fallback. */
+void hwr_fog_config(int enable, float r, float g, float b, float density,
+    float start, float end, float scr_start, float scr_end)
+{
+    fog_enable = enable;
+    fog_colour[0] = r; fog_colour[1] = g; fog_colour[2] = b;
+    fog_density = density;
+    fog_start = start;
+    fog_end = (end > start) ? end : (start + 1.0f);
+    fog_scr_start = scr_start;
+    fog_scr_end = (scr_end > scr_start) ? scr_end : (scr_start + 0.01f);
+}
+
+/** Draw the distance fog, alpha-blended over the already-rendered 3D scene.
+ *  Call after the 3D passes and before the rain overlay, so the rain streaks
+ *  stay crisp in front of the haze. No-op when disabled or not ready. */
+void hwr_fog_render(void)
+{
+    int dw = 0, dh = 0;
+    unsigned int pos_tex;
+    float ctr[3] = { 0.0f, 0.0f, 0.0f };
+    float dir[3] = { 0.0f, 0.0f, 1.0f };
+
+    if (!fog_enable || !hwr_is_ready())
+        return;
+    if (!fog_ready && fog_init() != HWR_OK)
+        return;
+
+    hwr_drawable_size(&dw, &dh);
+    if (dw <= 0 || dh <= 0)
+        return;
+
+    pos_tex = hwr_ssao_position_texture();
+    hwr_ssao_get_view(ctr, dir);
+
+    glDisable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    glUseProgram(fog_prog);
+    glUniform2f(fog_loc_res, (float)dw, (float)dh);
+    glUniform1i(fog_loc_haspos, pos_tex ? 1 : 0);
+    glUniform1i(fog_loc_pos, 0);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)pos_tex);
+    glUniform3f(fog_loc_ctr, ctr[0], ctr[1], ctr[2]);
+    glUniform3f(fog_loc_viewdir, dir[0], dir[1], dir[2]);
+    glUniform3f(fog_loc_colour, fog_colour[0], fog_colour[1], fog_colour[2]);
+    glUniform1f(fog_loc_density, fog_density);
+    glUniform1f(fog_loc_start, fog_start);
+    glUniform1f(fog_loc_end, fog_end);
+    glUniform1f(fog_loc_scrstart, fog_scr_start);
+    glUniform1f(fog_loc_scrend, fog_scr_end);
+
+    glBindVertexArray(fog_vao);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glBindVertexArray(0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    glDisable(GL_BLEND);
+    glEnable(GL_DEPTH_TEST);
+
+    hwr_gl_check("hwr_fog_render");
+}
+
+/* ---------------------------------------------------------------------------
  * Bullet-time screen filter. Cues the player that an explosion just slowed
  * the game down on purpose (not a hitch): a real radial "zoom blur" growing
  * outward from screen centre (so it reads as edge blur), plus a temporal
