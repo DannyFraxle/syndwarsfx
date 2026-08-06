@@ -1,0 +1,55 @@
+#!/bin/bash
+# Fetch the NSIS plugins needed to build the FX3D update installer.
+#
+# Downloads InetC, NSISunzU and Md5dll and unpacks them into `nsis-plugins/`
+# under the build directory. That is the same layout the GitHub Actions
+# workflow builds, and `util/syndwarsfx-fx3d-setup.nsi` picks it up with
+# `!addplugindir` - so no administrator rights and no writing into the NSIS
+# installation directory are needed.
+#
+# Usage (from the build directory):
+#   util/getnsisplugins [-d PLUGINDIR]
+
+set -e
+
+PLUGINDIR="nsis-plugins"
+
+while getopts "d:h" opt; do
+  case "$opt" in
+    d) PLUGINDIR="$OPTARG" ;;
+    h) sed -n '2,12p' "$0"; exit 0 ;;
+    *) echo "Try '$0 -h'" >&2; exit 1 ;;
+  esac
+done
+
+DLDIR="$(mktemp -d)"
+trap 'rm -rf "$DLDIR"' EXIT
+
+# SourceForge serves these only with a matching referer.
+fetch() { # fetch URL REFERER OUTFILE
+  echo "Downloading $3"
+  curl -sS -L --retry 3 --referer "$2" -o "$DLDIR/$3" "$1"
+  # A 404 comes back as an HTML page with a 200, so check for the zip magic.
+  if [ "$(head -c 2 "$DLDIR/$3")" != "PK" ]; then
+    echo "error: $3 is not a zip file - the download URL may have moved" >&2
+    exit 1
+  fi
+}
+
+fetch "https://nsis.sourceforge.io/mediawiki/images/c/c9/Inetc.zip" \
+      "https://nsis.sourceforge.io/Inetc_plug-in" Inetc.zip
+fetch "https://nsis.sourceforge.io/mediawiki/images/5/5a/NSISunzU.zip" \
+      "https://nsis.sourceforge.io/Nsisunz_plug-in" NSISunzU.zip
+fetch "https://nsis.sourceforge.io/mediawiki/images/d/d7/Md5dll.zip" \
+      "https://nsis.sourceforge.io/MD5_plugin" Md5dll.zip
+
+mkdir -p "$PLUGINDIR/x86-unicode" "$PLUGINDIR/x86-ansi"
+unzip -uj -q "$DLDIR/Inetc.zip"    "Plugins/x86-unicode/INetC.dll"       -d "$PLUGINDIR/x86-unicode"
+unzip -uj -q "$DLDIR/NSISunzU.zip" "NSISunzU/Plugin unicode/nsisunz.dll" -d "$PLUGINDIR/x86-unicode"
+unzip -uj -q "$DLDIR/Md5dll.zip"   "md5dll/UNICODE/md5dll.dll"           -d "$PLUGINDIR/x86-unicode"
+unzip -uj -q "$DLDIR/Inetc.zip"    "Plugins/x86-ansi/INetC.dll"          -d "$PLUGINDIR/x86-ansi"
+unzip -uj -q "$DLDIR/Md5dll.zip"   "md5dll/ANSI/md5dll.dll"              -d "$PLUGINDIR/x86-ansi"
+
+echo
+echo "Plugins ready in $PLUGINDIR:"
+ls "$PLUGINDIR/x86-unicode"

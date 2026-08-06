@@ -1,0 +1,105 @@
+#!/bin/bash
+# Stage a Windows distribution tree for the FX3D installer.
+#
+# Runs `make install` into a staging prefix, then resolves and copies the
+# MinGW/MSYS2 runtime DLLs the executable actually links against, so the DLL
+# list cannot silently drift from the build.
+#
+# Usage (from the build directory):
+#   util/mkpkgdist [-o PKGDIR] [-c CONFDIR]
+#
+#   -o PKGDIR   staging root; default `pkg` under the build directory
+#   -c CONFDIR  directory to take conf/*.ini from instead of the installed one,
+#               e.g. `src/conf` to ship your locally tuned fx3d_lights.ini
+#
+# The result is PKGDIR/syndwarsfx/, which util/syndwarsfx-fx3d-setup.nsi finds
+# automatically via its BUILDENV_PKG_DIR probe.
+
+set -e
+
+PKGDIR="pkg"
+CONFDIR=""
+MAKE="${MAKE:-make}"
+
+while getopts "o:c:h" opt; do
+  case "$opt" in
+    o) PKGDIR="$OPTARG" ;;
+    c) CONFDIR="$OPTARG" ;;
+    h) sed -n '2,20p' "$0"; exit 0 ;;
+    *) echo "Try '$0 -h'" >&2; exit 1 ;;
+  esac
+done
+
+PKGDIR="$(cd "$(dirname "$PKGDIR")" && pwd)/$(basename "$PKGDIR")"
+
+echo "Staging distribution tree in $PKGDIR"
+rm -rf "$PKGDIR"
+$MAKE DESTDIR="$PKGDIR" install
+
+# `make install` uses prefix/PACKAGE, so the payload lands one level down under
+# the configured prefix. Find it rather than assuming the prefix.
+GAMEDIR="$(find "$PKGDIR" -name 'syndwarsfx3d.exe' -printf '%h\n' | head -n 1)"
+if [ -z "$GAMEDIR" ]; then
+  echo "error: syndwarsfx3d.exe not found under $PKGDIR - is this a Windows build?" >&2
+  exit 1
+fi
+
+# Flatten to $PKGDIR/syndwarsfx if it is nested deeper than that.
+if [ "$GAMEDIR" != "$PKGDIR/syndwarsfx" ]; then
+  STAGE="$PKGDIR.stage"
+  rm -rf "$STAGE"
+  mkdir -p "$STAGE"
+  cp -a "$GAMEDIR/." "$STAGE/"
+  rm -rf "$PKGDIR"
+  mkdir -p "$PKGDIR"
+  mv "$STAGE" "$PKGDIR/syndwarsfx"
+  GAMEDIR="$PKGDIR/syndwarsfx"
+fi
+
+# Optional override of the shipped configuration files.
+if [ -n "$CONFDIR" ]; then
+  echo "Taking configuration files from $CONFDIR"
+  cp -f "$CONFDIR"/*.ini "$GAMEDIR/conf/"
+fi
+
+# The `install-exec-hook` rule in src/Makefile.am already copies the toolchain
+# DLLs, but it only follows dependencies two levels deep. Walk the whole graph
+# here and fail if anything is missing, rather than shipping an installer that
+# produces a game which will not start.
+TOOLBIN="$(dirname "$(command -v gcc)")"
+MISSING=""
+SEEN=""
+check_deps() {
+  local exe="$1" dll
+  for dll in $(objdump -p "$exe" 2>/dev/null | sed -n 's/^\s*DLL Name:\s*//p'); do
+    case " $SEEN " in *" $dll "*) continue ;; esac
+    SEEN="$SEEN $dll"
+    if [ -f "$GAMEDIR/$dll" ]; then
+      check_deps "$GAMEDIR/$dll"
+      continue
+    fi
+    # Not staged - fine if it is a Windows system DLL, i.e. one the toolchain
+    # does not carry its own copy of.
+    for d in "$TOOLBIN" /mingw32/bin /mingw64/bin; do
+      if [ -f "$d/$dll" ]; then
+        echo "  MISSING: $dll (found in $d)"
+        MISSING="$MISSING $dll"
+        break
+      fi
+    done
+  done
+}
+
+echo "Verifying runtime libraries:"
+check_deps "$GAMEDIR/syndwarsfx3d.exe"
+if [ -n "$MISSING" ]; then
+  echo "error: staged tree is missing toolchain libraries:$MISSING" >&2
+  echo "       (extend install-exec-hook in src/Makefile.am)" >&2
+  exit 1
+fi
+echo "  all dependencies present"
+
+echo
+echo "Staged tree:"
+echo "  $GAMEDIR"
+ls "$GAMEDIR"

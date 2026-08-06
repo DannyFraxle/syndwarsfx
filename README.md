@@ -184,6 +184,33 @@ Route "b" - using the prebuilt *patch* release.
 
 You can now [start the game](#starting-the-game).
 
+### Updating an existing install with the FX3D renderer
+
+If you already have a working fan port installation and only want the FX3D
+OpenGL renderer, use the **FX3D update installer**,
+`syndwarsfx-fx3d-setup.exe`. It does not install the game, and never touches
+your original *Syndicate Wars CD* or *SW CD image* - it only replaces the
+executable, the runtime libraries and the configuration files in a folder that
+already has the game content in it.
+
+* It asks for your existing install folder, and refuses any folder that does
+  not contain `data` and `qdata`.
+* Your previous executable and the whole `conf` folder are copied to
+  `fx3d-backup-<version>` inside the install folder before anything is
+  replaced. To go back to your old build, restore from there - the update
+  installer intentionally does not write an uninstaller, since it would be
+  removing an installation it did not create.
+* `rules.ini` is never overwritten. Neither is `conf/fx3d_lights.ini` - if you
+  already have one, it is kept and the new defaults are written next to it as
+  `fx3d_lights.ini.new` for you to merge.
+* By default it also refreshes the free levels, graphics and sound packages
+  from the project's GitHub releases, which needs an internet connection.
+  Deselect *Update game data packages* on the components page to install
+  offline.
+
+To build the installer yourself, see
+[util/README-fx3d-installer.md](util/README-fx3d-installer.md).
+
 ## Starting the game
 
 The original game needed to be started with parameters to play normally. While
