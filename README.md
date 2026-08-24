@@ -200,9 +200,9 @@ already has the game content in it.
   replaced. To go back to your old build, restore from there - the update
   installer intentionally does not write an uninstaller, since it would be
   removing an installation it did not create.
-* `rules.ini` is never overwritten. Neither is `conf/fx3d_lights.ini` - if you
+* `rules.ini` is never overwritten. Neither is `conf/fx3d.ini` - if you
   already have one, it is kept and the new defaults are written next to it as
-  `fx3d_lights.ini.new` for you to merge.
+  `fx3d.ini.new` for you to merge.
 * By default it also refreshes the free levels, graphics and sound packages
   from the project's GitHub releases, which needs an internet connection.
   Deselect *Update game data packages* on the components page to install

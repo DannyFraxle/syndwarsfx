@@ -108,7 +108,7 @@ int hwr_sprites_render(const uint8_t *pal8, int filter_linear);
  *  after hwr_faces_render. Returns nonzero if anything drew. */
 int hwr_transparent_render(const uint8_t *pal8, int filter_linear);
 
-/** Configure the transparent face pass (from fx3d_lights.ini [transparency]):
+/** Configure the transparent face pass (from fx3d.ini [transparency]):
  *  enable toggles it; alpha is the blended fragment opacity (0..1);
  *  deepradar_idx is the palette index used to flat-tint deep-radar see-through
  *  buildings (the syndicate purple, default 216). */
@@ -147,7 +147,7 @@ void hwr_present_indexed_keyed_alpha(const uint8_t *px, int w, int h, int pitch,
 void hwr_present_indexed_keyed_luma(const uint8_t *px, int w, int h, int pitch,
     const uint8_t *pal, int key_index, float bg_alpha, float bg_luma);
 
-/** Configure the procedural rain overlay (from fx3d_lights.ini [rain]).
+/** Configure the procedural rain overlay (from fx3d.ini [rain]).
  *  enable toggles the pass; alpha is the streak opacity (0..1); density is the
  *  streak-column count across one screen-height of width; speed is the fall
  *  speed in screen-heights/second; width is streak thickness in pixels;
@@ -161,7 +161,7 @@ void hwr_rain_config(int enable, float alpha, float density, float speed,
  *  WScreen (HUD) composite. No-op when disabled or not ready. */
 void hwr_rain_render(void);
 
-/** Configure the distance fog overlay (from fx3d_lights.ini [fog]). enable
+/** Configure the distance fog overlay (from fx3d.ini [fog]). enable
  *  toggles the pass; r/g/b is the haze tint; density is the maximum opacity at
  *  full distance (0..1); start/end are the world-unit distance ramp used when
  *  the SSAO/water G-buffer is available; scr_start/scr_end are the screen-Y
@@ -174,7 +174,7 @@ void hwr_fog_config(int enable, float r, float g, float b, float density,
 void hwr_fog_render(void);
 
 /** Configure the bullet-time radial-blur + motion-trail effect (from
- *  fx3d_lights.ini [bullettime]). enable toggles the pass; blur_strength is
+ *  fx3d.ini [bullettime]). enable toggles the pass; blur_strength is
  *  the max radial-blur reach at the screen edge (UV units) at full dip;
  *  trail is how much of the previous frame persists into this one at full
  *  dip (0..1, motion-trail strength). */
@@ -189,11 +189,14 @@ void hwr_bullettime_config(int enable, float blur_strength, float trail);
  *  WScreen composite. */
 void hwr_bullettime_render(float intensity);
 
-/** Configure screen-space ambient occlusion (from fx3d_lights.ini). enable
- *  toggles the whole G-buffer path; radius is the screen-space sample radius
- *  (UV units); strength scales the darkening; bias rejects self-occlusion;
- *  debug selects a stage view (0=final, 1=world-pos, 2=raw AO, 3=blurred AO). */
-void hwr_ssao_config(int enable, float radius, float world, float strength,
+/** Configure screen-space ambient occlusion (from fx3d.ini). enable
+ *  toggles the whole G-buffer path; world is the AO reach in WORLD units (the
+ *  sample radius, converted to pixels per-pixel so the effect keeps a constant
+ *  physical size under zoom and the mode-5 perspective warp); max_px caps that
+ *  screen radius in pixels; strength scales the darkening; bias rejects
+ *  self-occlusion; debug selects a stage view (0=final, 1=world-pos, 2=raw AO,
+ *  3=blurred AO). */
+void hwr_ssao_config(int enable, float max_px, float world, float strength,
     float bias, int debug);
 
 /** Set the camera's world-space view direction (pointing into the screen /
@@ -201,7 +204,7 @@ void hwr_ssao_config(int enable, float radius, float world, float strength,
  *  toward the camera. Call once per frame before hwr_ssao_resolve. */
 void hwr_ssao_set_viewdir(float x, float y, float z);
 
-/** Configure water screen-space reflection (from fx3d_lights.ini [water]).
+/** Configure water screen-space reflection (from fx3d.ini [water]).
  *  When enabled, the composite pass ray-marches reflections of the scene off
  *  water pixels (tagged in the G-buffer's world-position .w channel), falling
  *  back to the sky colour where a ray leaves the screen or hits nothing.
@@ -252,7 +255,7 @@ unsigned int hwr_ssao_position_texture(void);
  *  growing into the distance. This is what distance fog ramps on. */
 void hwr_ssao_get_view(float ctr[3], float dir[3]);
 
-/** Configure the directional sun and shadow map (from fx3d_lights.ini [sun]).
+/** Configure the directional sun and shadow map (from fx3d.ini [sun]).
  *  enable toggles the whole shadow-map path; brightness is the lit-ground
  *  level (replaces ambient when enabled); ambient is the floor brightness
  *  inside shadow; azimuth/elevation set the sun direction; pcf is the PCF

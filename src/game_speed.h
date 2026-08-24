@@ -58,7 +58,7 @@ extern int show_fps_counter;
 /** Draw the FPS/TPS overlay; no-op unless show_fps_counter is set. */
 void draw_fps_counter(void);
 
-/* --- Bullet-time-on-explosion ([bullettime] section, fx3d_lights.ini) ----- */
+/* --- Bullet-time-on-explosion ([bullettime] section, fx3d.ini) ----- */
 
 /** Configure the bullet-time-on-explosion effect. scale is the world_dt
  *  multiplier while fully dipped (e.g. 0.25 = quarter speed); hold_ms is how

@@ -25,7 +25,7 @@ extern "C" {
 #endif
 /******************************************************************************/
 
-/* --- FX3D configuration (from rules.ini [fx3d] and/or command line) --- */
+/* --- FX3D configuration (from fx3d.ini [fx3d] and/or command line) --- */
 
 /** MSAA sample count: 0 = none, otherwise 2/4/8. */
 extern int fx3d_aa_samples;

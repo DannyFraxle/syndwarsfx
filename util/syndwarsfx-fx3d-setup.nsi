@@ -120,11 +120,11 @@ Section "SyndWarsFX 3D renderer" Section_0
   IfErrors inst_game_fail
 
   ; Configuration files. `rules.ini` is left alone as it is commonly edited by
-  ; the player, and `fx3d_lights.ini` is handled separately below for the same
+  ; the player, and `fx3d.ini` is handled separately below for the same
   ; reason - it is the FX3D renderer tuning file.
   DetailPrint "Installing configuration files..."
   SetOutPath $INSTDIR\conf
-  File /r /x "rules.ini" /x "fx3d_lights.ini" "${BUILDENV_PKG_DIR}\conf\"
+  File /r /x "rules.ini" /x "fx3d.ini" "${BUILDENV_PKG_DIR}\conf\"
   IfErrors inst_game_fail
   Call InstallLightsConf
   IfErrors inst_game_fail
@@ -304,21 +304,21 @@ FunctionEnd
 
 
 Function InstallLightsConf
-  ; `fx3d_lights.ini` carries the renderer tuning and gains new sections with
+  ; `fx3d.ini` carries the renderer tuning and gains new sections with
   ; every FX3D release, but players edit it. Never overwrite an existing one -
   ; drop the new defaults alongside it instead.
   ClearErrors
   SetOutPath $PLUGINSDIR\conf
-  File "${BUILDENV_PKG_DIR}\conf\fx3d_lights.ini"
-  IfFileExists "$INSTDIR\conf\fx3d_lights.ini" lights_exists 0
-    DetailPrint "Installing conf\fx3d_lights.ini ..."
-    CopyFiles /SILENT "$PLUGINSDIR\conf\fx3d_lights.ini" "$INSTDIR\conf\fx3d_lights.ini"
+  File "${BUILDENV_PKG_DIR}\conf\fx3d.ini"
+  IfFileExists "$INSTDIR\conf\fx3d.ini" lights_exists 0
+    DetailPrint "Installing conf\fx3d.ini ..."
+    CopyFiles /SILENT "$PLUGINSDIR\conf\fx3d.ini" "$INSTDIR\conf\fx3d.ini"
     Goto lights_done
 lights_exists:
-    DetailPrint "Keeping your existing conf\fx3d_lights.ini"
-    DetailPrint "New defaults written to conf\fx3d_lights.ini.new - merge in any"
+    DetailPrint "Keeping your existing conf\fx3d.ini"
+    DetailPrint "New defaults written to conf\fx3d.ini.new - merge in any"
     DetailPrint "new sections to pick up this release's renderer settings."
-    CopyFiles /SILENT "$PLUGINSDIR\conf\fx3d_lights.ini" "$INSTDIR\conf\fx3d_lights.ini.new"
+    CopyFiles /SILENT "$PLUGINSDIR\conf\fx3d.ini" "$INSTDIR\conf\fx3d.ini.new"
 lights_done:
   SetOutPath $INSTDIR
 FunctionEnd

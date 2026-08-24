@@ -96,7 +96,7 @@ corner AO is baked per-vertex.
 **Point lights:**
 - `sw_get_lights()` in `source_sw.c` walks `game_full_lights[]`, picks the
   nearest N lights to camera, converts `FullLight.Command` to RGB via the
-  light colour table (`fx3d_lights.ini [fx3d_lights]` section)
+  light colour table (`fx3d.ini [fx3d_lights]` section)
 - Negative-Intensity lights are "anti-lights" (fake shadows from the original
   SW engine), applied as a darkening term
 - Per-category brightness (filler / building / street lamp) controlled by
@@ -119,7 +119,7 @@ corner AO is baked per-vertex.
 - `hwrendersoft/src/hwr_debug.c` — shared bitmap debug font (digits + A–Z)
 - `hwrendersoft/src/hwr_tuning.c` — real-time in-game tuning panel (F7)
 - `hwrendersoft/src/hwr_thingbrowse.c` — in-game object + light browser (F5)
-- `conf/fx3d_lights.ini` — all lighting config (shipped with the game)
+- `conf/fx3d.ini` — all lighting config (shipped with the game)
 
 ---
 
@@ -136,7 +136,7 @@ Toggle with **F7** while in-game.
 | Up / Down | Move between sliders |
 | Left / Right | Adjust value (normal step) |
 | Tab + Left/Right | Fine adjustment |
-| KP 7 | Save current values to `fx3d_lights.ini` |
+| KP 7 | Save current values to `fx3d.ini` |
 
 **Sliders:**
 
@@ -158,7 +158,7 @@ Toggle with **F7** while in-game.
 | STRT_R | Street lamp radius multiplier |
 
 Changes take effect immediately on the next frame. Press **KP 7** to write the
-current values back to `fx3d_lights.ini` so they persist between sessions.
+current values back to `fx3d.ini` so they persist between sessions.
 
 ---
 
@@ -170,7 +170,7 @@ A two-mode inspector overlay. Toggle with **F5** while in-game.
 Type, SubType, map position, and the light category assigned to them
 (filler / building / street). Use **KP 4 / KP 6** to step through objects.
 Press **KP 5** to assign/cycle the category for the highlighted thing and
-**KP 7** to save all category assignments to `fx3d_lights.ini`. PageUp /
+**KP 7** to save all category assignments to `fx3d.ini`. PageUp /
 PageDown / Home adjust the camera tilt to frame the selected object.
 
 **Light Browser mode** — lists all `FullLight` slots, showing their ID,
@@ -184,7 +184,7 @@ Switch between modes with the mode key shown in the panel header.
 ### ThingNo Overlay
 
 Draws the numeric Thing index above every in-game object so individual Things
-can be identified for debugging. Enable in `fx3d_lights.ini`:
+can be identified for debugging. Enable in `fx3d.ini`:
 
 ```ini
 [defaultlighting]
@@ -213,7 +213,7 @@ categories are misclassified. Set back to `0` after use.
 
 ### SSAO Debug Modes
 
-Set in `fx3d_lights.ini [ssao]`:
+Set in `fx3d.ini [ssao]`:
 
 ```ini
 [ssao]
@@ -227,7 +227,7 @@ strength issues.
 
 ### Sun Shadow Debug
 
-Set in `fx3d_lights.ini [sun]`:
+Set in `fx3d.ini [sun]`:
 
 ```ini
 [sun]
@@ -358,7 +358,7 @@ Semi-transparent rendering via a new sorted, alpha-blended GL pass. Four sources
   after `hwr_sprites_render` and before `hwr_ssao_resolve` (drawn into the same
   G-buffer/depth, get the AO composite). The floor/face and sprite fragment
   shaders gained a `uAlpha` uniform (1.0 for opaque passes).
-- Tunable via `fx3d_lights.ini [transparency]`: `enable`, `alpha`,
+- Tunable via `fx3d.ini [transparency]`: `enable`, `alpha`,
   `sprite_enable`, `sprite_alpha` (parsed in `hwr_lights.c`, applied through
   `HwrLightDefaults` + `hwr_transparent_config` / `hwr_sprites_trans_config`).
   Index-0 keying (window/grate holes) is preserved in the blended pass.

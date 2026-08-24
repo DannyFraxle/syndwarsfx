@@ -118,6 +118,135 @@ const struct TbNamedEnum rules_conf_fx3d_cmnds[] = {
   {NULL,					0},
 };
 
+/** Read the FX3D (OpenGL hardware renderer) configuration file.
+ *
+ * All renderer settings live in one file, conf/fx3d.ini: the [fx3d] section
+ * parsed here, plus the lighting/effect sections read by hwr_lights_load().
+ */
+static void read_fx3d_file(PathInfo *pinfo)
+{
+    char conf_fname[DISKPATH_SIZE];
+    char *conf_buf;
+    TbFileHandle conf_fh;
+    struct TbIniParser parser;
+    int conf_len;
+    TbBool done;
+    int i;
+    long k;
+
+    snprintf(conf_fname, DISKPATH_SIZE-1, "%s/fx3d.ini", pinfo->directory);
+    conf_fh = LbFileOpen(conf_fname, Lb_FILE_MODE_READ_ONLY);
+    if (conf_fh != INVALID_FILE) {
+        conf_len = LbFileLengthHandle(conf_fh);
+        if (conf_len > 1024*1024)
+            conf_len = 1024*1024;
+        conf_buf = LbMemoryAlloc(conf_len+16);
+        conf_len = LbFileRead(conf_fh, conf_buf, conf_len);
+        LOGSYNC("Processing '%s' file, %d bytes", conf_fname, conf_len);
+        LbFileClose(conf_fh);
+    } else {
+        LOGERR("Could not open '%s' file, FX3D options left at default.", conf_fname);
+        conf_buf = LbMemoryAlloc(16);
+        conf_len = 0;
+    }
+    conf_buf[conf_len] = '\0';
+    LbIniParseStart(&parser, conf_buf, conf_len);
+#define CONFWRNLOG(format,args...) LOGWARN("%s(line %lu): " format, conf_fname, parser.line_num, ## args)
+#define CONFDBGLOG(format,args...) LOGDBG("%s(line %lu): " format, conf_fname, parser.line_num, ## args)
+
+    done = false;
+    if (LbIniFindSection(&parser, "fx3d") != Lb_SUCCESS) {
+        CONFDBGLOG("No \"[%s]\" section; FX3D options left at default.", "fx3d");
+        done = true;
+    }
+#define COMMAND_TEXT(cmd_num) LbNamedEnumGetName(rules_conf_fx3d_cmnds,cmd_num)
+    while (!done)
+    {
+        int cmd_num;
+
+        cmd_num = LbIniRecognizeKey(&parser, rules_conf_fx3d_cmnds);
+        switch (cmd_num)
+        {
+        case RFx3dCmd_AntiAliasing:
+            i = LbIniValueGetLongInt(&parser, &k);
+            if (i <= 0) {
+                CONFWRNLOG("Could not read \"%s\" command parameter.", COMMAND_TEXT(cmd_num));
+                break;
+            }
+            fx3d_aa_samples = (k > 0) ? (int)k : 0;
+            CONFDBGLOG("%s %d", COMMAND_TEXT(cmd_num), fx3d_aa_samples);
+            break;
+        case RFx3dCmd_GroundTextureFilter:
+            i = LbIniValueGetNamedEnum(&parser, rules_conf_any_bool);
+            if (i <= 0) { CONFWRNLOG("Could not recognize \"%s\" command parameter.", COMMAND_TEXT(cmd_num)); break; }
+            fx3d_filter_ground = (i == 1);
+            break;
+        case RFx3dCmd_ObjectTextureFilter:
+            i = LbIniValueGetNamedEnum(&parser, rules_conf_any_bool);
+            if (i <= 0) { CONFWRNLOG("Could not recognize \"%s\" command parameter.", COMMAND_TEXT(cmd_num)); break; }
+            fx3d_filter_objects = (i == 1);
+            break;
+        case RFx3dCmd_SpriteTextureFilter:
+            i = LbIniValueGetNamedEnum(&parser, rules_conf_any_bool);
+            if (i <= 0) { CONFWRNLOG("Could not recognize \"%s\" command parameter.", COMMAND_TEXT(cmd_num)); break; }
+            fx3d_filter_sprites = (i == 1);
+            break;
+        case RFx3dCmd_TargetFPS:
+            i = LbIniValueGetLongInt(&parser, &k);
+            if (i <= 0) {
+                CONFWRNLOG("Could not read \"%s\" command parameter.", COMMAND_TEXT(cmd_num));
+                break;
+            }
+            fx3d_target_fps = (k >= 0) ? (int)k : 0;
+            CONFDBGLOG("%s %d", COMMAND_TEXT(cmd_num), fx3d_target_fps);
+            break;
+        case RFx3dCmd_VSync:
+            i = LbIniValueGetNamedEnum(&parser, rules_conf_any_bool);
+            if (i <= 0) { CONFWRNLOG("Could not recognize \"%s\" command parameter.", COMMAND_TEXT(cmd_num)); break; }
+            fx3d_vsync = (i == 1);
+            break;
+        case RFx3dCmd_ShowFPS:
+            i = LbIniValueGetNamedEnum(&parser, rules_conf_any_bool);
+            if (i <= 0) { CONFWRNLOG("Could not recognize \"%s\" command parameter.", COMMAND_TEXT(cmd_num)); break; }
+            fx3d_show_fps = (i == 1);
+            break;
+        case RFx3dCmd_DebugThings:
+            i = LbIniValueGetNamedEnum(&parser, rules_conf_any_bool);
+            if (i <= 0) { CONFWRNLOG("Could not recognize \"%s\" command parameter.", COMMAND_TEXT(cmd_num)); break; }
+            fx3d_debug_things = (i == 1);
+            break;
+        case 0: // comment
+            break;
+        case -1: // end of buffer
+        case -3: // end of section
+            done = true;
+            break;
+        default:
+            CONFWRNLOG("Unrecognized command.");
+            break;
+        }
+        LbIniSkipToNextLine(&parser);
+    }
+#undef COMMAND_TEXT
+
+    // Apply command-line overrides over fx3d.ini and publish MSAA settings.
+    fx3d_config_finalize();
+
+#if defined(HAVE_HWRENDER)
+    {
+        char lights_fname[DISKPATH_SIZE];
+        extern void hwr_lights_load(const char *);
+        snprintf(lights_fname, DISKPATH_SIZE-1, "%s/fx3d.ini", pinfo->directory);
+        hwr_lights_load(lights_fname);
+    }
+#endif
+
+    LbIniParseEnd(&parser);
+    LbMemoryFree(conf_buf);
+#undef CONFWRNLOG
+#undef CONFDBGLOG
+}
+
 TbBool read_rules_file(void)
 {
     //char locbuf[320];
@@ -409,93 +538,7 @@ TbBool read_rules_file(void)
     }
 #undef COMMAND_TEXT
 
-    // Parse the optional [fx3d] section (OpenGL hardware renderer settings)
-    done = false;
-    if (LbIniFindSection(&parser, "fx3d") != Lb_SUCCESS) {
-        CONFDBGLOG("No \"[%s]\" section; FX3D options left at default.", "fx3d");
-        done = true;
-    }
-#define COMMAND_TEXT(cmd_num) LbNamedEnumGetName(rules_conf_fx3d_cmnds,cmd_num)
-    while (!done)
-    {
-        int cmd_num;
-
-        cmd_num = LbIniRecognizeKey(&parser, rules_conf_fx3d_cmnds);
-        switch (cmd_num)
-        {
-        case RFx3dCmd_AntiAliasing:
-            i = LbIniValueGetLongInt(&parser, &k);
-            if (i <= 0) {
-                CONFWRNLOG("Could not read \"%s\" command parameter.", COMMAND_TEXT(cmd_num));
-                break;
-            }
-            fx3d_aa_samples = (k > 0) ? (int)k : 0;
-            CONFDBGLOG("%s %d", COMMAND_TEXT(cmd_num), fx3d_aa_samples);
-            break;
-        case RFx3dCmd_GroundTextureFilter:
-            i = LbIniValueGetNamedEnum(&parser, rules_conf_any_bool);
-            if (i <= 0) { CONFWRNLOG("Could not recognize \"%s\" command parameter.", COMMAND_TEXT(cmd_num)); break; }
-            fx3d_filter_ground = (i == 1);
-            break;
-        case RFx3dCmd_ObjectTextureFilter:
-            i = LbIniValueGetNamedEnum(&parser, rules_conf_any_bool);
-            if (i <= 0) { CONFWRNLOG("Could not recognize \"%s\" command parameter.", COMMAND_TEXT(cmd_num)); break; }
-            fx3d_filter_objects = (i == 1);
-            break;
-        case RFx3dCmd_SpriteTextureFilter:
-            i = LbIniValueGetNamedEnum(&parser, rules_conf_any_bool);
-            if (i <= 0) { CONFWRNLOG("Could not recognize \"%s\" command parameter.", COMMAND_TEXT(cmd_num)); break; }
-            fx3d_filter_sprites = (i == 1);
-            break;
-        case RFx3dCmd_TargetFPS:
-            i = LbIniValueGetLongInt(&parser, &k);
-            if (i <= 0) {
-                CONFWRNLOG("Could not read \"%s\" command parameter.", COMMAND_TEXT(cmd_num));
-                break;
-            }
-            fx3d_target_fps = (k >= 0) ? (int)k : 0;
-            CONFDBGLOG("%s %d", COMMAND_TEXT(cmd_num), fx3d_target_fps);
-            break;
-        case RFx3dCmd_VSync:
-            i = LbIniValueGetNamedEnum(&parser, rules_conf_any_bool);
-            if (i <= 0) { CONFWRNLOG("Could not recognize \"%s\" command parameter.", COMMAND_TEXT(cmd_num)); break; }
-            fx3d_vsync = (i == 1);
-            break;
-        case RFx3dCmd_ShowFPS:
-            i = LbIniValueGetNamedEnum(&parser, rules_conf_any_bool);
-            if (i <= 0) { CONFWRNLOG("Could not recognize \"%s\" command parameter.", COMMAND_TEXT(cmd_num)); break; }
-            fx3d_show_fps = (i == 1);
-            break;
-        case RFx3dCmd_DebugThings:
-            i = LbIniValueGetNamedEnum(&parser, rules_conf_any_bool);
-            if (i <= 0) { CONFWRNLOG("Could not recognize \"%s\" command parameter.", COMMAND_TEXT(cmd_num)); break; }
-            fx3d_debug_things = (i == 1);
-            break;
-        case 0: // comment
-            break;
-        case -1: // end of buffer
-        case -3: // end of section
-            done = true;
-            break;
-        default:
-            CONFWRNLOG("Unrecognized command.");
-            break;
-        }
-        LbIniSkipToNextLine(&parser);
-    }
-#undef COMMAND_TEXT
-
-    // Apply command-line overrides over rules.ini and publish MSAA settings.
-    fx3d_config_finalize();
-
-#if defined(HAVE_HWRENDER)
-    {
-        char lights_fname[DISKPATH_SIZE];
-        extern void hwr_lights_load(const char *);
-        snprintf(lights_fname, DISKPATH_SIZE-1, "%s/fx3d_lights.ini", pinfo->directory);
-        hwr_lights_load(lights_fname);
-    }
-#endif
+    read_fx3d_file(pinfo);
 
     zoom_update(zoom_min, zoom_max);
     LbIniParseEnd(&parser);

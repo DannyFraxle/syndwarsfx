@@ -30,13 +30,18 @@
 
 #define SSAO_KERNEL 16
 
-/* --- Config (set from fx3d_lights.ini via hwr_ssao_config) --- */
+/* --- Config (set from fx3d.ini via hwr_ssao_config) --- */
 static int   ss_enable = 0;
-static float ss_radius = 0.015f;   /* screen-space sample radius (UV) */
-static float ss_world  = 384.0f;   /* world-space occlusion range (units) */
-static float ss_strength = 1.5f;
-static float ss_bias   = 0.04f;
+static float ss_max_px = 24.0f;    /* cap on the screen sample radius (pixels) */
+static float ss_world  = 160.0f;   /* AO reach in world units (tile = 256) */
+static float ss_strength = 1.0f;
+static float ss_bias   = 24.0f;
 static int   ss_debug  = 0;
+
+/* World-space falloff of the AO blur's tap weights. Roughly a third of a tile:
+ * wide enough to smooth the 16-sample noise, tight enough that AO does not
+ * cross a silhouette. Not worth an ini knob. */
+#define SSAO_BLUR_RANGE 96.0f
 
 /* --- Water screen-space reflection ([water] section) --- */
 static int   ss_refl_enable = 0;
@@ -68,12 +73,13 @@ static GLuint reflblur_fbo = 0, reflblur_tex = 0;
 
 /* SSAO program uniforms. */
 static GLint  u_ss_pos = -1, u_ss_noise = -1, u_ss_noisescale = -1;
-static GLint  u_ss_samples = -1, u_ss_radius = -1, u_ss_world = -1;
+static GLint  u_ss_samples = -1, u_ss_maxpx = -1, u_ss_world = -1;
+static GLint  u_ss_texel = -1;
 static GLint  u_ss_bias = -1, u_ss_strength = -1, u_ss_viewdir = -1;
 
 static float  ss_viewdir[3] = { 0.0f, 1.0f, 0.0f };
 /* Blur program uniforms. */
-static GLint  u_bl_ao = -1, u_bl_texel = -1;
+static GLint  u_bl_ao = -1, u_bl_texel = -1, u_bl_pos = -1, u_bl_range = -1;
 /* Composite program uniforms. */
 static GLint  u_cp_color = -1, u_cp_ao = -1, u_cp_pos = -1, u_cp_debug = -1;
 static GLint  u_cp_reflblur = -1, u_cp_useao = -1;
@@ -109,52 +115,101 @@ static const char *ssao_frag_src =
     "uniform vec2  uNoiseScale;\n"
     "uniform vec2  uSamples[16];\n"
     "uniform vec3  uViewDir;         // world-space camera view dir (+depth)\n"
-    "uniform float uRadius;\n"
-    "uniform float uWorld;\n"
+    "uniform vec2  uTexel;           // 1/width, 1/height\n"
+    "uniform float uMaxPx;           // cap on the screen sample radius (pixels)\n"
+    "uniform float uWorld;           // AO reach in WORLD units\n"
     "uniform float uBias;\n"
     "uniform float uStrength;\n"
     "void main(){\n"
-    "    vec3 P = texture(uPosition, vUV).xyz;\n"
+    "    vec4 pw = texture(uPosition, vUV);\n"
+    "    vec3 P = pw.xyz;\n"
     "    if (dot(P, P) < 1.0) { frag = 1.0; return; }   // background\n"
+    "    // Billboards (w = -1) are camera-facing sheets, not surfaces: their\n"
+    "    // derivative normal points at the camera and every nearby floor pixel\n"
+    "    // reads them as raised geometry, haloing people and trees. They get real\n"
+    "    // shadows from the sprite passes instead, so keep SSAO off them entirely.\n"
+    "    if (pw.w < -0.5) { frag = 1.0; return; }\n"
     "    // Surface normal from screen-space derivatives of world position. The\n"
     "    // cross-product sign is ambiguous, so orient it toward the camera using\n"
     "    // the known view direction - valid for floor and walls alike.\n"
-    "    vec3 N = normalize(cross(dFdx(P), dFdy(P)));\n"
+    "    vec3 ddx = dFdx(P), ddy = dFdy(P);\n"
+    "    // World units covered by one pixel. Doubles as the silhouette guard: at a\n"
+    "    // depth discontinuity the derivatives jump across unrelated geometry and\n"
+    "    // the normal is meaningless, so bail rather than emit a stray dark pixel.\n"
+    "    float wpp = max(length(ddx), length(ddy));\n"
+    "    if (wpp > 400.0) { frag = 1.0; return; }\n"
+    "    vec3 N = normalize(cross(ddx, ddy));\n"
     "    if (dot(N, uViewDir) > 0.0) N = -N;\n"
+    "    // Sample radius is WORLD-referenced, converted to pixels through the local\n"
+    "    // world-per-pixel scale. A fixed UV radius is wrong twice over: it changes\n"
+    "    // physical reach with zoom and the mode-5 perspective warp, and it is\n"
+    "    // anisotropic on a non-square screen. uTexel then makes the disc round.\n"
+    "    float radPx = clamp(uWorld / max(wpp, 1e-3), 2.0, uMaxPx);\n"
+    "    vec2  radUV = radPx * uTexel;\n"
     "    vec2 rnd = normalize(texture(uNoise, vUV * uNoiseScale).xy * 2.0 - 1.0);\n"
     "    float occ = 0.0;\n"
     "    for (int i = 0; i < 16; i++) {\n"
-    "        vec2 off = reflect(uSamples[i], rnd) * uRadius;\n"
-    "        vec3 Q = texture(uPosition, vUV + off).xyz;\n"
+    "        vec2 off = reflect(uSamples[i], rnd) * radUV;\n"
+    "        vec4 qw = texture(uPosition, vUV + off);\n"
+    "        vec3 Q = qw.xyz;\n"
     "        if (dot(Q, Q) < 1.0) continue;\n"
+    "        if (qw.w < -0.5) continue;              // billboards occlude nothing\n"
     "        vec3 v = Q - P;\n"
     "        float dist = length(v);\n"
+    "        if (dist <= 1e-3) continue;\n"
     "        // Height the neighbour rises above the tangent plane, in world units.\n"
-    "        // Only count it once that rise clears uBias - this ignores the floor's\n"
-    "        // gentle per-tile undulation and reacts only to real raised geometry\n"
-    "        // (walls, columns), so smooth ground stays unshadowed.\n"
     "        float h = dot(N, v);\n"
-    "        if (dist > 1e-3 && dist < uWorld) {\n"
-    "            float w = clamp((h - uBias) / max(uBias, 1.0), 0.0, 1.0);\n"
-    "            occ += w * (1.0 - dist / uWorld);\n"
-    "        }\n"
+    "        // Occlusion is the neighbour's ELEVATION ANGLE above the tangent plane\n"
+    "        // (h/dist = the sine of it), not its raw height. This matters: a floor\n"
+    "        // pixel at a wall base samples ~77px up the wall, which is ~220 world\n"
+    "        // units of RISE, so those samples sit at the very edge of uWorld. A\n"
+    "        // distance-only weight therefore discards exactly the samples that\n"
+    "        // should shade hardest, which is why the effect came out barely\n"
+    "        // visible. The angle is scale-free - a wall overhead reads as full\n"
+    "        // occlusion however far up the sample lands.\n"
+    "        // It also does the ghost rejection better than the squared falloff it\n"
+    "        // replaces: unrelated geometry off in the distance subtends a SHALLOW\n"
+    "        // angle, so it contributes almost nothing on its own merits rather\n"
+    "        // than needing to be crushed by distance.\n"
+    "        float ang = clamp(h / dist, 0.0, 1.0);\n"
+    "        // Height gate: ignores the floor's gentle per-tile undulation so smooth\n"
+    "        // ground stays unshadowed, and reacts only to real raised geometry.\n"
+    "        float gate = smoothstep(uBias, uBias * 2.0, h);\n"
+    "        float range = clamp(1.0 - dist / uWorld, 0.0, 1.0);\n"
+    "        occ += ang * gate * range;\n"
     "    }\n"
     "    occ = occ / 16.0;\n"
     "    frag = clamp(1.0 - occ * uStrength, 0.0, 1.0);\n"
     "}\n";
 
+/* Blur the raw AO. The kernel is world-aware: taps are weighted by how close
+ * their world position is to the centre pixel's, so occlusion cannot leak across
+ * a silhouette onto whatever lies behind it. A plain box blur smeared AO off
+ * objects into the background, which read as haze around them. */
 static const char *blur_frag_src =
     "#version 330 core\n"
     "in vec2 vUV;\n"
     "out float frag;\n"
     "uniform sampler2D uAO;\n"
-    "uniform vec2 uTexel;\n"
+    "uniform sampler2D uPosition;\n"
+    "uniform vec2  uTexel;\n"
+    "uniform float uRange;          // world-space falloff of the tap weight\n"
     "void main(){\n"
-    "    float s = 0.0;\n"
-    "    for (int x = -2; x < 2; x++)\n"
-    "        for (int y = -2; y < 2; y++)\n"
-    "            s += texture(uAO, vUV + vec2(float(x), float(y)) * uTexel).r;\n"
-    "    frag = s / 16.0;\n"
+    "    vec3 Pc = texture(uPosition, vUV).xyz;\n"
+    "    if (dot(Pc, Pc) < 1.0) { frag = texture(uAO, vUV).r; return; }\n"
+    "    float s = 0.0, wsum = 0.0;\n"
+    "    for (int x = -2; x <= 2; x++) {\n"
+    "        for (int y = -2; y <= 2; y++) {\n"
+    "            vec2 uv = vUV + vec2(float(x), float(y)) * uTexel;\n"
+    "            vec3 Q = texture(uPosition, uv).xyz;\n"
+    "            if (dot(Q, Q) < 1.0) continue;      // background tap\n"
+    "            vec3 d = Q - Pc;\n"
+    "            float w = exp(-dot(d, d) / max(uRange * uRange, 1.0));\n"
+    "            s += texture(uAO, uv).r * w;\n"
+    "            wsum += w;\n"
+    "        }\n"
+    "    }\n"
+    "    frag = (wsum > 1e-4) ? (s / wsum) : texture(uAO, vUV).r;\n"
     "}\n";
 
 /* Water reflection pass. Ray-marches the reflection for every water pixel into
@@ -457,14 +512,17 @@ static int ss_init_once(void)
     u_ss_noise      = glGetUniformLocation(ssao_prog, "uNoise");
     u_ss_noisescale = glGetUniformLocation(ssao_prog, "uNoiseScale");
     u_ss_samples    = glGetUniformLocation(ssao_prog, "uSamples");
-    u_ss_radius     = glGetUniformLocation(ssao_prog, "uRadius");
+    u_ss_maxpx      = glGetUniformLocation(ssao_prog, "uMaxPx");
+    u_ss_texel      = glGetUniformLocation(ssao_prog, "uTexel");
     u_ss_world      = glGetUniformLocation(ssao_prog, "uWorld");
     u_ss_bias       = glGetUniformLocation(ssao_prog, "uBias");
     u_ss_strength   = glGetUniformLocation(ssao_prog, "uStrength");
     u_ss_viewdir    = glGetUniformLocation(ssao_prog, "uViewDir");
 
     u_bl_ao    = glGetUniformLocation(blur_prog, "uAO");
+    u_bl_pos   = glGetUniformLocation(blur_prog, "uPosition");
     u_bl_texel = glGetUniformLocation(blur_prog, "uTexel");
+    u_bl_range = glGetUniformLocation(blur_prog, "uRange");
 
     u_cp_color = glGetUniformLocation(comp_prog, "uColor");
     u_cp_ao    = glGetUniformLocation(comp_prog, "uAO");
@@ -614,14 +672,16 @@ static int ss_resize(int w, int h)
 
 /* ---- Public API ---------------------------------------------------------- */
 
-void hwr_ssao_config(int enable, float radius, float world, float strength,
+void hwr_ssao_config(int enable, float max_px, float world, float strength,
     float bias, int debug)
 {
     ss_enable   = enable;
-    ss_radius   = (radius > 0.0f) ? radius : 0.015f;
-    ss_world    = (world > 0.0f) ? world : 384.0f;
+    ss_max_px   = (max_px > 2.0f) ? max_px : 90.0f;
+    ss_world    = (world > 0.0f) ? world : 256.0f;
     ss_strength = strength;
-    ss_bias     = bias;
+    /* Floored above zero: the shader ramps occlusion with
+     * smoothstep(uBias, uBias*3, h), which is undefined when both edges are 0. */
+    ss_bias     = (bias > 1.0f) ? bias : 1.0f;
     ss_debug    = debug;
 }
 
@@ -763,7 +823,8 @@ void hwr_ssao_resolve(void)
         glUniform1i(u_ss_noise, 1);
         glUniform2f(u_ss_noisescale, (float)ss_w / 4.0f, (float)ss_h / 4.0f);
         glUniform2fv(u_ss_samples, SSAO_KERNEL, ss_kernel);
-        glUniform1f(u_ss_radius, ss_radius);
+        glUniform1f(u_ss_maxpx, ss_max_px);
+        glUniform2f(u_ss_texel, 1.0f / (float)ss_w, 1.0f / (float)ss_h);
         glUniform1f(u_ss_world, ss_world);
         glUniform1f(u_ss_bias, ss_bias);
         glUniform1f(u_ss_strength, ss_strength);
@@ -776,7 +837,11 @@ void hwr_ssao_resolve(void)
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, ao_tex);
         glUniform1i(u_bl_ao, 0);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, g_pos);
+        glUniform1i(u_bl_pos, 1);
         glUniform2f(u_bl_texel, 1.0f / (float)ss_w, 1.0f / (float)ss_h);
+        glUniform1f(u_bl_range, SSAO_BLUR_RANGE);
         ss_fullscreen();
     }
 

@@ -10,7 +10,7 @@
 #
 #   -o PKGDIR   staging root; default `pkg` under the build directory
 #   -c CONFDIR  directory to take conf/*.ini from instead of the installed one,
-#               e.g. `src/conf` to ship your locally tuned fx3d_lights.ini
+#               e.g. `src/conf` to ship your locally tuned fx3d.ini
 #
 # The result is PKGDIR/syndwarsfx/, which util/syndwarsfx-fx3d-setup.nsi finds
 # automatically via its BUILDENV_PKG_DIR probe.

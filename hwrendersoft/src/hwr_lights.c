@@ -6,7 +6,7 @@
 /** @file hwr_lights.c
  *     Light-colour table: maps FullLight.Command ids to RGB + intensity scale.
  * @par Purpose:
- *     Loads fx3d_lights.ini so different lamp types (street light, fire, plasma
+ *     Loads fx3d.ini so different lamp types (street light, fire, plasma
  *     discharge, etc.) can be given distinct colours without recompiling.  The
  *     table is keyed on FullLight.Command, the per-light type index stored in
  *     the game's level data.
@@ -20,7 +20,7 @@
 #include <math.h>
 
 #define HWR_LIGHT_CMD_MAX 256
-#define HWR_TYPECAT_FILE "fx3d_lights.ini"
+#define HWR_TYPECAT_FILE "fx3d.ini"
 
 static HwrLightColor hwr_light_table[HWR_LIGHT_CMD_MAX];
 static int           hwr_light_table_init = 0;
@@ -45,10 +45,13 @@ static HwrLightDefaults hwr_defaults = {
     1.0f,           /* ao — full strength: applies the baked floor shade/shadows */
     4194304.0f,     /* max_light_dist2 (8 tiles squared in PRCCOORD) */
     0,              /* ssao_enable — off by default (less GPU, no G-buffer) */
-    0.016f,         /* ssao_radius (UV) */
-    320.0f,         /* ssao_world (units) */
-    2.0f,           /* ssao_strength */
-    64.0f,          /* ssao_bias (min occluder height, world units) */
+    90.0f,          /* ssao_max_px (screen radius cap, pixels) — high enough that
+                       ssao_world governs the reach at normal zoom */
+    256.0f,         /* ssao_world (AO reach, world units; tile = 256) */
+    5.0f,           /* ssao_strength — the scene is dark and already carries baked
+                       SW shading, so a physically-modest multiply is invisible in
+                       the final frame; this is what actually reads on screen */
+    16.0f,          /* ssao_bias (min occluder height, world units) */
     0,              /* ssao_debug */
     /* --- sun (visible highlights, subtle shadows) --- */
     0,              /* sun_enable — OFF by default; baked-Ambient floor shade is
@@ -456,8 +459,13 @@ static void parse_ssao_line(const char *p)
     int iv;
     if (sscanf(p, "enable = %d", &iv) == 1) {
         hwr_defaults.ssao_enable = (iv != 0);
+    } else if (sscanf(p, "max_px = %f", &fv) == 1) {
+        if (fv > 2.0f) hwr_defaults.ssao_max_px = fv;
     } else if (sscanf(p, "radius = %f", &fv) == 1) {
-        if (fv > 0.0f) hwr_defaults.ssao_radius = fv;
+        /* Legacy key: it used to be a UV sample radius, which is exactly what
+         * made AO ghost across the screen. The reach now comes from world, so
+         * only honour this if it looks like a pixel count. */
+        if (fv > 2.0f) hwr_defaults.ssao_max_px = fv;
     } else if (sscanf(p, "world = %f", &fv) == 1) {
         if (fv > 0.0f) hwr_defaults.ssao_world = fv;
     } else if (sscanf(p, "strength = %f", &fv) == 1) {
@@ -780,7 +788,7 @@ HwrLightDefaults *hwr_lights_ptr(void)
     return &hwr_defaults;
 }
 
-/* ---- Write the three tunable sections back to fx3d_lights.ini ----------- */
+/* ---- Write the three tunable sections back to fx3d.ini ----------- */
 
 static void write_defaults(FILE *out)
 {
@@ -833,14 +841,14 @@ static void write_ssao(FILE *out)
     fprintf(out,
         "[ssao]\n"
         "enable   = %d\n"
-        "radius   = %.3f\n"
         "world    = %.0f\n"
+        "max_px   = %.0f\n"
         "strength = %.1f\n"
         "bias     = %.0f\n"
         "debug    = %d\n",
         hwr_defaults.ssao_enable,
-        hwr_defaults.ssao_radius,
         hwr_defaults.ssao_world,
+        hwr_defaults.ssao_max_px,
         hwr_defaults.ssao_strength,
         hwr_defaults.ssao_bias,
         hwr_defaults.ssao_debug);

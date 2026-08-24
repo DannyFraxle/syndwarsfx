@@ -19,7 +19,7 @@
  * retained for backward compatibility but is no longer required. */
 static TbBool hwr_glue_requested = true;
 
-/* FX3D config, with defaults (overridden by rules.ini [fx3d] then CLI). */
+/* FX3D config, with defaults (overridden by fx3d.ini [fx3d] then CLI). */
 int fx3d_aa_samples = 0;
 int fx3d_filter_ground = 1;
 int fx3d_filter_objects = 1;
@@ -175,7 +175,7 @@ static void glue_present(void)
                 d.sun_azimuth, d.sun_elevation, d.sun_pcf,
                 d.sun_bias, d.sun_slope, d.sun_units, d.sun_debug,
                 d.sun_haze);
-            hwr_ssao_config(d.ssao_enable, d.ssao_radius, d.ssao_world,
+            hwr_ssao_config(d.ssao_enable, d.ssao_max_px, d.ssao_world,
                 d.ssao_strength, d.ssao_bias, d.ssao_debug);
             hwr_ssao_reflect_config(d.water_reflect_enable, d.water_reflect_strength,
                 d.water_reflect_sky_r, d.water_reflect_sky_g, d.water_reflect_sky_b,
@@ -235,7 +235,7 @@ static void glue_present(void)
          * background fill) blended at 0.5 alpha, bright pixels (outlines,
          * numbers, powerbar, map) fully opaque. bg_luma threshold 0.18 sits
          * between the dark purple fill (luma ~0.03) and bright cyan outlines
-         * (luma ~0.6); adjust in fx3d_lights.ini if needed.
+         * (luma ~0.6); adjust in fx3d.ini if needed.
          * Exception: hwr_opaque_present (pause popup) forces full opacity. */
         if (ingame.PanelPermutation == -1 && !hwr_opaque_present) {
             hwr_present_indexed_keyed_luma((const unsigned char *)lbDisplay.WScreen,

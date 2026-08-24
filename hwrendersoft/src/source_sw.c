@@ -2838,7 +2838,7 @@ static int sw_get_floor(void *ctx, HwrGeometryBatch *out)
              * ramp intersects the wall geometrically and pokes out, chamfering
              * ledge corners that should be square. So by default don't emit it at
              * all; the wall faces already cover the ground there.
-             * [floor] no_surface_tiles in fx3d_lights.ini switches behaviour:
+             * [floor] no_surface_tiles in fx3d.ini switches behaviour:
              *   0 = skip (default), 1 = SW's flat colour_grey2 polygon,
              *   2 = nearest floor neighbour's texture (the old behaviour). */
             flat_colour = 0;

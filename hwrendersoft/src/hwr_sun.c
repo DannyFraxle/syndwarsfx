@@ -30,7 +30,7 @@
 #include <stddef.h>
 #include <string.h>
 
-/* ---- Config (set from fx3d_lights.ini via hwr_sun_config) --------------- */
+/* ---- Config (set from fx3d.ini via hwr_sun_config) --------------- */
 static int   sn_enable    = 0;
 static float sn_bright    = 0.08f;   /* dim dystopian lit ground */
 static float sn_ambient   = 0.0f;    /* pure black shadows */

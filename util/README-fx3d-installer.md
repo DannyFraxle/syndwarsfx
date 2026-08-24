@@ -54,11 +54,11 @@ automatically through its `BUILDENV_PKG_DIR` probe.
 
 `makensis` writes `syndwarsfx-fx3d-setup.exe` next to the script.
 
-### Choosing which `fx3d_lights.ini` ships
+### Choosing which `fx3d.ini` ships
 
-`make pkg-dist` ships the tracked `conf/fx3d_lights.ini` from the source tree — the
+`make pkg-dist` ships the tracked `conf/fx3d.ini` from the source tree — the
 canonical, version-controlled defaults. Its setting values are kept in sync with the tuned
-`release/src/conf/fx3d_lights.ini` the game actually reads at runtime; only comments and
+`release/src/conf/fx3d.ini` the game actually reads at runtime; only comments and
 blank lines differ between the two, so they are not interchangeable files — keep editing
 both in place. If you do want to ship your runtime copy verbatim, pass the directory
 explicitly:
@@ -77,8 +77,8 @@ make pkg-dist PKGDIST_CONF=src/conf
 - Copies the previous executable and the whole `conf\` folder into
   `<install>\fx3d-backup-<version>\` before replacing anything.
 - Installs `syndwarsfx3d.exe`, the runtime DLLs, `conf\` and `language\`.
-  `rules.ini` is never overwritten. `fx3d_lights.ini` is installed only if absent; if you
-  already have one it is kept and the new defaults are written to `fx3d_lights.ini.new`
+  `rules.ini` is never overwritten. `fx3d.ini` is installed only if absent; if you
+  already have one it is kept and the new defaults are written to `fx3d.ini.new`
   beside it, for you to merge.
 - Optionally (deselectable on the components page) downloads the free levels, graphics and
   sound packages from the `swfans/syndwarsfx-{levels,gfx,sfx}` GitHub releases, verifies

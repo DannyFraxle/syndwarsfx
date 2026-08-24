@@ -21,7 +21,7 @@ typedef struct {
 } HwrLightColor;
 
 /** Global lighting controls from the [defaultlighting] section of
- *  fx3d_lights.ini. All hand-tunable without recompiling. */
+ *  fx3d.ini. All hand-tunable without recompiling. */
 typedef struct {
     float intensity;        /**< Overall brightness gain, 0..2 (from 0-200%). */
     float radius;           /**< Inverse-square attenuation scale multiplier.
@@ -35,8 +35,10 @@ typedef struct {
     float ao;               /**< Per-vertex AO strength, 0..1 (legacy/baked path). */
     float max_light_dist2;  /**< Per-pixel distance cull threshold in PRCCOORD^2 (default ~4194304 = 8 tiles). */
     int   ssao_enable;      /**< 1 = run the screen-space AO pipeline. */
-    float ssao_radius;      /**< SSAO screen-space sample radius (UV units). */
-    float ssao_world;       /**< SSAO world-space occlusion range (units). */
+    float ssao_max_px;      /**< SSAO cap on the screen sample radius (pixels). */
+    float ssao_world;       /**< SSAO reach in WORLD units - the sample radius,
+                                 converted to pixels per-pixel so the effect keeps
+                                 a constant physical size (tile = 256). */
     float ssao_strength;    /**< SSAO darkening multiplier. */
     float ssao_bias;        /**< SSAO self-occlusion rejection bias. */
     int   ssao_debug;       /**< 0=final, 1=world-pos, 2=raw AO, 3=blurred AO. */
@@ -232,7 +234,7 @@ typedef struct {
 /** Reset every entry to white (1,1,1) at scale 1.0 and defaults to sane values. */
 void hwr_lights_clear(void);
 
-/** Parse fx3d_lights.ini from path and populate the table.
+/** Parse fx3d.ini from path and populate the table.
  *  Safe to call before hwr_init(); silent on missing file (leaves defaults). */
 void hwr_lights_load(const char *path);
 
@@ -247,7 +249,7 @@ HwrLightDefaults hwr_lights_defaults(void);
 HwrLightDefaults *hwr_lights_ptr(void);
 
 /** Write the current [defaultlighting], [ssao] and [sun] sections back to
- *  fx3d_lights.ini, overwriting any previous values while preserving other
+ *  fx3d.ini, overwriting any previous values while preserving other
  *  sections ([fx3d_lights], [thing_categories]). */
 void hwr_lights_save(void);
 
@@ -259,7 +261,7 @@ int  hwr_thing_category_get(int type, int subtype);
 /** Set the category for a (type, subtype) pair. Clamped to 0-3. */
 void hwr_thing_category_set(int type, int subtype, int cat);
 
-/** Write all non-zero category assignments back to fx3d_lights.ini
+/** Write all non-zero category assignments back to fx3d.ini
  *  (reads existing file, merges, deduplicates, writes). */
 void hwr_thing_category_save_all(void);
 

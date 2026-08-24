@@ -360,7 +360,7 @@ static int rain_init(void)
     return HWR_OK;
 }
 
-/** Configure the procedural rain overlay (from fx3d_lights.ini [rain]).
+/** Configure the procedural rain overlay (from fx3d.ini [rain]).
  *  enable toggles the pass; alpha is the streak opacity (0..1); density is the
  *  streak-column count across one screen-height of width; speed is the fall
  *  speed in screen-heights/second; width is streak thickness in pixels;
@@ -550,7 +550,7 @@ static int fog_init(void)
     return HWR_OK;
 }
 
-/** Configure the distance fog overlay (from fx3d_lights.ini [fog]). enable
+/** Configure the distance fog overlay (from fx3d.ini [fog]). enable
  *  toggles the pass; colour is the haze tint; density is the maximum opacity
  *  at full distance (0..1); start/end are the world-unit VIEW-DEPTH ramp used
  *  when the G-buffer is available (0 = the screen-centre look-at point);
@@ -810,7 +810,7 @@ static int bullettime_init(void)
     return HWR_OK;
 }
 
-/** Configure the bullet-time screen filter (from fx3d_lights.ini
+/** Configure the bullet-time screen filter (from fx3d.ini
  *  [bullettime]). enable toggles the pass; blur_strength is the max radial-
  *  blur reach at the screen edge (UV units, full dip); trail is how much of
  *  the previous frame persists into this one at full dip (0..1, motion-trail
