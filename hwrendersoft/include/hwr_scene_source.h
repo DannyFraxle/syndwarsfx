@@ -56,6 +56,17 @@ typedef struct {
 typedef struct {
     const uint8_t *texels;   /**< count * width * height bytes, or NULL. */
     int width, height, count;
+    /** Baked RGBA8 version of every page EXCEPT the ones mutated every tick
+     *  (rain ripples / FLIC playback - see HWR_TMAP_RAIN_PAGE/ANIM_PAGE0/1 in
+     *  source_sw.c), depalettised once against the frozen bake palette and
+     *  optionally xBR/ScaleFX-upscaled per [upscale] texture_filter/scale.
+     *  baked_count is 3 less than count (static pages only); baked layer i
+     *  corresponds to the i-th static page in ascending page-index order.
+     *  NULL until the palette has stabilised enough to bake against (the
+     *  raw indexed `texels` above stay usable meanwhile - backends should
+     *  keep using them for every page until baked_texels is non-NULL). */
+    const uint8_t *baked_texels;
+    int baked_width, baked_height, baked_count;
 } HwrTexturePages;
 
 /** Raw factors of the game's isometric projection (transform_shpoint), so the

@@ -126,6 +126,9 @@ static const char *floor_frag_src =
     "layout(location=0) out vec4 frag;\n"
     "layout(location=1) out vec4 fragPos;   // xyz world pos + w water mask (SSR)\n"
     "uniform sampler2DArray uTex;         // R8 palette indices\n"
+    "uniform sampler2DArray uTexBaked;    // RGBA8 baked+upscaled static pages\n"
+    "uniform int uBaked;                  // 1 = sample uTexBaked for static pages this draw\n"
+    HWR_RECOLOUR_GLSL
     "uniform sampler2D uPalette;          // RGB8 256x1, active 8-bit palette\n"
     "uniform sampler2D uSelfLit;          // R8 256x1, 1.0 for SW's fade_unaffected_colours\n"
     "uniform int uTransKey;               // texel index to treat as transparent (<0 = none)\n"
@@ -286,6 +289,36 @@ static const char *floor_frag_src =
     "        frag = vec4(max(mix(vec3(g), lin, sboost), 0.0), uAlpha);\n"
     "        return;\n"
     "    }\n"
+    "    int page = int(fuv.z + 0.5);\n"
+    "    bool dynamicPage = (page == 0 || page == 4 || page == 5);\n"
+    "    if (uBaked == 1 && !dynamicPage) {\n"
+    "        // Baked static page: depalettised RGBA (optionally xBR/ScaleFX-\n"
+    "        // upscaled) sampled with plain GL_NEAREST - no index-blend sparkle\n"
+    "        // is possible since there's no index data left to mis-blend. Layer\n"
+    "        // index skips the 3 dynamic pages (see sw_page_is_dynamic).\n"
+    "        int layer = page - ((page > 0 ? 1 : 0) + (page > 4 ? 1 : 0) + (page > 5 ? 1 : 0));\n"
+    "        // Colour is sampled normally, so GL_LINEAR applies when the ini asks\n"
+    "        // for filtering (legal here: the baked pages are real RGB, unlike the\n"
+    "        // raw indexed array where blending indices IS the sparkle bug).\n"
+    "        vec4 bc = texture(uTexBaked, vec3(fuv.xy, float(layer)));\n"
+    "        // Alpha is a 3-state tag baked per texel (sw_bake_floor_textures):\n"
+    "        //   0 = cutout key, 0.5 = ordinary, 1 = self-lit. Both facts live on\n"
+    "        //   the palette INDEX, which depalettising discards - the raw path\n"
+    "        //   reads them from uTransKey / uSelfLit instead. It MUST be fetched\n"
+    "        //   unfiltered: linear-blending the tag yields in-between values that\n"
+    "        //   mean nothing, smearing the cutout edge and flickering self-lit.\n"
+    "        ivec3 bsz = textureSize(uTexBaked, 0);\n"
+    "        ivec2 tc  = clamp(ivec2(fuv.xy * vec2(bsz.xy)), ivec2(0), bsz.xy - 1);\n"
+    "        float tag = texelFetch(uTexBaked, ivec3(tc, layer), 0).a;\n"
+    "        if (uTransKey >= 0 && tag < 0.25)\n"
+    "            discard;\n"
+    "        vec3 c = atlas_recolour(bc.rgb);\n"
+    "        float sl = (tag > 0.75) ? 1.0 : 0.0;\n"
+    "        vec3 lin = c * max(light_col, vec3(sl));\n"
+    "        float g = dot(lin, vec3(0.299, 0.587, 0.114));\n"
+    "        frag = vec4(max(mix(vec3(g), lin, sboost), 0.0), uAlpha);\n"
+    "        return;\n"
+    "    }\n"
     "    // Nearest: single texel with GL_NEAREST.\n"
     "    int idx = int(texture(uTex, fuv).r * 255.0 + 0.5);\n"
     "    if (uFilter == 1) {\n"
@@ -296,7 +329,6 @@ static const char *floor_frag_src =
     "        // excluded from BOTH the colour blend (no dark key-colour fringe) and\n"
     "        // a coverage value, so the cutout edge follows the smooth bilinear\n"
     "        // iso-line instead of the blocky texel grid.\n"
-    "        int page = int(fuv.z);\n"
     "        vec2 tc = fuv.xy * 256.0 - 0.5;\n"
     "        ivec2 uv0 = ivec2(floor(tc));\n"
     "        vec2  f = fract(tc);\n"
@@ -340,6 +372,11 @@ static const char *floor_frag_src =
 static GLuint fl_prog = 0;
 static GLuint fl_vao = 0, fl_vbo = 0, fl_ebo = 0;
 static GLuint fl_tex = 0, fl_pal = 0, fl_selflit = 0, fl_fade = 0;
+static GLuint fl_tex_baked = 0;      /* RGBA8 array: baked+upscaled static pages */
+static int    fl_baked_uploaded = 0;
+static int    fl_baked_filter = -1;  /* -1 = not applied yet, else 0/1 = current mode */
+static GLint  fl_loc_texbaked = -1, fl_loc_baked = -1;
+static GLint  fl_loc_invpal = -1, fl_loc_pallive = -1, fl_loc_recolour = -1;
 static GLint  fl_loc_tex = -1, fl_loc_pal = -1, fl_loc_selflit = -1, fl_loc_transkey = -1;
 static GLint  fl_loc_fadetab = -1;
 static GLint  fl_loc_shadesat = -1;
@@ -385,9 +422,13 @@ static GLuint fl_compile(GLenum type, const char *src)
     glCompileShader(sh);
     glGetShaderiv(sh, GL_COMPILE_STATUS, &ok);
     if (!ok) {
-        char log[512];
+        char log[2048];
         glGetShaderInfoLog(sh, sizeof(log), NULL, log);
         hwr_set_error("floor shader compile failed: %s", log);
+        /* hwr_set_error alone is invisible here - nothing prints it for the
+         * floor path, so a broken shader just showed up as a black floor with
+         * no clue why. Print it too. */
+        fprintf(stderr, "FX3D floor shader compile FAILED: %s\n", log);
         glDeleteShader(sh);
         return 0;
     }
@@ -411,12 +452,18 @@ static int fl_init(void)
     glDeleteShader(fs);
     glGetProgramiv(fl_prog, GL_LINK_STATUS, &ok);
     if (!ok) {
-        char log[512];
+        char log[2048];
         glGetProgramInfoLog(fl_prog, sizeof(log), NULL, log);
         hwr_set_error("floor program link failed: %s", log);
+        fprintf(stderr, "FX3D floor program LINK FAILED: %s\n", log);
         return HWR_ERROR;
     }
     fl_loc_tex    = glGetUniformLocation(fl_prog, "uTex");
+    fl_loc_texbaked = glGetUniformLocation(fl_prog, "uTexBaked");
+    fl_loc_baked  = glGetUniformLocation(fl_prog, "uBaked");
+    fl_loc_invpal   = glGetUniformLocation(fl_prog, "uInvPal");
+    fl_loc_pallive  = glGetUniformLocation(fl_prog, "uPalLive");
+    fl_loc_recolour = glGetUniformLocation(fl_prog, "uRecolour");
     fl_loc_pal    = glGetUniformLocation(fl_prog, "uPalette");
     fl_loc_selflit = glGetUniformLocation(fl_prog, "uSelfLit");
     fl_loc_fadetab = glGetUniformLocation(fl_prog, "uFadeTab");
@@ -490,6 +537,13 @@ static int fl_init(void)
     glBindVertexArray(0);
 
     glGenTextures(1, &fl_tex);
+    glGenTextures(1, &fl_tex_baked);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, fl_tex_baked);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
     glGenTextures(1, &fl_pal);
     glBindTexture(GL_TEXTURE_2D, fl_pal);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -562,6 +616,20 @@ static void fl_upload_pages(const HwrTexturePages *pg, int filter_linear)
                 pg->width, pg->height, 1, GL_RED, GL_UNSIGNED_BYTE,
                 pg->texels + (size_t)5 * pg->width * pg->height);
     }
+    /* Baked static-page array: uploaded exactly once (it never changes -
+     * the 3 dynamic pages that DO change every tick are excluded from it,
+     * see sw_page_is_dynamic in source_sw.c). Waits for baked_texels to go
+     * non-NULL (the palette must stabilise past mid-fade-in first); until
+     * then the raw indexed path above keeps serving every page unchanged. */
+    if (!fl_baked_uploaded && pg != NULL && pg->baked_texels != NULL && pg->baked_count > 0) {
+        glBindTexture(GL_TEXTURE_2D_ARRAY, fl_tex_baked);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, pg->baked_width, pg->baked_height,
+            pg->baked_count, 0, GL_RGBA, GL_UNSIGNED_BYTE, pg->baked_texels);
+        fl_baked_uploaded = 1;
+        fl_baked_filter = -1;   /* force the filter mode to be (re)applied */
+        glBindTexture(GL_TEXTURE_2D_ARRAY, fl_tex);
+    }
     if (fl_filter != 0) {
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, filt);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, filt);
@@ -621,6 +689,24 @@ static void fl_upload_lights(const HwrLight *lights, int n)
     glUniform1i(fl_loc_nlights, n);
 }
 
+/* Apply GroundTextureFilter / ObjectTextureFilter to the BAKED array.
+ * The raw indexed array can never use GL_LINEAR (it would interpolate palette
+ * indices - the sparkle), which is why that path does a manual palette-correct
+ * bilinear in the shader instead. The baked array holds real RGB, so plain
+ * hardware filtering is both correct and cheaper here. */
+static void fl_set_baked_filter(int filter_linear)
+{
+    GLint f;
+    if (!fl_baked_uploaded || filter_linear == fl_baked_filter)
+        return;
+    f = filter_linear ? GL_LINEAR : GL_NEAREST;
+    glBindTexture(GL_TEXTURE_2D_ARRAY, fl_tex_baked);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, f);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, f);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, fl_tex);
+    fl_baked_filter = filter_linear;
+}
+
 /* Bind the floor program, set the camera uniforms and the indexed-texture +
  * palette samplers. Shared by the floor and face passes (both use the same
  * transform_shpoint projection and texture pages). */
@@ -644,6 +730,8 @@ static void fl_setup_program(const HwrCamera *cam, const unsigned char *pal8,
     glBindTexture(GL_TEXTURE_2D_ARRAY, fl_tex);
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, fl_selflit);
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, fl_tex_baked);
     glActiveTexture(GL_TEXTURE5);
     glBindTexture(GL_TEXTURE_2D, fl_fade);
     glActiveTexture(GL_TEXTURE0);   /* restore default active unit */
@@ -661,7 +749,17 @@ static void fl_setup_program(const HwrCamera *cam, const unsigned char *pal8,
     glUniform1i(fl_loc_tex, 0);
     glUniform1i(fl_loc_pal, 1);
     glUniform1i(fl_loc_selflit, 2);
+    glUniform1i(fl_loc_texbaked, 4);
     glUniform1i(fl_loc_fadetab, 5);
+    /* The baked pages carry the cutout key as alpha 0 (baked against
+     * HWR_TMAP_KEY_INDEX = 0 in source_sw.c), so keyed draws work too - which
+     * matters because every building face is keyed, and gating those out was
+     * what left them un-upscaled while the floor looked right. A draw keyed on
+     * some OTHER index would not match the baked tag, so fall back to the raw
+     * indexed path for that case. */
+    glUniform1i(fl_loc_baked,
+        (fl_baked_uploaded && (trans_key < 0 || trans_key == 0)) ? 1 : 0);
+    hwr_recolour_bind(fl_loc_invpal, fl_loc_pallive, fl_loc_recolour);
     glUniform1f(fl_loc_shadesat, hwr_lights_defaults().shade_sat);
     glUniform1i(fl_loc_transkey, trans_key);
     glUniform1f(fl_loc_alpha, 1.0f);    /* opaque by default; transparent pass overrides */
@@ -745,6 +843,7 @@ int hwr_floor_render(const unsigned char *pal8, int filter_linear)
     fl_upload_pages(&pages, filter_linear);
     fl_setup_program(&cam, pal8, -1);   /* floor tiles are fully opaque */
     glUniform1i(fl_loc_filter, filter_linear);
+    fl_set_baked_filter(filter_linear);
     /* Sprites need a healthy depth margin over the floor: corpses and dropped
      * items lie near-flush with it, and with a continuously-moving camera a
      * marginal bias flips every frame -> flicker. That margin used to be a big
@@ -806,6 +905,7 @@ int hwr_faces_render(const unsigned char *pal8, int filter_linear)
      * grates), so discard it to let those back faces show through. */
     fl_setup_program(&cam, pal8, 0);
     glUniform1i(fl_loc_filter, filter_linear);
+    fl_set_baked_filter(filter_linear);
     {
         /* SW-exact face lighting, mirroring the floor pass: each face vertex
          * carries the complete static SW shade (Shade0..3 + its Light0..3
@@ -875,6 +975,7 @@ int hwr_transparent_render(const unsigned char *pal8, int filter_linear)
      * texture transparent key (windows / grates). */
     fl_setup_program(&cam, pal8, 0);
     glUniform1i(fl_loc_filter, filter_linear);
+    fl_set_baked_filter(filter_linear);
     glUniform1f(fl_loc_alpha, tr_alpha);
     glUniform1i(fl_loc_deepradar, tr_deepradar_idx);
     {
@@ -1360,4 +1461,5 @@ int hwr_reflect_render(const unsigned char *pal8)
 void hwr_floor_reset(void)
 {
     fl_pages_uploaded = 0;
+    fl_baked_uploaded = 0;
 }

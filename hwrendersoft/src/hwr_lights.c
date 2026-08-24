@@ -79,7 +79,8 @@ static HwrLightDefaults hwr_defaults = {
     21.0f,          /* street_radius (21 = SW default) */
     50,             /* filler_maxint — Intensity ≤ 50 = filler */
     200,            /* building_maxint — Intensity ≤ 200 = building, > 200 = street */
-    0,              /* xbr_scale — off by default */
+    0,              /* sprite_filter — off by default (0=none,1=xbr,2=scalefx) */
+    3,              /* sprite_scale — used only when sprite_filter=xbr */
     /* --- transparency (Phase 8) --- */
     1,              /* transp_enable — blended faces on */
     0.5f,           /* transp_alpha */
@@ -158,6 +159,12 @@ static HwrLightDefaults hwr_defaults = {
     0.18f,          /* water_reflect_sky_b */
     2.0f,           /* water_reflect_blur (pixels; softens reflection edges) */
     0,              /* water_reflect_debug */
+    0,              /* floor_no_surface_mode (0 = skip tile) */
+    /* --- world texture upscale ([upscale] section) --- */
+    0,              /* texture_filter — off by default (0=none,1=xbr,2=scalefx);
+                     * baking itself (sparkle-free, GL_NEAREST) always runs
+                     * regardless of this filter (see hwr_floor.c). */
+    3,              /* texture_scale — used only when texture_filter=xbr */
 };
 
 static void table_defaults(void)
@@ -183,7 +190,7 @@ void hwr_lights_clear(void)
 }
 
 /* Section ids for the simple line-by-line parser. */
-enum { SEC_NONE = 0, SEC_LIGHTS, SEC_DEFAULTS, SEC_SSAO, SEC_SUN, SEC_CATEGORIES, SEC_SPRITES, SEC_TRANSP, SEC_GLARE, SEC_FIRELIGHT, SEC_PERSUADELIGHT, SEC_RAIN, SEC_FOG, SEC_BULLETTIME, SEC_WATER, SEC_FLOOR };
+enum { SEC_NONE = 0, SEC_LIGHTS, SEC_DEFAULTS, SEC_SSAO, SEC_SUN, SEC_CATEGORIES, SEC_SPRITES, SEC_TRANSP, SEC_GLARE, SEC_FIRELIGHT, SEC_PERSUADELIGHT, SEC_RAIN, SEC_FOG, SEC_BULLETTIME, SEC_WATER, SEC_FLOOR, SEC_UPSCALE };
 
 static void parse_floor_line(const char *p)
 {
@@ -567,6 +574,29 @@ static void parse_default_line(const char *p)
     }
 }
 
+static void parse_upscale_line(const char *p)
+{
+    int iv;
+    char word[16];
+    if (sscanf(p, "texture_filter = %15s", word) == 1) {
+        if (strcmp(word, "xbr") == 0) hwr_defaults.texture_filter = 1;
+        else if (strcmp(word, "scalefx") == 0) hwr_defaults.texture_filter = 2;
+        else hwr_defaults.texture_filter = 0;
+    } else if (sscanf(p, "texture_scale = %d", &iv) == 1) {
+        if (iv < 2) iv = 2;
+        if (iv > 4) iv = 4;
+        hwr_defaults.texture_scale = iv;
+    } else if (sscanf(p, "sprite_filter = %15s", word) == 1) {
+        if (strcmp(word, "xbr") == 0) hwr_defaults.sprite_filter = 1;
+        else if (strcmp(word, "scalefx") == 0) hwr_defaults.sprite_filter = 2;
+        else hwr_defaults.sprite_filter = 0;
+    } else if (sscanf(p, "sprite_scale = %d", &iv) == 1) {
+        if (iv < 2) iv = 2;
+        if (iv > 4) iv = 4;
+        hwr_defaults.sprite_scale = iv;
+    }
+}
+
 static void parse_categories_line(const char *p)
 {
     int t, s, c;
@@ -581,13 +611,26 @@ static void parse_sprites_line(const char *p)
 {
     int iv;
     float fv;
+    char word[16];
     if (sscanf(p, "sprite_debug = %d", &iv) == 1) {
         hwr_defaults.sprite_debug = (iv != 0) ? 1 : 0;
     } else if (sscanf(p, "xbr_scale = %d", &iv) == 1) {
+        /* Legacy key: xbr_scale=0 disabled, xbr_scale=2..4 enabled xBR at
+         * that factor. Kept for old fx3d.ini files; prefer sprite_filter/
+         * sprite_scale below. */
         if (iv < 0) iv = 0;
         if (iv == 1) iv = 0;
         if (iv > 4) iv = 4;
-        hwr_defaults.xbr_scale = iv;
+        hwr_defaults.sprite_filter = (iv >= 2) ? 1 : 0;
+        if (iv >= 2) hwr_defaults.sprite_scale = iv;
+    } else if (sscanf(p, "filter = %15s", word) == 1) {
+        if (strcmp(word, "xbr") == 0) hwr_defaults.sprite_filter = 1;
+        else if (strcmp(word, "scalefx") == 0) hwr_defaults.sprite_filter = 2;
+        else hwr_defaults.sprite_filter = 0;
+    } else if (sscanf(p, "scale = %d", &iv) == 1) {
+        if (iv < 2) iv = 2;
+        if (iv > 4) iv = 4;
+        hwr_defaults.sprite_scale = iv;
     } else if (sscanf(p, "persp_strength = %f", &fv) == 1) {
         if (fv < 0.0f) fv = 0.0f;
         hwr_defaults.sprite_persp_strength = fv;
@@ -727,6 +770,8 @@ void hwr_lights_load(const char *path)
                 section = SEC_WATER;
             else if (strncmp(p, "[floor]", 7) == 0)
                 section = SEC_FLOOR;
+            else if (strncmp(p, "[upscale]", 9) == 0)
+                section = SEC_UPSCALE;
             else
                 section = SEC_NONE;
             continue;
@@ -773,6 +818,8 @@ void hwr_lights_load(const char *path)
             parse_water_line(p);
         } else if (section == SEC_FLOOR) {
             parse_floor_line(p);
+        } else if (section == SEC_UPSCALE) {
+            parse_upscale_line(p);
         }
     }
     fclose(f);

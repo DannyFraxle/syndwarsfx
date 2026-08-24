@@ -69,7 +69,11 @@ typedef struct {
     float street_radius;        /**< Radius multiplier for street category */
     int   filler_maxint;        /**< Intensity threshold: <= this => filler */
     int   building_maxint;      /**< Intensity threshold: <= this => building, > => street */
-    int   xbr_scale;            /**< 0=off, 2=2x, 3=3x, 4=4x upscale via xBR */
+    int   sprite_filter;        /**< Sprite atlas bake-time upscale filter:
+                                     0=none, 1=xBR, 2=ScaleFX. */
+    int   sprite_scale;         /**< xBR scale factor (2/3/4) when sprite_filter=1;
+                                     ignored (ScaleFX is a fixed 3x algorithm)
+                                     when sprite_filter=2. */
     /* Transparency pass ([transparency] section, Phase 8). */
     int   transp_enable;        /**< 1 = draw semi-transparent faces (deep-radar + glass/fence) blended. */
     float transp_alpha;         /**< Blended face opacity, 0..1 (default 0.5). */
@@ -229,6 +233,16 @@ typedef struct {
                                           1 = emit it as SW's flat colour_grey2,
                                           2 = emit it with the nearest floor
                                               neighbour's texture (old behaviour). */
+    /* World texture upscale ([upscale] section). Applies only to the 15
+     * static texture pages baked into the GL_RGBA8 atlas (hwr_floor.c); the
+     * 3 pages mutated every tick (rain ripples, FLIC billboard/equipment/
+     * cyborg playback) always stay on the raw-indexed path and are never
+     * baked or upscaled. */
+    int   texture_filter;       /**< Baked world-texture upscale filter:
+                                     0=none (1:1 baked, still sparkle-free),
+                                     1=xBR, 2=ScaleFX. */
+    int   texture_scale;        /**< xBR scale factor (2/3/4) when texture_filter=1;
+                                     ignored (fixed 3x) when texture_filter=2. */
 } HwrLightDefaults;
 
 /** Reset every entry to white (1,1,1) at scale 1.0 and defaults to sane values. */

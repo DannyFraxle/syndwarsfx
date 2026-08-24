@@ -239,6 +239,10 @@ static void atlas_init_gl(void)
 
     glGenTextures(1, &at.tex);
     glBindTexture(GL_TEXTURE_2D, at.tex);
+    /* Initial value only - hwr_atlas_set_filter() (driven by the ini's
+     * SpriteTextureFilter, via hwr_sprites_render) overrides this per frame.
+     * It used to be hardcoded GL_LINEAR with nothing ever changing it, so
+     * SpriteTextureFilter = False had no effect at all. */
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -596,6 +600,10 @@ void hwr_atlas_reset(void)
 
 #define INVPAL_DIM 64
 
+/* Current atlas sampling mode; -1 = not yet applied, so the first frame always
+ * pushes the configured value. See hwr_sprites_render(). */
+static int     at_filter_linear = -1;
+
 static uint8_t at_bake_pal[768];    /* palette the atlas tiles were baked with */
 static uint8_t at_live_pal[768];    /* palette the game is displaying now */
 static int     at_bake_pal_ready = 0;
@@ -690,21 +698,42 @@ static void invpal_build(void)
     at_invpal_dirty = 0;
 }
 
-/* Bind the recolour uniforms/textures for a program that samples the atlas.
- * Returns nonzero if the recolour is active this frame. */
-static int spr_bind_recolour(GLint loc_invpal, GLint loc_pallive, GLint loc_on)
+/* Bind the recolour uniforms/textures for a program that samples the atlas
+ * (or, via hwr_floor.c, the baked world-texture array - same bake/live
+ * palette pair, same LUT). Returns nonzero if the recolour is active this
+ * frame. Public: declared in hwr_internal.h. */
+int hwr_recolour_bind(GLint loc_invpal, GLint loc_pallive, GLint loc_on)
 {
     int on = at_recolour && at_bake_pal_ready;
 
     if (loc_on >= 0)
         glUniform1i(loc_on, on);
-    if (!on)
-        return 0;
 
-    if (at_invpal_dirty)
+    /* Assign the sampler units UNCONDITIONALLY, even when the recolour is
+     * off and the shader never samples them. Left unassigned they default to
+     * unit 0, which puts uInvPal (sampler3D) and uPalLive (sampler2D) on the
+     * same unit as the caller's own texture - and a program with two sampler
+     * types on one unit fails GL validation, so the driver draws the whole
+     * pass BLACK. That is what happened when hwr_floor.c (uTex is a
+     * sampler2DArray on unit 0) started using this helper. Binding name 0
+     * below is fine: atlas_recolour early-returns when uRecolour == 0, so an
+     * incomplete default texture is never actually sampled. */
+    if (loc_invpal >= 0)
+        glUniform1i(loc_invpal, 6);
+    if (loc_pallive >= 0)
+        glUniform1i(loc_pallive, 7);
+
+    if (on && at_invpal_dirty)
         invpal_build();
-    if (at_invpal_tex == 0)
+    if (!on || at_invpal_tex == 0) {
+        /* Keep the units type-correct but inert. */
+        glActiveTexture(GL_TEXTURE6);
+        glBindTexture(GL_TEXTURE_3D, 0);
+        glActiveTexture(GL_TEXTURE7);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glActiveTexture(GL_TEXTURE0);
         return 0;
+    }
 
     glActiveTexture(GL_TEXTURE6);
     glBindTexture(GL_TEXTURE_3D, at_invpal_tex);
@@ -726,28 +755,14 @@ static int spr_bind_recolour(GLint loc_invpal, GLint loc_pallive, GLint loc_on)
         at_pallive_dirty = 0;
     }
     glActiveTexture(GL_TEXTURE0);
-
-    if (loc_invpal >= 0)
-        glUniform1i(loc_invpal, 6);
-    if (loc_pallive >= 0)
-        glUniform1i(loc_pallive, 7);
     return 1;
 }
 
-/* GLSL helper shared by every program that samples the atlas. */
-#define RECOLOUR_GLSL \
-    "uniform sampler3D uInvPal;\n" \
-    "uniform sampler2D uPalLive;\n" \
-    "uniform int uRecolour;\n" \
-    "vec3 atlas_recolour(vec3 c) {\n" \
-    "    if (uRecolour == 0) return c;\n" \
-    /* Round to the 8-bit value first: c*255 alone lands just under the integer
-     * for some texels and would drop a whole cell (252 -> 62 instead of 63). */ \
-    "    vec3 v8 = floor(clamp(c, 0.0, 1.0) * 255.0 + 0.5);\n" \
-    "    vec3 cell = (floor(v8 * 0.25) + 0.5) / 64.0;\n" \
-    "    float idx = floor(texture(uInvPal, cell).r * 255.0 + 0.5);\n" \
-    "    return texture(uPalLive, vec2((idx + 0.5) / 256.0, 0.5)).rgb;\n" \
-    "}\n"
+/* GLSL helper shared by every program that samples the atlas (or, via
+ * hwr_floor.c, the baked world-texture array). Defined once in
+ * hwr_internal.h as HWR_RECOLOUR_GLSL; this name is kept as a local alias
+ * since it's how every atlas-sampling shader below already refers to it. */
+#define RECOLOUR_GLSL HWR_RECOLOUR_GLSL
 
 /* =========================================================================
  * Billboard shaders
@@ -836,6 +851,7 @@ static const char *spr_frag_src =
     "uniform float uSunHaze;\n"
     "uniform float uAlpha;\n"            /* output alpha (1 = opaque; <1 = translucent) */
     "uniform int  uUnlit;\n"             /* 1 = self-lit (ignore scene lights) — effects */
+    "uniform float uShadeSat;\n"         /* shadow saturation boost (0 = plain linear) */
     RECOLOUR_GLSL
     "void main(){\n"
     "    fragPos = vec4(vWorldPos, -1.0);\n"  /* w: 1=water, 0=3D geom, -1=sprite/billboard */
@@ -897,7 +913,18 @@ static const char *spr_frag_src =
     "     * Adding scene lamps/ambient on top double-counts and channel-clamps\n"
     "     * bright texels (washed-out trees/props). Pin light_col to 1.0. */\n"
     "    light_col = vec3(1.0);\n"
-    "    frag = vec4(c * light_col * vShade, uAlpha);\n"
+    "    /* Saturation-compensated shading, same as floor_frag_src. SW's\n"
+    "     * 'c * Brightness' is not a linear RGB multiply: it goes through\n"
+    "     * pixmap.fade_table, whose hand-quantized rows keep dark colours\n"
+    "     * hue-rich. Multiplying float RGB instead slides darks toward grey -\n"
+    "     * saturated art shaded down at night (red trees) reads washed out.\n"
+    "     * Boost saturation as the shade drops to mimic the fade rows.\n"
+    "     * uShadeSat = strength (0 = plain linear, ~0.6 = SW-like depth). */\n"
+    "    float lv = clamp(vShade, 0.0, 1.97);\n"
+    "    float sboost = 1.0 + uShadeSat * clamp(1.0 - lv, 0.0, 1.0);\n"
+    "    vec3 lin = c * light_col * vShade;\n"
+    "    float g = dot(lin, vec3(0.299, 0.587, 0.114));\n"
+    "    frag = vec4(max(mix(vec3(g), lin, sboost), 0.0), uAlpha);\n"
     "}\n";
 
 /* Shadow blob shader: simple radial gradient on the ground */
@@ -1030,6 +1057,7 @@ static GLint spr_loc_sun_debug = -1, spr_loc_sun_haze = -1;
 static GLint spr_loc_alpha = -1;
 static GLint spr_loc_invpal = -1, spr_loc_pallive = -1, spr_loc_recolour = -1;
 static GLint spr_loc_unlit = -1;
+static GLint spr_loc_shadesat = -1;
 static int   spr_ready = 0;
 
 /* Translucent sprite pass config (Phase 8). */
@@ -1117,6 +1145,7 @@ static int spr_init(void)
     spr_loc_sun_haze   = glGetUniformLocation(spr_prog, "uSunHaze");
     spr_loc_alpha      = glGetUniformLocation(spr_prog, "uAlpha");
     spr_loc_unlit      = glGetUniformLocation(spr_prog, "uUnlit");
+    spr_loc_shadesat   = glGetUniformLocation(spr_prog, "uShadeSat");
     spr_loc_invpal     = glGetUniformLocation(spr_prog, "uInvPal");
     spr_loc_pallive    = glGetUniformLocation(spr_prog, "uPalLive");
     spr_loc_recolour   = glGetUniformLocation(spr_prog, "uRecolour");
@@ -1307,6 +1336,9 @@ static void spr_setup_program(const HwrCamera *cam,
     glUseProgram(spr_prog);
     glUniform1f(spr_loc_alpha, 1.0f);   /* opaque; translucent pass overrides */
     glUniform1i(spr_loc_unlit, 0);      /* opaque sprites are scene-lit */
+    /* Same [defaultlighting] shade_sat the floor/faces use, so sprites and the
+     * world they stand on desaturate identically as they darken. */
+    glUniform1f(spr_loc_shadesat, hwr_lights_defaults().shade_sat);
     glUniform1f(spr_loc_d10, cam->d10);
     glUniform1f(spr_loc_d14, cam->d14);
     glUniform1f(spr_loc_d18, cam->d18);
@@ -1322,7 +1354,7 @@ static void spr_setup_program(const HwrCamera *cam,
 
     /* Live-palette remap of the atlas colours (units 6/7) — see
      * hwr_atlas_set_palettes(). No-op unless the palette has been swapped. */
-    spr_bind_recolour(spr_loc_invpal, spr_loc_pallive, spr_loc_recolour);
+    hwr_recolour_bind(spr_loc_invpal, spr_loc_pallive, spr_loc_recolour);
 
     /* Shadow map on unit 3 */
     glActiveTexture(GL_TEXTURE3);
@@ -1584,6 +1616,16 @@ int hwr_sprites_render(const unsigned char *pal8, int filter_linear)
     /* Upload any pending sprite pixel data to the GL atlas texture.
      * Pixel data is stashed by the main thread in hwr_atlas_register(). */
     hwr_atlas_upload_pending();
+
+    /* Honour SpriteTextureFilter. filter_linear was previously accepted and
+     * silently ignored here, leaving the atlas permanently GL_LINEAR. */
+    if (at.tex != 0 && filter_linear != at_filter_linear) {
+        GLint f = filter_linear ? GL_LINEAR : GL_NEAREST;
+        glBindTexture(GL_TEXTURE_2D, at.tex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, f);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, f);
+        at_filter_linear = filter_linear;
+    }
 
     if (s->get_camera == NULL || s->get_camera(s->ctx, &cam) != 0)
         return 0;
@@ -2294,7 +2336,7 @@ int hwr_overlay_render(void)
         glUseProgram(ovt_prog);
         hwr_atlas_bind(4);
         glUniform1i(ovt_loc_atlas, 4);
-        spr_bind_recolour(ovt_loc_invpal, ovt_loc_pallive, ovt_loc_recolour);
+        hwr_recolour_bind(ovt_loc_invpal, ovt_loc_pallive, ovt_loc_recolour);
         glBindVertexArray(ovt_vao);
         glBindBuffer(GL_ARRAY_BUFFER, ovt_vbo);
         glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)tvc * 5 * sizeof(float), ovt_vbuf, GL_STREAM_DRAW);

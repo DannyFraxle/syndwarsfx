@@ -35,6 +35,7 @@
 
 #include "hwr_api.h"
 #include "xbr.h"
+#include "scalefx.h"
 
 /* --- Game globals (resolved at the executable's link step) --- */
 /* Camera centre, from engincam.h (s32). */
@@ -84,6 +85,12 @@ extern struct { unsigned char r, g, b, a; } lbPaletteColors[256];
  * sprites first seen during thermal came out thermal-coloured. */
 static unsigned char sw_bake_pal[768];
 static int           sw_bake_pal_ready = 0;
+
+/* SW's 0-terminated list of palette indices exempt from all shading (baked
+ * window/road-marking paint that stays full-bright at any darkness level).
+ * See LbFadeTableToRGBGenerate in ggenf.c; hwr_floor.c uploads the same list
+ * as the uSelfLit lookup for the raw indexed path. */
+extern unsigned char fade_unaffected_colours[];
 
 /* Flatten lbPaletteColors into a 256*3 RGB array. */
 static void sw_snapshot_palette(unsigned char *out)
@@ -916,6 +923,68 @@ extern struct {
     unsigned char ghost_table[256 * 256];
 } pixmap;
 
+/* Small cache-key contribution (fits the 4 low bits reserved for it in the
+ * sprite atlas key, see hwr_effect_frame_slot()/hwr_sw_collect_effects())
+ * distinguishing which bake-time upscale filter+factor produced the atlas
+ * pixels, so switching sprite_filter/sprite_scale at runtime doesn't collide
+ * with previously-baked slots for the same frame. */
+static int hwr_sprite_filter_key(void)
+{
+    HwrLightDefaults d = hwr_lights_defaults();
+    if (d.sprite_filter == 2) return 5;               /* ScaleFX: fixed 3x */
+    if (d.sprite_filter == 1) {
+        int s = d.sprite_scale;
+        if (s < 2) s = 2;
+        if (s > 4) s = 4;
+        return s;                                      /* xBR: 2, 3 or 4 */
+    }
+    return 0;                                           /* none */
+}
+
+/* Applies the configured sprite bake-time upscale filter (xBR or ScaleFX) to
+ * a composited RGBA frame, if enabled. On success reg_pixels/reg_w/reg_h
+ * point at the (possibly reallocated) upscaled result and scaled_out holds
+ * the buffer to free after atlas registration; on no-op or failure they are
+ * left pointing at the original comp/fw/fh and *scaled_out is NULL. */
+static void hwr_sprite_apply_filter(const uint8_t *comp, int fw, int fh,
+    uint8_t **reg_pixels, int *reg_w, int *reg_h, uint8_t **scaled_out)
+{
+    HwrLightDefaults d = hwr_lights_defaults();
+    *scaled_out = NULL;
+
+    if (d.sprite_filter == 2) {
+        /* ScaleFX is a fixed 3x algorithm - no factor to configure. */
+        if (fw * 3 <= 4096 && fh * 3 <= 4096) {
+            int sw = fw * 3, sh = fh * 3;
+            uint8_t *scaled = (uint8_t *)malloc((size_t)sw * sh * 4);
+            if (scaled) {
+                if (scalefx_scale(comp, scaled, fw, fh) == 0) {
+                    *reg_pixels = scaled; *reg_w = sw; *reg_h = sh;
+                    *scaled_out = scaled;
+                    hwr_xbr_count++;
+                    return;
+                }
+                free(scaled);
+            }
+        }
+    } else if (d.sprite_filter == 1) {
+        int sf = d.sprite_scale;
+        if (sf >= 2 && sf <= 4 && fw * sf <= 4096 && fh * sf <= 4096) {
+            int sw = fw * sf, sh = fh * sf;
+            uint8_t *scaled = (uint8_t *)malloc((size_t)sw * sh * 4);
+            if (scaled) {
+                if (xbr_scale(comp, scaled, fw, fh, sf) == 0) {
+                    *reg_pixels = scaled; *reg_w = sw; *reg_h = sh;
+                    *scaled_out = scaled;
+                    hwr_xbr_count++;
+                    return;
+                }
+                free(scaled);
+            }
+        }
+    }
+}
+
 /* Composite a sprite frame's version-0 elements into the atlas (with the same
  * xBR upscale as the Thing path) and return its atlas slot, or <0 on failure.
  * Used for the effect arrays (fire/phwoar) which draw a plain frame with no FRV
@@ -927,14 +996,13 @@ static int hwr_effect_frame_slot(unsigned short frm_idx, int *out_fw, int *out_f
 {
     struct Frame *frm;
     unsigned short el_idx;
-    int off_x, off_y, max_x, max_y, fw, fh, slot, xbr_key;
+    int off_x, off_y, max_x, max_y, fw, fh, slot;
     uint32_t key;
 
     if (frm_idx == 0 || frm_idx >= (unsigned short)(frame_end - frame))
         return -1;
     frm = &frame[frm_idx];
-    xbr_key = hwr_lights_defaults().xbr_scale;
-    key = ((uint32_t)frm_idx << 18) | ((uint32_t)(xbr_key & 0x03) << 2);
+    key = ((uint32_t)frm_idx << 18) | ((uint32_t)(hwr_sprite_filter_key() & 0x0F));
 
     /* Bounding box of the version-0 elements. */
     off_x = 0x7FFFFFFF; off_y = 0x7FFFFFFF;
@@ -1019,22 +1087,10 @@ static int hwr_effect_frame_slot(unsigned short frm_idx, int *out_fw, int *out_f
         }
 
         {
-            int sf = hwr_lights_defaults().xbr_scale;
             uint8_t *reg_pixels = comp;
             int reg_w = fw, reg_h = fh;
             uint8_t *scaled = NULL;
-            if (sf >= 2 && sf <= 4 && fw * sf <= 4096 && fh * sf <= 4096) {
-                int sw = fw * sf, sh = fh * sf;
-                scaled = (uint8_t *)malloc((size_t)sw * sh * 4);
-                if (scaled) {
-                    if (xbr_scale(comp, scaled, fw, fh, sf) == 0) {
-                        reg_pixels = scaled; reg_w = sw; reg_h = sh;
-                        hwr_xbr_count++;
-                    } else {
-                        free(scaled); scaled = NULL;
-                    }
-                }
-            }
+            hwr_sprite_apply_filter(comp, fw, fh, &reg_pixels, &reg_w, &reg_h, &scaled);
             slot = hwr_atlas_register(key, reg_pixels, reg_w, reg_h);
             if (slot < 0 && reg_pixels != comp)
                 slot = hwr_atlas_register(key, comp, fw, fh);
@@ -1492,10 +1548,9 @@ void hwr_sw_collect_sprites(void)
              * SKIPPED sprites — the old "randomly darkening" symptom). */
             uint16_t frv_pack = ss->Scale;
             uint8_t angle = ss->Angle;
-            int xbr_key = hwr_lights_defaults().xbr_scale;
             uint32_t key = ((uint32_t)frm_idx << 18)
                          | ((uint32_t)(frv_pack & 0x3FFF) << 4)
-                         | ((uint32_t)(xbr_key & 0x03) << 2);
+                         | ((uint32_t)(hwr_sprite_filter_key() & 0x0F));
 
             /* FRV version unpack helper */
             int frv_arr[5];
@@ -1624,26 +1679,10 @@ void hwr_sw_collect_sprites(void)
                 }
 
                 {
-                    int sf = hwr_lights_defaults().xbr_scale;
                     uint8_t *reg_pixels = comp;
                     int reg_w = fw, reg_h = fh;
                     uint8_t *scaled = NULL;
-                    if (sf >= 2 && sf <= 4
-                        && fw * sf <= 4096 && fh * sf <= 4096)
-                    {
-                        int sw = fw * sf, sh = fh * sf;
-                        scaled = (uint8_t *)malloc((size_t)sw * sh * 4);
-                        if (scaled) {
-                        if (xbr_scale(comp, scaled, fw, fh, sf) == 0) {
-                            reg_pixels = scaled;
-                            reg_w = sw; reg_h = sh;
-                            hwr_xbr_count++;
-                        } else {
-                                free(scaled);
-                                scaled = NULL;
-                            }
-                        }
-                    }
+                    hwr_sprite_apply_filter(comp, fw, fh, &reg_pixels, &reg_w, &reg_h, &scaled);
                     slot = hwr_atlas_register(key, reg_pixels, reg_w, reg_h);
                     if (slot < 0 && reg_pixels != comp) {
                         fprintf(stderr, "xbr FALLBACK: key=%08x 4x(%dx%d) failed, trying 1x(%dx%d)\n",
@@ -1847,8 +1886,9 @@ void hwr_sw_collect_sprites(void)
             FILE *df = fopen("fx3d_sprites_debug.txt", "w");
             if (df) {
                 int di;
-                int xbr_sf = hwr_lights_defaults().xbr_scale;
-                fprintf(df, "xbr_scale=%d  xbr_active=%s\n", xbr_sf, xbr_sf > 0 ? "YES" : "NO");
+                HwrLightDefaults dbg_d = hwr_lights_defaults();
+                fprintf(df, "sprite_filter=%d sprite_scale=%d (0=none,1=xbr,2=scalefx)\n",
+                    dbg_d.sprite_filter, dbg_d.sprite_scale);
                 fprintf(df, "=== One-shot frame ===  xbr_done=%d\n", hwr_xbr_count);
                 fprintf(df, "cam: xc=%d yc=%d zc=%d D14=%d D1C=%d D10=%d D18=%d D3C=%d D40=%d scale=%d persp=%d\n",
                     snap.xc, snap.yc, snap.zc, snap.D14, snap.D1C, snap.D10, snap.D18,
@@ -2147,6 +2187,189 @@ extern int hwr_model_shadow_count;
 /* Texture pages packed contiguously (18 * 256 * 256) for the GL texture array. */
 static uint8_t   floor_pages[HWR_TMAP_PAGES * HWR_TMAP_DIM * HWR_TMAP_DIM];
 static int       floor_pages_ready = 0;
+
+/* Baked RGBA version of every STATIC page (everything except
+ * HWR_TMAP_RAIN_PAGE/ANIM_PAGE0/ANIM_PAGE1, which are mutated every tick and
+ * can't be pre-baked - see HwrTexturePages.baked_texels). Built exactly once
+ * per level, on the first tick the palette is confirmed non-transitional
+ * (sw_palette_is_full) so we never freeze a mid-fade-in snapshot into the
+ * texture atlas the way an unlucky sprite bake sometimes does (see the
+ * "recolour" comment block in hwr_sprite.c - the same LUT round-trip covers
+ * any residual drift here too). Sized for the largest possible upscale
+ * (ScaleFX's fixed 3x, or xBR's 4x) of all 18 pages so it never needs to grow. */
+static uint8_t  *floor_baked = NULL;
+static int       floor_baked_ready = 0;
+static int       floor_baked_w = 0, floor_baked_h = 0, floor_baked_count = 0;
+
+/* Pages 4 and 5 host FLIC-animated content (billboard / equipment / cyborg
+ * playback, see anim_type_get_output_buffer in game.c) and are redecoded into
+ * vec_tmap[] every game tick, unlike the other 16 pages of static art. */
+#define HWR_TMAP_ANIM_PAGE0 4
+#define HWR_TMAP_ANIM_PAGE1 5
+/* Page 0 is also mutated every tick while raining: water_droplets_on_floor
+ * (enginpeff.c) paints ripple/splash pixels straight into vec_tmap[0] as a
+ * floor-texture animation, the same trick the original SW renderer used for
+ * puddle ripples. It needs the same per-frame refresh as the FLIC pages or
+ * the GPU copy stays frozen at its initial load and the floor never shows
+ * rain splashes. */
+#define HWR_TMAP_RAIN_PAGE 0
+
+/* Palette index used as the cutout/transparency key by the keyed face draws
+ * (hwr_faces_render / hwr_transparent_render pass trans_key = 0). Baked into
+ * the alpha tag so keyed faces can use the baked path too - without it every
+ * building face fell back to the raw indexed path and missed the upscale. */
+#define HWR_TMAP_KEY_INDEX 0
+
+/* Kill-switch for the baked world-texture path. Set to 0 to make the renderer
+ * behave exactly as it did before this feature (raw indexed path for every
+ * page, always) - useful for bisecting any future floor/face rendering fault. */
+#define HWR_FLOOR_BAKE_ENABLE 1
+
+static int sw_page_is_dynamic(int page)
+{
+    return page == HWR_TMAP_RAIN_PAGE || page == HWR_TMAP_ANIM_PAGE0 || page == HWR_TMAP_ANIM_PAGE1;
+}
+
+/* One-time bake of the static texture pages into RGBA, applying the
+ * configured [upscale] texture_filter/texture_scale. Mirrors the sprite
+ * atlas's bake-time xBR/ScaleFX dispatch (hwr_sprite_apply_filter). */
+static void sw_bake_floor_textures(void)
+{
+    const unsigned char *bake_pal = sw_bake_palette();
+    HwrLightDefaults d = hwr_lights_defaults();
+    int filter = d.texture_filter;   /* 0=none, 1=xbr, 2=scalefx */
+    int scale = (filter == 2) ? 3 : d.texture_scale;   /* ScaleFX is fixed 3x */
+    int want_scale = (filter != 0 && scale >= 2 && scale <= 4);
+    int out_dim = HWR_TMAP_DIM * (want_scale ? scale : 1);
+    int static_count = HWR_TMAP_PAGES - 3;
+    uint8_t *buf = NULL;
+    uint8_t *page_rgba = NULL, *page_scaled = NULL;
+    int p, layer, all_ok, i;
+    /* SW exempts these palette indices from all shading (baked window light,
+     * road markings) - the raw path honours that via uSelfLit/selflit_lookup,
+     * which needs the palette INDEX. Depalettising throws the index away, so
+     * carry the flag per-texel in the baked alpha channel instead (alpha is
+     * otherwise unused: world textures are fully opaque). */
+    unsigned char selflit[256];
+
+    memset(selflit, 0, sizeof(selflit));
+    for (i = 0; fade_unaffected_colours[i] != 0; i++)
+        selflit[fade_unaffected_colours[i]] = 255;
+
+    page_rgba = (uint8_t *)malloc((size_t)HWR_TMAP_DIM * HWR_TMAP_DIM * 4);
+    if (!page_rgba)
+        return;
+
+retry:
+    buf = (uint8_t *)malloc((size_t)out_dim * out_dim * static_count * 4);
+    if (!buf) { free(page_rgba); return; }
+    if (want_scale) {
+        page_scaled = (uint8_t *)malloc((size_t)out_dim * out_dim * 4);
+        if (!page_scaled) { free(buf); free(page_rgba); return; }
+    }
+
+    layer = 0;
+    all_ok = 1;
+    for (p = 0; p < HWR_TMAP_PAGES; p++) {
+        const uint8_t *src;
+        uint8_t *dst;
+        int n, y, x;
+        if (sw_page_is_dynamic(p))
+            continue;
+        src = floor_pages + (size_t)p * HWR_TMAP_DIM * HWR_TMAP_DIM;
+        /* Bake alpha as a flat 255 here, NOT the tag mask: xBR weighs alpha in
+         * its pixel-difference metric, so a mask flipping between values would
+         * read as a hard edge and warp colour interpolation around every lit
+         * window and cutout. The tag is stamped after upscaling instead. */
+        for (n = 0; n < HWR_TMAP_DIM * HWR_TMAP_DIM; n++) {
+            int idx = src[n];
+            page_rgba[n * 4 + 0] = bake_pal[idx * 3 + 0];
+            page_rgba[n * 4 + 1] = bake_pal[idx * 3 + 1];
+            page_rgba[n * 4 + 2] = bake_pal[idx * 3 + 2];
+            page_rgba[n * 4 + 3] = 255;
+        }
+        /* Cutout (key) texels are never drawn, so their palette colour is
+         * arbitrary - but an upscaler doesn't know that and will happily blend
+         * it into the visible neighbours, ringing every fence and window with a
+         * dark halo. Flood each key texel with the average of its non-key
+         * 4-neighbours first so the interpolation has something sane to pull
+         * from. (ScaleFX picks whole texels and wouldn't care; xBR blends.) */
+        for (y = 0; y < HWR_TMAP_DIM; y++) {
+            for (x = 0; x < HWR_TMAP_DIM; x++) {
+                int acc[3] = {0, 0, 0}, cnt = 0, k;
+                static const int nb[4][2] = { {1,0}, {-1,0}, {0,1}, {0,-1} };
+                size_t at = (size_t)y * HWR_TMAP_DIM + x;
+                if (src[at] != HWR_TMAP_KEY_INDEX)
+                    continue;
+                for (k = 0; k < 4; k++) {
+                    int nx = x + nb[k][0], ny = y + nb[k][1];
+                    size_t na;
+                    if (nx < 0 || nx >= HWR_TMAP_DIM || ny < 0 || ny >= HWR_TMAP_DIM)
+                        continue;
+                    na = (size_t)ny * HWR_TMAP_DIM + nx;
+                    if (src[na] == HWR_TMAP_KEY_INDEX)
+                        continue;
+                    acc[0] += page_rgba[na * 4 + 0];
+                    acc[1] += page_rgba[na * 4 + 1];
+                    acc[2] += page_rgba[na * 4 + 2];
+                    cnt++;
+                }
+                if (cnt > 0) {
+                    page_rgba[at * 4 + 0] = (uint8_t)(acc[0] / cnt);
+                    page_rgba[at * 4 + 1] = (uint8_t)(acc[1] / cnt);
+                    page_rgba[at * 4 + 2] = (uint8_t)(acc[2] / cnt);
+                }
+            }
+        }
+        dst = buf + (size_t)layer * out_dim * out_dim * 4;
+        if (want_scale) {
+            int ok = (filter == 2)
+                ? (scalefx_scale(page_rgba, page_scaled, HWR_TMAP_DIM, HWR_TMAP_DIM) == 0)
+                : (xbr_scale(page_rgba, page_scaled, HWR_TMAP_DIM, HWR_TMAP_DIM, scale) == 0);
+            if (!ok) { all_ok = 0; break; }
+            memcpy(dst, page_scaled, (size_t)out_dim * out_dim * 4);
+        } else {
+            memcpy(dst, page_rgba, (size_t)HWR_TMAP_DIM * HWR_TMAP_DIM * 4);
+        }
+        /* Stamp the per-texel tag into alpha, sampling the SOURCE index
+         * nearest-neighbour so it survives any upscale factor unblended - both
+         * tags are boolean properties of a palette entry, and a half-transparent
+         * or half-lit texel is meaningless. Three states:
+         *   0   = cutout key texel  -> discard when the draw is keyed
+         *   128 = ordinary texel
+         *   255 = self-lit (fade_unaffected_colours), ignores scene shading */
+        for (y = 0; y < out_dim; y++) {
+            int sy = want_scale ? (y / scale) : y;
+            for (x = 0; x < out_dim; x++) {
+                int sx = want_scale ? (x / scale) : x;
+                int idx = src[(size_t)sy * HWR_TMAP_DIM + sx];
+                dst[((size_t)y * out_dim + x) * 4 + 3] =
+                    (idx == HWR_TMAP_KEY_INDEX) ? 0 : (selflit[idx] ? 255 : 128);
+            }
+        }
+        layer++;
+    }
+
+    if (!all_ok) {
+        /* Upscale failed partway (e.g. allocation pressure) - every layer of a
+         * texture array must be the same size, so fall back to an unscaled
+         * bake for every page rather than leaving a mixed-size buffer. */
+        free(buf);
+        if (page_scaled) { free(page_scaled); page_scaled = NULL; }
+        want_scale = 0;
+        out_dim = HWR_TMAP_DIM;
+        goto retry;
+    }
+
+    if (page_scaled) free(page_scaled);
+    free(page_rgba);
+    free(floor_baked);
+    floor_baked = buf;
+    floor_baked_w = out_dim;
+    floor_baked_h = out_dim;
+    floor_baked_count = static_count;
+    floor_baked_ready = 1;
+}
 
 static int clampi(int v, int lo, int hi)
 {
@@ -4922,19 +5145,6 @@ static const uint8_t *sw_get_palette(void *ctx)
     return (const uint8_t *)display_palette;
 }
 
-/* Pages 4 and 5 host FLIC-animated content (billboard / equipment / cyborg
- * playback, see anim_type_get_output_buffer in game.c) and are redecoded into
- * vec_tmap[] every game tick, unlike the other 16 pages of static art. */
-#define HWR_TMAP_ANIM_PAGE0 4
-#define HWR_TMAP_ANIM_PAGE1 5
-/* Page 0 is also mutated every tick while raining: water_droplets_on_floor
- * (enginpeff.c) paints ripple/splash pixels straight into vec_tmap[0] as a
- * floor-texture animation, the same trick the original SW renderer used for
- * puddle ripples. It needs the same per-frame refresh as the FLIC pages or
- * the GPU copy stays frozen at its initial load and the floor never shows
- * rain splashes. */
-#define HWR_TMAP_RAIN_PAGE 0
-
 static int sw_get_texture_pages(void *ctx, HwrTexturePages *out)
 {
     int p;
@@ -4955,7 +5165,19 @@ static int sw_get_texture_pages(void *ctx, HwrTexturePages *out)
         }
         if (any)
             floor_pages_ready = 1;
-    } else {
+    } else if (!floor_baked_ready && HWR_FLOOR_BAKE_ENABLE
+               && (sw_bake_palette(), sw_bake_pal_ready)) {
+        /* Gate on the SAME readiness flag the sprite atlas uses rather than
+         * re-testing display_palette: both must bake against one identical
+         * frozen palette or atlas_recolour's inverse-LUT round-trip maps their
+         * colours differently. */
+        /* Bake once the palette is confirmed stable (not a mid-fade-in
+         * snapshot - see sw_bake_floor_textures' comment). Until this fires,
+         * out->baked_texels stays NULL below and the backend keeps using the
+         * raw indexed path for every page, matching pre-bake behaviour. */
+        sw_bake_floor_textures();
+    }
+    if (floor_pages_ready) {
         /* Refresh the animated pages every frame so FLIC playback and the
          * rain-ripple page reach the GPU texture array (see fl_upload_pages'
          * sub-image refresh). */
@@ -4975,6 +5197,10 @@ static int sw_get_texture_pages(void *ctx, HwrTexturePages *out)
     out->width  = HWR_TMAP_DIM;
     out->height = HWR_TMAP_DIM;
     out->count  = HWR_TMAP_PAGES;
+    out->baked_texels = floor_baked_ready ? floor_baked : NULL;
+    out->baked_width  = floor_baked_w;
+    out->baked_height = floor_baked_h;
+    out->baked_count  = floor_baked_count;
     return 0;
 }
 
@@ -5482,4 +5708,5 @@ const HwrSceneSource *hwr_sw_source(int view_w, int view_h)
 void hwr_sw_source_reset(void)
 {
     floor_pages_ready = 0;
+    floor_baked_ready = 0;
 }

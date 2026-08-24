@@ -13,12 +13,37 @@
 #ifndef HWR_INTERNAL_H
 #define HWR_INTERNAL_H
 
+#include "hwr_gl.h"
 #include "hwr_scene_source.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 /******************************************************************************/
+
+/** GLSL helper shared by every program that samples atlas/baked-texture RGBA
+ *  data recolour-mapped through the frozen bake palette back to the live
+ *  palette (see hwr_sprite.c's "recolour" comment block for the full
+ *  rationale). Paste into a fragment shader string, then call
+ *  atlas_recolour(rgb) on the sampled colour. */
+#define HWR_RECOLOUR_GLSL \
+    "uniform sampler3D uInvPal;\n" \
+    "uniform sampler2D uPalLive;\n" \
+    "uniform int uRecolour;\n" \
+    "vec3 atlas_recolour(vec3 c) {\n" \
+    "    if (uRecolour == 0) return c;\n" \
+    "    vec3 v8 = floor(clamp(c, 0.0, 1.0) * 255.0 + 0.5);\n" \
+    "    vec3 cell = (floor(v8 * 0.25) + 0.5) / 64.0;\n" \
+    "    float idx = floor(texture(uInvPal, cell).r * 255.0 + 0.5);\n" \
+    "    return texture(uPalLive, vec2((idx + 0.5) / 256.0, 0.5)).rgb;\n" \
+    "}\n"
+
+/** Bind the recolour uniforms/textures (uInvPal @ GL_TEXTURE6, uPalLive @
+ *  GL_TEXTURE7) for a program using HWR_RECOLOUR_GLSL. loc_invpal/loc_pallive/
+ *  loc_on are that program's uniform locations for uInvPal/uPalLive/uRecolour
+ *  (pass -1 for any not present). Returns nonzero if recolour is active this
+ *  frame (live palette differs from the frozen bake palette). */
+int hwr_recolour_bind(GLint loc_invpal, GLint loc_pallive, GLint loc_on);
 
 /** Maximum point lights uploaded to the shader per frame (matches the [64] uniform size). */
 #define HWR_MAX_LIGHTS 64

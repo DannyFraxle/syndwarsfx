@@ -32,7 +32,8 @@ libhwrender_a_SOURCES = \
    src/hwr_tuning.c \
    src/hwr_thingbrowse.c \
    src/source_sw.c \
-    src/xbr.c
+    src/xbr.c \
+    src/scalefx.c
 
 libhwrender_a_CPPFLAGS = \
   -I"$(top_srcdir)/include" -I"$(builddir)/include"
