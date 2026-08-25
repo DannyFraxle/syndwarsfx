@@ -61,6 +61,19 @@ static float ss_cam_eye[3];              /* reconstructed camera eye (world) */
 static int    ss_ready = 0;
 static int    ss_w = 0, ss_h = 0;       /* current G-buffer size */
 static GLuint g_fbo = 0, g_color = 0, g_pos = 0, g_depth = 0;
+/* Multisample G-buffer (MSAA). When ms_samples > 1 the scene renders here and
+ * is resolved into the single-sample g_fbo above before the AO/SSR passes -
+ * those passes sample world positions per pixel and cannot read a multisample
+ * target. ms_want is the count asked for in fx3d.ini; ms_samples is what the
+ * driver actually gave us. */
+static GLuint ms_fbo = 0, ms_color = 0, ms_pos = 0, ms_depth = 0;
+static int    ms_samples = 0;   /* 0 or 1 = MSAA off, scene goes straight to g_fbo */
+static int    ms_want = -1;     /* last requested count, to spot a config change */
+static GLuint msres_prog = 0;
+static GLint  u_mr_color = -1, u_mr_pos = -1, u_mr_samples = -1;
+/* Diagnostics, reported once by the host through hwr_ssao_msaa_info(). */
+static int    ms_dbg_cfg = 0, ms_dbg_max = 0, ms_dbg_texmax = 0;
+static unsigned ms_dbg_status = 0;   /* glCheckFramebufferStatus of ms_fbo */
 static GLuint ao_fbo = 0, ao_tex = 0;
 static GLuint blur_fbo = 0, blur_tex = 0;
 static GLuint noise_tex = 0;
@@ -380,6 +393,27 @@ static const char *reflblur_frag_src =
     "    frag = sum / max(wsum, 1e-4);\n"
     "}\n";
 
+/* MSAA resolve: multisample G-buffer -> single-sample G-buffer. */
+static const char *msres_frag_src =
+    "#version 330 core\n"
+    "uniform sampler2DMS uMSColor;\n"
+    "uniform sampler2DMS uMSPos;\n"
+    "uniform int uSamples;\n"
+    "layout(location = 0) out vec4 oColor;\n"
+    "layout(location = 1) out vec4 oPos;\n"
+    "void main(){\n"
+    "    ivec2 c = ivec2(gl_FragCoord.xy);\n"
+    "    vec3 sum = vec3(0.0);\n"
+    "    for (int i = 0; i < uSamples; ++i)\n"
+    "        sum += texelFetch(uMSColor, c, i).rgb;\n"
+    "    oColor = vec4(sum / float(uSamples), 1.0);\n"
+    /* World position must NOT be averaged across samples: the mean of two
+     * surfaces positions is a point on neither, and the AO kernel and the
+     * SSR ray march would then trace from that phantom point. Sample 0
+     * reproduces the single-sample geometry the pre-MSAA path wrote. */
+    "    oPos = texelFetch(uMSPos, c, 0);\n"
+    "}\n";
+
 /* Final composite: scene colour * AO, with the blurred reflection blended over
  * water pixels. */
 static const char *comp_frag_src =
@@ -505,7 +539,9 @@ static int ss_init_once(void)
     comp_prog = ss_link(quad_vert_src, comp_frag_src);
     refl_prog = ss_link(quad_vert_src, refl_frag_src);
     reflblur_prog = ss_link(quad_vert_src, reflblur_frag_src);
-    if (!ssao_prog || !blur_prog || !comp_prog || !refl_prog || !reflblur_prog)
+    msres_prog = ss_link(quad_vert_src, msres_frag_src);
+    if (!ssao_prog || !blur_prog || !comp_prog || !refl_prog || !reflblur_prog
+        || !msres_prog)
         return HWR_ERROR;
 
     u_ss_pos        = glGetUniformLocation(ssao_prog, "uPosition");
@@ -555,6 +591,10 @@ static int ss_init_once(void)
     u_rb_texel  = glGetUniformLocation(reflblur_prog, "uTexel");
     u_rb_radius = glGetUniformLocation(reflblur_prog, "uRadius");
 
+    u_mr_color   = glGetUniformLocation(msres_prog, "uMSColor");
+    u_mr_pos     = glGetUniformLocation(msres_prog, "uMSPos");
+    u_mr_samples = glGetUniformLocation(msres_prog, "uSamples");
+
     ss_build_kernel();
     ss_make_noise();
     glGenVertexArrays(1, &quad_vao);
@@ -579,6 +619,55 @@ static GLuint ss_make_tex(int w, int h, GLint internal, GLenum format, GLenum ty
     return t;
 }
 
+/* The MSAA sample count to use, clamped to what this driver supports for both
+ * the RGB8 colour and the RGBA32F position attachment (GL only guarantees
+ * GL_MAX_SAMPLES for renderbuffers; float colour textures often cap lower).
+ * Returns 0 when MSAA is off. */
+static int ss_msaa_request(void)
+{
+    const HwrConfig *cfg = hwr_config();
+    GLint cap = 0, texcap = 0;
+    int n = (cfg != NULL) ? cfg->aa_samples : 0;
+    ms_dbg_cfg = n;
+    if (n < 2)
+        return 0;
+    glGetIntegerv(GL_MAX_SAMPLES, &cap);
+    glGetIntegerv(GL_MAX_COLOR_TEXTURE_SAMPLES, &texcap);
+    ms_dbg_max = (int)cap;
+    ms_dbg_texmax = (int)texcap;
+    if (texcap > 0 && texcap < cap)
+        cap = texcap;
+    if (cap < 2)
+        return 0;
+    if (n > (int)cap)
+        n = (int)cap;
+    return n;
+}
+
+/* Make a multisample colour texture attachment. */
+static GLuint ss_make_tex_ms(int w, int h, GLint internal, int samples)
+{
+    GLuint t;
+    glGenTextures(1, &t);
+    glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, t);
+    /* fixedsamplelocations MUST be GL_TRUE here: the depth attachment is a
+     * renderbuffer, which always behaves as if it were fixed, and a framebuffer
+     * mixing fixed and non-fixed attachments is INCOMPLETE_MULTISAMPLE. */
+    glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, samples,
+        (GLenum)internal, w, h, 1);
+    glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, 0);
+    return t;
+}
+
+static void ss_free_ms_targets(void)
+{
+    if (ms_color) { glDeleteTextures(1, &ms_color); ms_color = 0; }
+    if (ms_pos)   { glDeleteTextures(1, &ms_pos); ms_pos = 0; }
+    if (ms_depth) { glDeleteRenderbuffers(1, &ms_depth); ms_depth = 0; }
+    if (ms_fbo)   { glDeleteFramebuffers(1, &ms_fbo); ms_fbo = 0; }
+    ms_samples = 0;
+}
+
 static void ss_free_targets(void)
 {
     if (g_color)  { glDeleteTextures(1, &g_color); g_color = 0; }
@@ -593,15 +682,18 @@ static void ss_free_targets(void)
     if (g_fbo)    { glDeleteFramebuffers(1, &g_fbo); g_fbo = 0; }
     if (ao_fbo)   { glDeleteFramebuffers(1, &ao_fbo); ao_fbo = 0; }
     if (blur_fbo) { glDeleteFramebuffers(1, &blur_fbo); blur_fbo = 0; }
+    ss_free_ms_targets();
 }
 
 static int ss_resize(int w, int h)
 {
     static const GLenum draw2[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
-    if (w == ss_w && h == ss_h && g_fbo != 0)
+    int want = ss_msaa_request();
+    if (w == ss_w && h == ss_h && g_fbo != 0 && want == ms_want)
         return HWR_OK;
     ss_free_targets();
     ss_w = w; ss_h = h;
+    ms_want = want;
 
     /* G-buffer: colour (RGB8) + world position (RGB32F) + depth. */
     g_color = ss_make_tex(w, h, GL_RGB8, GL_RGB, GL_UNSIGNED_BYTE);
@@ -666,8 +758,51 @@ static int ss_resize(int w, int h)
         return HWR_ERROR;
     }
 
+    /* Multisample G-buffer, when AntiAliasing asked for one. Its attachments
+     * mirror the single-sample set above so the resolve is a straight copy. */
+    if (want >= 2) {
+        ms_color = ss_make_tex_ms(w, h, GL_RGB8, want);
+        ms_pos   = ss_make_tex_ms(w, h, GL_RGBA32F, want);
+        glGenRenderbuffers(1, &ms_depth);
+        glBindRenderbuffer(GL_RENDERBUFFER, ms_depth);
+        glRenderbufferStorageMultisample(GL_RENDERBUFFER, want,
+            GL_DEPTH_COMPONENT24, w, h);
+
+        glGenFramebuffers(1, &ms_fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, ms_fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+            GL_TEXTURE_2D_MULTISAMPLE, ms_color, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1,
+            GL_TEXTURE_2D_MULTISAMPLE, ms_pos, 0);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+            GL_RENDERBUFFER, ms_depth);
+        glDrawBuffers(2, draw2);
+        ms_dbg_status = (unsigned)glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        if (ms_dbg_status != GL_FRAMEBUFFER_COMPLETE) {
+            /* Not fatal: drop to the single-sample path rather than lose 3D.
+             * hwr_set_error only records the reason; ss_free_ms_targets()
+             * clears ms_samples so the rest of the frame takes the old path. */
+            hwr_set_error("MSAA G-buffer incomplete at %d samples;"
+                " anti-aliasing off", want);
+            ss_free_ms_targets();
+        } else {
+            ms_samples = want;
+        }
+    }
+
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     return HWR_OK;
+}
+
+void hwr_ssao_msaa_info(int *cfg_samples, int *max_samples,
+    int *max_color_tex_samples, int *want, int *got, unsigned *fbo_status)
+{
+    if (fbo_status != NULL)            *fbo_status = ms_dbg_status;
+    if (cfg_samples != NULL)           *cfg_samples = ms_dbg_cfg;
+    if (max_samples != NULL)           *max_samples = ms_dbg_max;
+    if (max_color_tex_samples != NULL) *max_color_tex_samples = ms_dbg_texmax;
+    if (want != NULL)                  *want = ms_want;
+    if (got != NULL)                   *got = ms_samples;
 }
 
 /* ---- Public API ---------------------------------------------------------- */
@@ -788,7 +923,7 @@ void hwr_ssao_begin(int w, int h)
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         return;
     }
-    glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, (ms_samples > 1) ? ms_fbo : g_fbo);
     glViewport(0, 0, w, h);
     /* Clear to zero so the world-position attachment reads 0 on background
      * pixels - the AO pass treats position 0 as "no geometry" and skips it. */
@@ -808,6 +943,26 @@ void hwr_ssao_resolve(void)
         return;
 
     glDisable(GL_DEPTH_TEST);
+
+    /* --- MSAA resolve: multisample G-buffer -> g_color / g_pos. Everything
+     *     downstream (AO, SSR, fog, the depth blit) reads the single-sample
+     *     buffers, so this has to happen before any of them. --- */
+    if (ms_samples > 1) {
+        glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
+        glViewport(0, 0, ss_w, ss_h);
+        glUseProgram(msres_prog);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, ms_color);
+        glUniform1i(u_mr_color, 0);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, ms_pos);
+        glUniform1i(u_mr_pos, 1);
+        glUniform1i(u_mr_samples, ms_samples);
+        ss_fullscreen();
+        glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, 0);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, 0);
+    }
 
     /* --- SSAO + blur passes (only when SSAO itself is on; a reflection-only run
      *     skips them and the composite holds AO at 1.0). --- */
@@ -923,7 +1078,10 @@ void hwr_ssao_blit_depth(void)
      * which already holds the correct depth. */
     if (!ss_effective() || !ss_ready)
         return;
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, g_fbo);
+    /* Read from the multisample buffer when there is one - the resolve pass
+     * only reproduced colour and position, not depth. A multisample -> single
+     * sample depth blit is a resolve the driver does for us. */
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, (ms_samples > 1) ? ms_fbo : g_fbo);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
     glBlitFramebuffer(0, 0, ss_w, ss_h, 0, 0, ss_w, ss_h,
         GL_DEPTH_BUFFER_BIT, GL_NEAREST);

@@ -245,6 +245,13 @@ void hwr_ssao_blit_depth(void);
  *  attachment so they don't corrupt the world-position attachment. */
 int hwr_ssao_active(void);
 
+/** Diagnostics for the MSAA G-buffer, for one-shot logging by the host. Any
+ *  pointer may be NULL. want is the sample count asked for after clamping to
+ *  the driver caps; got is what the FBO actually came up with (0/1 = MSAA off,
+ *  i.e. the scene is rendering to a single-sample G-buffer). */
+void hwr_ssao_msaa_info(int *cfg_samples, int *max_samples,
+    int *max_color_tex_samples, int *want, int *got, unsigned *fbo_status);
+
 /** The G-buffer world-position texture (xyz world pos, w = water mask), still
  *  valid after hwr_ssao_resolve(). Returns 0 when the G-buffer path is off.
  *  Used by the distance fog to get true per-pixel world positions. */

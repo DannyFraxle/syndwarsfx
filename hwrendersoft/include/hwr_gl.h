@@ -78,6 +78,10 @@ typedef ptrdiff_t      GLsizeiptr;
 #define GL_LINEAR                         0x2601
 #define GL_CLAMP_TO_EDGE                  0x812F
 #define GL_TEXTURE_2D_ARRAY               0x8C1A
+#define GL_TEXTURE_2D_MULTISAMPLE         0x9100
+#define GL_MAX_SAMPLES                    0x8D57
+#define GL_MAX_COLOR_TEXTURE_SAMPLES      0x910E
+#define GL_MAX_DEPTH_TEXTURE_SAMPLES      0x910F
 #define GL_TEXTURE_WRAP_R                 0x8072
 #define GL_RED                            0x1903
 #define GL_RGB                            0x1907
@@ -216,6 +220,8 @@ typedef void   (HWR_APIENTRY *PFN_glGenRenderbuffers)(GLsizei, GLuint *);
 typedef void   (HWR_APIENTRY *PFN_glDeleteRenderbuffers)(GLsizei, const GLuint *);
 typedef void   (HWR_APIENTRY *PFN_glBindRenderbuffer)(GLenum, GLuint);
 typedef void   (HWR_APIENTRY *PFN_glRenderbufferStorage)(GLenum, GLenum, GLsizei, GLsizei);
+typedef void   (HWR_APIENTRY *PFN_glRenderbufferStorageMultisample)(GLenum, GLsizei, GLenum, GLsizei, GLsizei);
+typedef void   (HWR_APIENTRY *PFN_glTexImage2DMultisample)(GLenum, GLsizei, GLenum, GLsizei, GLsizei, GLboolean);
 typedef void   (HWR_APIENTRY *PFN_glFramebufferRenderbuffer)(GLenum, GLenum, GLenum, GLuint);
 
 /* --- The resolved entry points (defined in hwr_gl.c) --- */

@@ -201,6 +201,26 @@ static void glue_present(void)
             hwr_transparent_render(pal, fx3d_filter_objects);  /* blended faces (Phase 8) */
             hwr_sprites_trans_render(pal, fx3d_filter_sprites); /* blended sprites (Phase 8) */
             hwr_ssao_resolve();              /* composites colour*AO to back buffer */
+            {
+                /* AntiAliasing only does anything if the G-buffer itself came
+                 * up multisampled - the back buffer's MSAA never sees the
+                 * scene while SSAO/reflections are on. Report once, and only
+                 * when the request was silently dropped, so a config that
+                 * looks enabled but renders aliased says why. */
+                static TbBool msaa_logged = false;
+                if (!msaa_logged) {
+                    int c = 0, mx = 0, tmx = 0, want = 0, got = 0;
+                    unsigned st = 0;
+                    hwr_ssao_msaa_info(&c, &mx, &tmx, &want, &got, &st);
+                    if (c >= 2 && got < 2) {
+                        LOGERR("FX3D MSAA: AntiAliasing=%d requested but the"
+                            " G-buffer is single-sample (max=%d texmax=%d"
+                            " want=%d fbo=0x%04x gbuf %dx%d)", c, mx, tmx,
+                            want, st, dw, dh);
+                    }
+                    msaa_logged = true;
+                }
+            }
             hwr_ssao_blit_depth();           /* scene depth -> back buffer for beams */
             hwr_beams_render();              /* depth-tested weapon beams (zap/laser) */
             hwr_overlay_render();            /* screen-space tinted overlays (shield/blast) */
