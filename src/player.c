@@ -503,8 +503,9 @@ void set_default_player_control(void)
 
     p_locplayer = &players[local_player_no];
     p_locplayer->DoubleMode = 0;
+
     for (dmuser = 0; dmuser < LOCAL_USERS_MAX_COUNT; dmuser++) {
-        p_locplayer->UserInput[dmuser].ControlMode = UInpCtr_Mouse;
+        user_input_control_mode_set(local_player_no, dmuser, UInpCtr_Mouse);
     }
 }
 

@@ -1482,8 +1482,8 @@ void draw_hud(int dcthing)
             number_player(p_agent, plagent);
             if ((p_agent->Flag & TngF_SelectedAgent) != 0)
             {
-                short ctlmode;
-                ctlmode = p_locplayer->UserInput[plagent].ControlMode & ~UInpCtr_AllFlagsMask;
+                ushort ctlmode;
+                ctlmode = user_input_control_mode_get(local_player_no, plagent);
                 if (ctlmode != UInpCtr_Mouse)
                 {
                     if (p_agent->PTarget != NULL)
@@ -5096,9 +5096,9 @@ ubyte process_mouse_inputs(void)
     p_locplayer = &players[local_player_no];
 
     if (!lbDisplay.MLeftButton)
-        p_locplayer->UserInput[mouser].ControlMode &= ~UInpCtrF_Unkn8000;
+        user_input_control_flags_clear(local_player_no, mouser, UInpCtrF_LBtnDown);
     if (!lbDisplay.MRightButton)
-        p_locplayer->UserInput[mouser].ControlMode &= ~UInpCtrF_Unkn4000;
+        user_input_control_flags_clear(local_player_no, mouser, UInpCtrF_RBtnDown);
     if ((ingame.DisplayMode != DpM_ENGINEPLY) && (ingame.DisplayMode != DpM_UNKN_3B))
         return did_inp;
     did_inp |= process_panel_state();
@@ -5223,7 +5223,7 @@ ubyte process_mouse_inputs(void)
         return did_inp;
     }
 
-    if (lbDisplay.RightButton && ((p_locplayer->UserInput[mouser].ControlMode & UInpCtrF_Unkn4000) == 0))
+    if (lbDisplay.RightButton && !user_input_control_flags_check(local_player_no, mouser, UInpCtrF_RBtnDown))
     {
         WeaponType wtype;
         lbDisplay.RightButton = 0;
@@ -5287,7 +5287,7 @@ ubyte process_mouse_inputs(void)
         }
     }
 
-    if ( lbDisplay.MRightButton && ((p_locplayer->UserInput[mouser].ControlMode & UInpCtrF_Unkn4000) == 0))
+    if (lbDisplay.MRightButton && !user_input_control_flags_check(local_player_no, mouser, UInpCtrF_RBtnDown))
     {
         p_pckt = &packets[local_player_no];
         map_y = (alt_at_point(mouse_map_x, mouse_map_z) >> 8) + 20;
@@ -5584,12 +5584,14 @@ ubyte do_user_interface(void)
     {
         if (is_key_pressed(KC_E, KMod_ALT) || is_key_pressed(KC_E, KMod_ALT|KMod_SHIFT))
         {
+            short dt;
+
             if (lbShift & KMod_SHIFT)
-                n = -2;
+                dt = -2;
             else
-                n = 2;
-            render_area_a = bound_render_area(render_area_a + n);
-            render_area_b = bound_render_area(render_area_b + n);
+                dt = 2;
+            render_area_a = bound_render_area(render_area_a + dt);
+            render_area_b = bound_render_area(render_area_b + dt);
             did_inp |= GINPUT_DIRECT;
         }
     }
@@ -5671,7 +5673,7 @@ ubyte do_user_interface(void)
                     short dcthing;
                     dcthing = p_locplayer->DirectControl[n];
                     my_build_packet(&packets[local_player_no], PAct_SELECT_AGENT, dcthing, p_agent->ThingOffset, 0, 0);
-                    p_locplayer->UserInput[0].ControlMode |= UInpCtrF_Unkn8000;
+                    user_input_control_flags_raise(local_player_no, 0, UInpCtrF_LBtnDown);
                     // Double tapping - center view on the agent
                     if (gameturn - last_sel_agent_turn[n] < 7)
                     {
@@ -5707,17 +5709,18 @@ ubyte do_user_interface(void)
     }
 
     struct SpecialUserInput *p_usrinp;
-    short ctlmode;
+    ushort ctlmode;
+    ubyte dmuser;
 
     if (p_locplayer->DoubleMode)
     {
-        for (n = 0; n < p_locplayer->DoubleMode + 1; n++)
+        for (dmuser = 0; dmuser < p_locplayer->DoubleMode + 1; dmuser++)
         {
             short dcthing;
 
-            p_usrinp = &p_locplayer->UserInput[n];
+            p_usrinp = &p_locplayer->UserInput[dmuser];
             do_user_input_bits_control_clear_nonmove(p_usrinp);
-            ctlmode = p_usrinp->ControlMode & ~UInpCtr_AllFlagsMask;
+            ctlmode = user_input_control_mode_get(local_player_no, dmuser);
             if (ctlmode == UInpCtr_Mouse)
             {
                 do_user_input_bits_control_clear_all(p_usrinp);
@@ -5725,7 +5728,7 @@ ubyte do_user_interface(void)
             }
             else if (ctlmode <= UInpCtr_Keyboard)
             {
-                dcthing = p_locplayer->DirectControl[n];
+                dcthing = p_locplayer->DirectControl[dmuser];
                 if (person_can_accept_control(dcthing))
                 {
                     did_inp = weapon_select_input();
@@ -5739,7 +5742,7 @@ ubyte do_user_interface(void)
             }
             else
             {
-                dcthing = p_locplayer->DirectControl[n];
+                dcthing = p_locplayer->DirectControl[dmuser];
                 if (!person_can_accept_control(dcthing))
                     return did_inp;
 
@@ -5747,7 +5750,7 @@ ubyte do_user_interface(void)
                 do_user_input_bits_direction_from_joy(p_usrinp, ctlmode - 2);
                 do_user_input_bits_actions_from_joy(p_usrinp, ctlmode - 2);
             }
-            ctlmode = p_usrinp->ControlMode & ~UInpCtr_AllFlagsMask;
+            ctlmode = user_input_control_mode_get(local_player_no, dmuser);
             if (ctlmode != UInpCtr_Mouse)
             {
                 update_agent_move_direction_deltas(p_usrinp);
@@ -5756,7 +5759,7 @@ ubyte do_user_interface(void)
             if ((debug_log_things & 0x02) != 0)
             {
                 LOGSYNC_F("User %d.%d ControlMode 0x%04X Bits 0x%04X Turn %u Dt(%d,%d) OnFace %d",
-                  (int)local_player_no, (int)n, (uint)p_usrinp->ControlMode, (uint)p_usrinp->Bits,
+                  (int)local_player_no, (int)dmuser, (uint)p_usrinp->ControlMode, (uint)p_usrinp->Bits,
                   (uint)p_usrinp->Turn, (int)p_usrinp->DtX, (int)p_usrinp->DtZ,
                   (int)p_usrinp->OnFace);
             }
@@ -5767,7 +5770,7 @@ ubyte do_user_interface(void)
         short dcthing;
 
         p_usrinp = &p_locplayer->UserInput[0];
-        ctlmode = p_usrinp->ControlMode & ~UInpCtr_AllFlagsMask;
+        ctlmode = user_input_control_mode_get(local_player_no, 0);
         if ((ctlmode == UInpCtr_Mouse) && is_gamekey_pressed(GKey_KEY_CONTROL))
         {
             clear_gamekey_pressed(GKey_KEY_CONTROL);
@@ -5793,7 +5796,7 @@ ubyte do_user_interface(void)
         {
             do_user_input_bits_actions_from_joy_and_kbd(p_usrinp);
 
-            ctlmode = p_usrinp->ControlMode & ~UInpCtr_AllFlagsMask;
+            ctlmode = user_input_control_mode_get(local_player_no, 0);
             if (ctlmode != UInpCtr_Mouse)
             {
                 do_user_input_bits_direction_clear(p_usrinp);

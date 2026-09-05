@@ -140,6 +140,30 @@ ushort user_input_control_mode_get(PlayerIdx plyr, ubyte dmuser)
     return p_player->UserInput[dmuser].ControlMode & ~UInpCtr_AllFlagsMask;
 }
 
+void user_input_control_flags_raise(PlayerIdx plyr, ubyte dmuser, ushort ctrflags)
+{
+    PlayerInfo *p_player;
+
+    p_player = &players[plyr];
+    p_player->UserInput[dmuser].ControlMode |= ctrflags;
+}
+
+void user_input_control_flags_clear(PlayerIdx plyr, ubyte dmuser, ushort ctrflags)
+{
+    PlayerInfo *p_player;
+
+    p_player = &players[plyr];
+    p_player->UserInput[dmuser].ControlMode &= ~ctrflags;
+}
+
+TbBool user_input_control_flags_check(PlayerIdx plyr, ubyte dmuser, ushort ctrflags)
+{
+    PlayerInfo *p_player;
+
+    p_player = &players[plyr];
+    return (p_player->UserInput[dmuser].ControlMode & ctrflags) == ctrflags;
+}
+
 void init_user_input_local_controls(void)
 {
     PlayerInfo *p_locplayer;
