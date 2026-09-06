@@ -3645,17 +3645,13 @@ void gproc3_unknsub2(void)
         :  :  : "eax" );
     return;
 #endif
+    struct CameraState cam_bkp;
     short ms_x, ms_y, ms_limit;
     TbPixel *outbuf;
     int i;
 
-    int bkp_ingame_flags;
-    s32 bkp_engn_cam_yaw;
-    ushort bkp_render_area_a, bkp_render_area_b;
-    s32 bkp_engn_cam_tilt;
+    u32 bkp_ingame_flags;
     ubyte bkp_unkn_flags_01;
-    ushort bkp_overall_scale;
-    s32 bkp_engn_xc, bkp_engn_yc, bkp_engn_zc;
 
     ingame.Flags &= ~GamF_BillboardMovies;
     if (is_key_pressed(KC_Q, KMod_DONTCARE))
@@ -3667,21 +3663,16 @@ void gproc3_unknsub2(void)
         dword_155018 = 50;
     }
 
-    bkp_render_area_a = render_area_a;
-    bkp_render_area_b = render_area_b;
-    bkp_overall_scale = overall_scale;
-    bkp_engn_xc = engn_xc;
-    bkp_engn_yc = engn_yc;
-    bkp_engn_zc = engn_zc;
-    bkp_engn_cam_yaw = engn_cam_yaw;
-    bkp_engn_cam_tilt = engn_cam_tilt;
-
     bkp_ingame_flags = ingame.Flags;
     bkp_unkn_flags_01 = unkn_flags_01;
 
+    camera_save_backup_state(&cam_bkp);
+
     render_area_a = 24;
     render_area_b = 24;
+    overall_scale = 18;
 
+    unkn_flags_01 = 1;
     ingame.Flags = 0;
 
     ms_x = lbDisplay.MMouseX;
@@ -3689,10 +3680,10 @@ void gproc3_unknsub2(void)
 
     ms_limit = lbDisplay.MouseWindowX + lbDisplay.MouseWindowWidth * 1 / 3;
     if (ms_x < ms_limit)
-      dword_1AAB74 -= 16;
+        dword_1AAB74 -= 16;
     ms_limit = lbDisplay.MouseWindowX + lbDisplay.MouseWindowWidth * 2 / 3;
     if (ms_x > ms_limit)
-      dword_1AAB74 += 16;
+        dword_1AAB74 += 16;
     dword_1AAB74 &= 0x7FF;
 
     if (!lbDisplay.MRightButton)
@@ -3740,8 +3731,6 @@ void gproc3_unknsub2(void)
     setup_vecs(outbuf, vec_tmap[0], 256, 96, 64);
     prepare_drawlist();
 
-    unkn_flags_01 = 1;
-    overall_scale = 18;
     clear_vecs_screen(0);
     drawturn -= 10;
     func_2e440();
@@ -3751,17 +3740,9 @@ void gproc3_unknsub2(void)
       lbDisplay.PhysicalScreenWidth,
       lbDisplay.PhysicalScreenWidth,
       lbDisplay.PhysicalScreenHeight);
+    transform_reinit_vec_window();
 
-    dword_176D3C = vec_window_width / 2;
-    dword_176D40 = vec_window_height / 2;
-    render_area_a = bkp_render_area_a;
-    render_area_b = bkp_render_area_b;
-    overall_scale = bkp_overall_scale;
-    engn_xc = bkp_engn_xc;
-    engn_yc = bkp_engn_yc;
-    engn_zc = bkp_engn_zc;
-    engn_cam_yaw = bkp_engn_cam_yaw;
-    engn_cam_tilt = bkp_engn_cam_tilt;
+    camera_load_backup_state(&cam_bkp);
 
     ingame.Flags = bkp_ingame_flags;
     unkn_flags_01 = bkp_unkn_flags_01;
@@ -4926,16 +4907,16 @@ void do_scroll_map(void)
     }
     if ((engn_zc - engn_zc_orig) || (engn_xc - engn_xc_orig)) {
         engn_x_vel = engn_xc - engn_xc_orig;
-        engn_y_vel = engn_zc - engn_zc_orig;
+        engn_z_vel = engn_zc - engn_zc_orig;
     } else {
         engn_x_vel >>= 2;
-        engn_y_vel >>= 2;
+        engn_z_vel >>= 2;
         if (abs(engn_x_vel) < 5)
             engn_x_vel = 0;
-        if (abs(engn_y_vel) < 5)
-            engn_y_vel = 0;
+        if (abs(engn_z_vel) < 5)
+            engn_z_vel = 0;
         engn_xc += engn_x_vel;
-        engn_zc += engn_y_vel;
+        engn_zc += engn_z_vel;
     }
 }
 
