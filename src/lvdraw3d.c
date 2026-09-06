@@ -845,9 +845,8 @@ void clear_super_quick_lights(void)
     }
 }
 
-void process_engine_unk1(void)
+void prepare_drawlist(void)
 {
-    camera_apply_velocity();
     reset_drawlist_stats();
     transform_reinit_vec_window();
     transform_reinit_camera();

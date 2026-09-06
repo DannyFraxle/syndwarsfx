@@ -63100,7 +63100,7 @@ GLOBAL_FUNC (ASM_gproc3_unknsub2)	/* 0x73798 */
 		mov    %eax,EXPORT_SYMBOL(engn_cam_yaw)
 		mov    EXPORT_SYMBOL(vec_tmap)+20,%eax
 		call   ac_setup_vecs
-		call   ac_process_engine_unk1
+		call   ac_prepare_drawlist
 		mov    $0x12,%ecx
 		mov    $0x1,%bl
 		mov    EXPORT_SYMBOL(vec_tmap)+20,%eax
@@ -63148,7 +63148,7 @@ GLOBAL_FUNC (ASM_gproc3_unknsub2)	/* 0x73798 */
 		mov    0xc(%esp),%al
 		mov    %edi,EXPORT_SYMBOL(engn_cam_yaw)
 		mov    %al,unkn_flags_01
-		call   ac_process_engine_unk1
+		call   ac_prepare_drawlist
 		add    $0x1c,%esp
 		pop    %ebp
 		pop    %edi

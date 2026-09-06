@@ -2054,7 +2054,8 @@ void init_outro(void)
         gameturn++;
         render_anim_turn = gameturn;
         traffic_unkn_func_01();
-        process_engine_unk1();
+        camera_apply_velocity();
+        prepare_drawlist();
         process_sound_heap();
         func_2e440();
         if (outro_credits_enabled)
@@ -3543,7 +3544,7 @@ void compute_scanner_zoom(void)
     SCANNER_set_zoom(zoom);
 }
 
-void calc_mouse_pos(void)
+void recalc_mouse_pos(void)
 {
     int cor_dx, cor_dy, cor_dz;
     int fctr_xz;
@@ -3579,37 +3580,30 @@ void calc_mouse_pos(void)
     }
 }
 
-void process_engine_unk2(void)
+void prepare_mouse_on_map(void)
 {
     short msx, msy;
     int offs_y;
     int scr_x, scr_y;
     int map_dxc, map_dzc;
 
+    msx = lbDisplay.MMouseX;
+    msy = lbDisplay.MMouseY;
+
     if (ingame.DisplayMode == DpM_ENGINEPLY)
       offs_y = overall_scale * engn_yc >> 8;
     else
       offs_y = 0;
-    msx = lbDisplay.GraphicsScreenHeight < 400 ? 2 * lbDisplay.MMouseX : lbDisplay.MMouseX;
-    msy = lbDisplay.GraphicsScreenHeight < 400 ? 2 * lbDisplay.MMouseY : lbDisplay.MMouseY;
 
-    if (lbDisplay.GraphicsScreenHeight < 400)
-    {
-        scr_y = (msy >> 1) - offs_y;
-        scr_x = msx >> 1;
-    }
-    else
-    {
-        scr_y = msy - offs_y;
-        scr_x = msx;
-    }
+    scr_y = msy - offs_y;
+    scr_x = msx;
 
     transform_screen_to_map_isometric(&map_dxc, &map_dzc, scr_x, scr_y);
 
     mouse_map_x = engn_xc + map_dxc;
     mouse_map_z = engn_zc + map_dzc;
     if (ingame.DisplayMode == DpM_ENGINEPLY)
-        calc_mouse_pos();
+        recalc_mouse_pos();
 }
 
 void show_game_engine(void)
@@ -3622,8 +3616,9 @@ void show_game_engine(void)
     process_view_inputs(dcthing);// inlined call gengine_ctrl
 
     compute_scanner_zoom();
-    process_engine_unk1();
-    process_engine_unk2();
+    camera_apply_velocity();
+    prepare_drawlist();
+    prepare_mouse_on_map();
     process_engine_unk3();
 }
 
@@ -3741,7 +3736,7 @@ void gproc3_unknsub2(void)
     outbuf = vec_tmap[4] + 256 * (5 * 32) + 2 * 32;
 #endif
     setup_vecs(outbuf, vec_tmap[0], 256, 96, 64);
-    process_engine_unk1();
+    prepare_drawlist();
 
     unkn_flags_01 = 1;
     overall_scale = 18;
@@ -3769,7 +3764,7 @@ void gproc3_unknsub2(void)
     ingame.Flags = bkp_ingame_flags;
     unkn_flags_01 = bkp_unkn_flags_01;
 
-    process_engine_unk1();
+    prepare_drawlist();
 }
 
 ubyte accept_mission(ubyte click)

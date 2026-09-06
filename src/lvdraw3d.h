@@ -38,7 +38,7 @@ void apply_super_quick_light(short lx, short lz, ushort b);
 void lvdraw_do_floor(void);
 void func_2e440(void);
 
-void process_engine_unk1(void);
+void prepare_drawlist(void);
 void draw_screen(void);
 /******************************************************************************/
 #ifdef __cplusplus
