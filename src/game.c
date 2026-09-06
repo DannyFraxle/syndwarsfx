@@ -3627,6 +3627,22 @@ void show_game_engine(void)
     process_engine_unk3();
 }
 
+TbResult clear_vecs_screen(TbPixel colour)
+{
+    TbPixel *ptr;
+    long h;
+
+    ptr = vec_screen;
+    if (ptr == NULL)
+        return Lb_FAIL;
+    for (h = vec_window_height; h >= 0; h--)
+    {
+        LbMemorySet(ptr, colour, vec_window_width);
+        ptr += vec_screen_width;
+    }
+    return Lb_SUCCESS;
+}
+
 void gproc3_unknsub2(void)
 {
 #if 0
@@ -3634,7 +3650,8 @@ void gproc3_unknsub2(void)
         :  :  : "eax" );
     return;
 #endif
-    short ms_x, ms_y;
+    short ms_x, ms_y, ms_limit;
+    TbPixel *outbuf;
     int i;
 
     int bkp_ingame_flags;
@@ -3664,18 +3681,20 @@ void gproc3_unknsub2(void)
     bkp_engn_anglexz = engn_anglexz;
     bkp_ingame_flags = ingame.Flags;
     bkp_cam_tilt = cam_tilt;
-    bkp_unkn_flags_01 = unkn_flags_01;
-
     render_area_a = 24;
     render_area_b = 24;
+
+    bkp_unkn_flags_01 = unkn_flags_01;
     ingame.Flags = 0;
 
-    ms_x = lbDisplay.GraphicsScreenHeight < 400 ? 2 * lbDisplay.MMouseX : lbDisplay.MMouseX;
-    ms_y = lbDisplay.GraphicsScreenHeight < 400 ? 2 * lbDisplay.MMouseY : lbDisplay.MMouseY;
+    ms_x = lbDisplay.MMouseX;
+    ms_y = lbDisplay.MMouseY;
 
-    if (ms_x < 200)
+    ms_limit = lbDisplay.MouseWindowX + lbDisplay.MouseWindowWidth * 1 / 3;
+    if (ms_x < ms_limit)
       dword_1AAB74 -= 16;
-    if (ms_x > 440)
+    ms_limit = lbDisplay.MouseWindowX + lbDisplay.MouseWindowWidth * 2 / 3;
+    if (ms_x > ms_limit)
       dword_1AAB74 += 16;
     dword_1AAB74 &= 0x7FF;
 
@@ -3685,10 +3704,12 @@ void gproc3_unknsub2(void)
         dword_155014 += lbSinTable[dword_1AAB74 + LbFPMath_PI/2] >> 9;
     }
 
-    if (ms_y < 180)
-        dword_1AAB78 -= (180 - ms_y) >> 5;
-    if (ms_y > 220)
-        dword_1AAB78 -= (220 - ms_y) >> 5;
+    ms_limit = lbDisplay.MouseWindowY + lbDisplay.MouseWindowHeight * 1 / 3;
+    if (ms_y < ms_limit)
+        dword_1AAB78 -= (ms_limit - ms_y) >> 5;
+    ms_limit = lbDisplay.MouseWindowY + lbDisplay.MouseWindowHeight * 2 / 3;
+    if (ms_y > ms_limit)
+        dword_1AAB78 -= (ms_limit - ms_y) >> 5;
     if (dword_1AAB78 > 300)
         dword_1AAB78 = 300;
     if (dword_1AAB78 < -300)
@@ -3714,23 +3735,28 @@ void gproc3_unknsub2(void)
     engn_zc = dword_155014;
     engn_anglexz = 32 * dword_1AAB74;
 
-    setup_vecs(vec_tmap[5], vec_tmap[0], 0x100u, 0x60u, 64);
+#if 0
+    outbuf = vec_tmap[5];
+#else
+    outbuf = vec_tmap[4] + 256 * (5 * 32) + 2 * 32;
+#endif
+    setup_vecs(outbuf, vec_tmap[0], 256, 96, 64);
     process_engine_unk1();
 
     unkn_flags_01 = 1;
     overall_scale = 18;
-    memset(vec_tmap[5], 0, 0x4000);
-    gameturn -= 10;
+    clear_vecs_screen(0);
+    drawturn -= 10;
     func_2e440();
-    gameturn += 10;
+    drawturn += 10;
 
     setup_vecs(lbDisplay.WScreen, vec_tmap[0],
       lbDisplay.PhysicalScreenWidth,
       lbDisplay.PhysicalScreenWidth,
       lbDisplay.PhysicalScreenHeight);
+
     dword_176D3C = vec_window_width / 2;
     dword_176D40 = vec_window_height / 2;
-
     render_area_a = bkp_render_area_a;
     render_area_b = bkp_render_area_b;
     overall_scale = bkp_overall_scale;
@@ -3738,8 +3764,9 @@ void gproc3_unknsub2(void)
     engn_yc = bkp_engn_yc;
     engn_zc = bkp_engn_zc;
     engn_anglexz = bkp_engn_anglexz;
-    ingame.Flags = bkp_ingame_flags;
     cam_tilt = bkp_cam_tilt;
+
+    ingame.Flags = bkp_ingame_flags;
     unkn_flags_01 = bkp_unkn_flags_01;
 
     process_engine_unk1();
@@ -6567,7 +6594,6 @@ void show_game_screen(void)
 
     if (skip_redraw_this_turn())
         return;
-
     show_game_engine();
 
     if ((ingame.Flags & GamF_Unkn0800) != 0)
