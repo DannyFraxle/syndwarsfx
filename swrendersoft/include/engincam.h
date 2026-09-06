@@ -25,8 +25,22 @@
 extern "C" {
 #endif
 /******************************************************************************/
-
 #pragma pack(1)
+
+struct CameraState {
+    s32 xc;
+    s32 yc;
+    s32 zc;
+    s32 yaw;
+    s32 tilt;
+    s32 x_vel;
+    s32 z_vel;
+    s32 yaw_vel;
+    ushort overall_scale;
+    ubyte perspective;
+    ushort area_a;
+    ushort area_b;
+};
 
 #pragma pack()
 /******************************************************************************/
@@ -48,7 +62,7 @@ extern s32 engn_cam_yaw;
 extern s32 engn_cam_tilt;
 
 extern s32 engn_x_vel;
-extern s32 engn_y_vel;
+extern s32 engn_z_vel;
 
 /** Velocity of camera yaw angle change.
  *
@@ -66,6 +80,9 @@ void camera_setup_view(int *p_pos_beg_x, int *p_pos_beg_z,
 /** Partial camera view setup, which only prepare fractional angles.
  */
 void camera_setup_angle_fractions(void);
+
+void camera_save_backup_state(struct CameraState *p_bkp);
+void camera_load_backup_state(const struct CameraState *p_bkp);
 
 void camera_apply_velocity(void);
 
