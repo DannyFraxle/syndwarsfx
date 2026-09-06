@@ -120,8 +120,8 @@ void draw_frame_on_map_coords(MapCoord cor_x, MapCoord cor_y, MapCoord cor_z,
     }
 
     transform_shpoint(&sp, cor_dt_x, 8 * cor_dt_y - 8 * engn_yc, cor_dt_z);
-    sp.X += ((overall_scale * scr_sh_x) >> 8);
-    sp.Y += ((overall_scale * scr_sh_y) >> 8);
+    sp.X += ((scr_sh_x * overall_scale) >> 8);
+    sp.Y += ((scr_sh_y * overall_scale) >> 8);
 
     //TODO switch to drawlists
     if (unscaled)

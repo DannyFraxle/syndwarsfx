@@ -57,12 +57,12 @@ ubyte check_mouse_overlap(ushort sspr)
     struct Frame *p_frm;
 
     p_sspr = &game_sort_sprites[sspr];
-    box.X = p_sspr->X + ((overall_scale * word_1A5834) >> 8);
-    box.Y = p_sspr->Y + ((overall_scale * word_1A5836) >> 8);
+    box.X = p_sspr->X + ((word_1A5834 * overall_scale) >> 8);
+    box.Y = p_sspr->Y + ((word_1A5836 * overall_scale) >> 8);
 
     p_frm = &frame[p_sspr->Frame];
-    box.Width = (overall_scale * p_frm->SWidth) >> 9;
-    box.Height = (overall_scale * p_frm->SHeight) >> 9;
+    box.Width = (p_frm->SWidth * overall_scale) >> 9;
+    box.Height = (p_frm->SHeight * overall_scale) >> 9;
 
     if (box.Width < 16)
     {
@@ -101,12 +101,12 @@ ubyte check_mouse_overlap_item(ushort sspr)
     PlayerInfo *p_locplayer;
 
     p_sspr = &game_sort_sprites[sspr];
-    box.X = p_sspr->X + ((overall_scale * word_1A5834) >> 8);
-    box.Y = p_sspr->Y + ((overall_scale * word_1A5836) >> 8);
+    box.X = p_sspr->X + ((word_1A5834 * overall_scale) >> 8);
+    box.Y = p_sspr->Y + ((word_1A5836 * overall_scale) >> 8);
 
     p_frm = &frame[p_sspr->Frame];
-    box.Width = (overall_scale * p_frm->SWidth) >> 9;
-    box.Height = (overall_scale * p_frm->SHeight) >> 9;
+    box.Width = (p_frm->SWidth * overall_scale) >> 9;
+    box.Height = (p_frm->SHeight * overall_scale) >> 9;
 
     p_locplayer = &players[local_player_no];
     if (p_locplayer->TargetType == TrgTp_DroppedTng)
@@ -151,12 +151,12 @@ ubyte check_mouse_overlap_corpse(ushort sspr)
     PlayerInfo *p_locplayer;
 
     p_sspr = &game_sort_sprites[sspr];
-    box.X = p_sspr->X + ((overall_scale * word_1A5834) >> 8);
-    box.Y = p_sspr->Y + ((overall_scale * word_1A5836) >> 8);
+    box.X = p_sspr->X + ((word_1A5834 * overall_scale) >> 8);
+    box.Y = p_sspr->Y + ((word_1A5836 * overall_scale) >> 8);
 
     p_frm = &frame[p_sspr->Frame];
-    box.Width = (overall_scale * p_frm->SWidth) >> 9;
-    box.Height = (overall_scale * p_frm->SHeight) >> 9;
+    box.Width = (p_frm->SWidth * overall_scale) >> 9;
+    box.Height = (p_frm->SHeight * overall_scale) >> 9;
 
     p_locplayer = &players[local_player_no];
     if (box.Width < 16)
@@ -194,12 +194,12 @@ ubyte check_mouse_over_unkn2(ushort sspr, struct Thing *p_thing)
     struct Frame *p_frm;
 
     p_sspr = &game_sort_sprites[sspr];
-    box.X = p_sspr->X + ((overall_scale * word_1A5834) >> 8);
-    box.Y = p_sspr->Y + ((overall_scale * word_1A5836) >> 8);
+    box.X = p_sspr->X + ((word_1A5834 * overall_scale) >> 8);
+    box.Y = p_sspr->Y + ((word_1A5836 * overall_scale) >> 8);
 
     p_frm = &frame[p_sspr->Frame];
-    box.Width = (overall_scale * p_frm->SWidth) >> 9;
-    box.Height = (overall_scale * p_frm->SHeight) >> 9;
+    box.Width = (p_frm->SWidth * overall_scale) >> 9;
+    box.Height = (p_frm->SHeight * overall_scale) >> 9;
 
     if (box.Width < 16)
     {

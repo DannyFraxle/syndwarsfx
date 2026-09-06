@@ -3591,7 +3591,7 @@ void prepare_mouse_on_map(void)
     msy = lbDisplay.MMouseY;
 
     if (ingame.DisplayMode == DpM_ENGINEPLY)
-      offs_y = overall_scale * engn_yc >> 8;
+      offs_y = (engn_yc * overall_scale) >> 8;
     else
       offs_y = 0;
 
@@ -3674,12 +3674,14 @@ void gproc3_unknsub2(void)
     bkp_engn_yc = engn_yc;
     bkp_engn_zc = engn_zc;
     bkp_engn_cam_yaw = engn_cam_yaw;
-    bkp_ingame_flags = ingame.Flags;
     bkp_engn_cam_tilt = engn_cam_tilt;
+
+    bkp_ingame_flags = ingame.Flags;
+    bkp_unkn_flags_01 = unkn_flags_01;
+
     render_area_a = 24;
     render_area_b = 24;
 
-    bkp_unkn_flags_01 = unkn_flags_01;
     ingame.Flags = 0;
 
     ms_x = lbDisplay.MMouseX;

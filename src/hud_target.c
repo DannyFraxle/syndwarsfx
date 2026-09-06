@@ -147,7 +147,7 @@ void draw_hud_health_bar(int x, int y, struct Thing *p_thing)
 
     dx = (9 * overall_scale) >> 8;
     dy = (10 * overall_scale) >> 8;
-    h_total = -15 * (overall_scale) >> 8;
+    h_total = -(15 * overall_scale) >> 8;
     w = (2 * overall_scale) >> 8;
 
     hp_per_px = p_thing->U.UPerson.MaxHealth / dy;
