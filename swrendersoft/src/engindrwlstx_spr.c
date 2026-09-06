@@ -483,7 +483,7 @@ void draw_frame_scaled_alpha_frv(short x, short y, ubyte *frv, ushort frm,
     range_y = max_y - min_y;
     if ((range_x > 0) && (range_x <= 128) && (range_y > 0) && (range_y <= 128))
     {
-        if ( (overall_scale * p_frm->SWidth) >> 9 > 1 && (overall_scale * p_frm->SHeight) >> 9 > 1 )
+        if ( (p_frm->SWidth * overall_scale) >> 9 > 1 && (p_frm->SHeight * overall_scale) >> 9 > 1 )
         {
             dword_176CE0 = ((min_x * overall_scale) >> 8) + x;
             dword_176CE4 = ((min_y * overall_scale) >> 8) + y;
@@ -666,7 +666,7 @@ void draw_fire_flame(ushort flm)
         p_scrpoint = &game_screen_point_pool[p_flame->PointOffset];
         draw_frame_scaled_alpha(p_scrpoint->X + dword_176D00,
           p_scrpoint->Y + dword_176D04,
-          p_flame->frame, (overall_scale * (p_flame->big + 128)) >> 7, 0x20);
+          p_flame->frame, ((p_flame->big + 128) * overall_scale) >> 7, 0x20);
     }
     else
     {

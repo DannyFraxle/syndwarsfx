@@ -125,8 +125,8 @@ void draw_multicolor_sprite_shadow(short scr_x, short scr_y, ushort sbfrm,
     ssh_y = -mucol_shadow_F850[2 * k + 0];
     sh_y = (6 * ssh_y + 64) >> 7;
     sh_x = (6 * ssh_x + 64) >> 7; // We will reverse the sign later
-    sh_x = (overall_scale * sh_x) >> 8;
-    sh_y = (overall_scale * sh_y) >> 8;
+    sh_x = (sh_x * overall_scale) >> 8;
+    sh_y = (sh_y * overall_scale) >> 8;
 
     if (strng > 128)
         strng = 128;

@@ -92,8 +92,8 @@ void transform_point(struct EnginePoint *p_ep)
     fctr_c = (dword_176D1C * p_ep->Y3d - dword_176D18 * fctr_b) >> 16;
 
     p_ep->Z3d = (dword_176D1C * fctr_b + dword_176D18 * p_ep->Y3d) >> 16;
-    p_ep->X3d = overall_scale * fctr_a;
-    p_ep->Y3d = overall_scale * fctr_c;
+    p_ep->X3d = fctr_a * overall_scale;
+    p_ep->Y3d = fctr_c * overall_scale;
 
     if ((game_perspective == 5) && (p_ep->Z3d > 0x4000 / 16))
         // With large depth (upper parts of the screen), the simplification of
@@ -151,8 +151,8 @@ void transform_shpoint(struct ShEnginePoint *p_sp, int dxc, int dyc, int dzc)
     fctr_b = (dword_176D10 * dxc + dword_176D14 * dzc) >> 16;
     fctr_c = (dword_176D1C * dyc - dword_176D18 * fctr_b) >> 16;
     scr_d = (dword_176D18 * dyc + dword_176D1C * fctr_b) >> 16;
-    sca_x = overall_scale * fctr_a;
-    sca_y = overall_scale * fctr_c;
+    sca_x = fctr_a * overall_scale;
+    sca_y = fctr_c * overall_scale;
     flg = 0;
 
     if ((game_perspective == 5) && (scr_d > 0x4000 / 16))
@@ -214,8 +214,8 @@ void transform_shpoint_fpv(struct ShEnginePoint *p_sp, int dxc, int dyc, int dzc
     fctr_b = (dword_176D10 * dxc + dword_176D14 * dzc) >> 16;
     fctr_c = (dword_176D1C * dyc - dword_176D18 * fctr_b) >> 16;
     scr_d = (dword_176D18 * dyc + dword_176D1C * fctr_b) >> 16;
-    sca_x = overall_scale * fctr_a;
-    sca_y = overall_scale * fctr_c;
+    sca_x = fctr_a * overall_scale;
+    sca_y = fctr_c * overall_scale;
     flg = 0;
 
     if (scr_d >= -500)
@@ -277,7 +277,7 @@ int transform_shpoint_y(int dxc, int dyc, int dzc)
     fctr_b = (dword_176D10 * dxc + dword_176D14 * dzc) >> 16;
     fctr_c = (dword_176D1C * dyc - dword_176D18 * fctr_b) >> 16;
     scr_d = (dword_176D18 * dyc + dword_176D1C * fctr_b) >> 16;
-    sca_y = overall_scale * fctr_c;
+    sca_y = fctr_c * overall_scale;
 
     if ((game_perspective == 5) && (scr_d > 0x4000 / 16))
         // Mitigate wrap-around effect by using non-simplified computations.

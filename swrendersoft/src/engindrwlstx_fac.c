@@ -1375,7 +1375,7 @@ void draw_object_face4_pole(ushort face4)
         p_point = &game_object_points[p_face4->PointNo[0]];
         p_scrpoint = &game_screen_point_pool[p_point->PointOffset];
 
-        shift_x = (overall_scale * p_face4->PointNo[2]) >> 8;
+        shift_x = (p_face4->PointNo[2] * overall_scale) >> 8;
 
         point3.X = p_scrpoint->X - shift_x;
         point3.Y = p_scrpoint->Y;
@@ -1392,7 +1392,7 @@ void draw_object_face4_pole(ushort face4)
         p_point = &game_object_points[p_face4->PointNo[1]];
         p_scrpoint = &game_screen_point_pool[p_point->PointOffset];
 
-        shift_x = (overall_scale * p_face4->PointNo[3]) >> 8;
+        shift_x = (p_face4->PointNo[3] * overall_scale) >> 8;
 
         point1.X = p_scrpoint->X + shift_x;
         point1.Y = p_scrpoint->Y;
