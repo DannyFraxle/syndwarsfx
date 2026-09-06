@@ -2017,7 +2017,7 @@ struct SimpleThing *create_electric_strand(MapCoord x, MapCoord y, MapCoord z,
       "push 0(%5)\n"
       "call ASM_create_electric_strand\n"
         : "=r" (ret)
-        : "a" (x), "d" (y), "b" (z), "c" (x2), "S" (stkargs)
+        : "a" ((s32)x), "d" ((s32)y), "b" ((s32)z), "c" ((s32)x2), "S" (stkargs)
         : "cc", "memory");
     return ret;
 #endif
