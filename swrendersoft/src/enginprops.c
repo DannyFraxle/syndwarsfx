@@ -48,9 +48,16 @@ s32 prim_object_faces4_limit = 16;
 
 u32 stat_drawlist_faces = 0;
 
+s32 dword_176D4C = 0;
+
 ubyte *scratch_buf1 = NULL;
 
 void (*prim_obj_mem_debug)(ubyte itm_kind, int itm_beg, int itm_end) = NULL;
 /******************************************************************************/
+
+void reset_drawlist_stats(void)
+{
+    dword_176D4C = 0;
+}
 
 /******************************************************************************/

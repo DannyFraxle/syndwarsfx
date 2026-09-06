@@ -217,7 +217,7 @@ void draw_falling_rain(int bckt)
 
     lbSeed = bckt;
     rnd = LbRandomPosShort();
-    x = (rnd + (engn_xc >> 4) + (engn_anglexz >> 7)) % scanln;
+    x = (rnd + (engn_xc >> 4) + (engn_cam_yaw >> 7)) % scanln;
     rnd = LbRandomPosShort();
     y = m * ((rnd + (shift_y >> 10)) % limit_y);
     lbDisplay.DrawFlags = Lb_SPRITE_TRANSPAR4;
@@ -266,8 +266,8 @@ void draw_falling_snow(int bckt)
         ushort angXZs, angXZc;
         ushort dm;
 
-        angXZs = ((engn_anglexz >> 5)) & 0x7FF;
-        angXZc = ((engn_anglexz >> 5) + LbFPMath_PI/2) & 0x7FF;
+        angXZs = ((engn_cam_yaw >> 5)) & 0x7FF;
+        angXZc = ((engn_cam_yaw >> 5) + LbFPMath_PI/2) & 0x7FF;
 
         lbSeed = bckt;
         speed = (bckt >> 5) & 0x3;

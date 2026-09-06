@@ -513,7 +513,7 @@ ulong load_level_pc_handle(TbFileHandle lev_fh)
     }
 
     if (fmtver >= 16) {
-        n = LbFileRead(lev_fh, &engn_anglexz, 4);
+        n = LbFileRead(lev_fh, &engn_cam_yaw, 4);
         if (n < 4)
             LOGWARN("Field anglexz truncated, got %d bytes", n);
     }
@@ -631,7 +631,7 @@ void save_level_pc_handle(TbFileHandle lev_fh)
 
     LbFileWrite(lev_fh, game_level_miscs, sizeof(struct LevelMisc) * 200);
 
-    LbFileWrite(lev_fh, &engn_anglexz, 4);
+    LbFileWrite(lev_fh, &engn_cam_yaw, 4);
 }
 
 

@@ -143,7 +143,7 @@ ubyte lvdraw_fill_bound_points(struct TbPoint *bound_pts)
     ushort angXZ;
     int sin_angl, cos_angl;
 
-    angXZ = (engn_anglexz >> 5) & 0x7FF;
+    angXZ = (engn_cam_yaw >> 5) & 0x7FF;
     sin_angl = lbSinTable[angXZ];
     cos_angl = lbSinTable[angXZ + LbFPMath_PI/2];
 
@@ -746,7 +746,7 @@ void func_2e440(void)
             embanim_do_next_frame(AniSl_BILLBOARD);
         }
     }
-    angXZ = (engn_anglexz >> 5) & 0x7FF;
+    angXZ = (engn_cam_yaw >> 5) & 0x7FF;
     byte_176D4B = ((angXZ + 64) >> 7) & 0xF;
     byte_176D48 = ((angXZ + 256) >> 9) & 0x3;
     byte_176D49 = ((angXZ + 128) >> 8) & 0x7;
@@ -843,6 +843,14 @@ void clear_super_quick_lights(void)
         p_sqlight = &super_quick_light[i];
         *p_sqlight = 0;
     }
+}
+
+void process_engine_unk1(void)
+{
+    camera_apply_velocity();
+    reset_drawlist_stats();
+    transform_reinit_vec_window();
+    transform_reinit_camera();
 }
 
 void draw_screen(void)

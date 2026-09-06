@@ -56,7 +56,7 @@
 
 .global EXPORT_SYMBOL(engn_xc);				/* 0x152EE4 */
 .global EXPORT_SYMBOL(engn_zc);				/* 0x152EE8 */
-.global EXPORT_SYMBOL(cam_tilt);			/* 0x152EEC */
+.global EXPORT_SYMBOL(engn_cam_tilt);			/* 0x152EEC */
 
 .global EXPORT_SYMBOL(weapon_defs);	/* 0x15401C */
 .global EXPORT_SYMBOL(mod_defs);	/* 0x15441C */
@@ -78,8 +78,8 @@
 .global EXPORT_SYMBOL(dword_176D40);		/* 0x176D40 */
 .global EXPORT_SYMBOL(dword_176D44);		/* 0x176D44 */
 .global EXPORT_SYMBOL(dword_176D4C);		/* 0x176D4C */
-.global EXPORT_SYMBOL(cam_rotation_velocity);	/* 0x176D54 */
-.global EXPORT_SYMBOL(engn_anglexz);		/* 0x176D58 */
+.global EXPORT_SYMBOL(engn_cam_yaw_vel);	/* 0x176D54 */
+.global EXPORT_SYMBOL(engn_cam_yaw);		/* 0x176D58 */
 .global EXPORT_SYMBOL(byte_176D49);			/* 0x176D49 */
 .global EXPORT_SYMBOL(engn_yc);
 .global EXPORT_SYMBOL(shield_frm);			/* 0x1777B8 */
@@ -6211,8 +6211,8 @@ GLOBAL_FUNC (ASM_do_rotate_map)	/* 0x036480 */
 		push   %edx
 		push   %esi
 		push   %edi
-		mov    EXPORT_SYMBOL(cam_tilt),%ebx
-		mov    EXPORT_SYMBOL(cam_rotation_velocity),%ecx
+		mov    EXPORT_SYMBOL(engn_cam_tilt),%ebx
+		mov    EXPORT_SYMBOL(engn_cam_yaw_vel),%ecx
 		xor    %eax,%eax
 		mov    EXPORT_SYMBOL(kbkeys)+8,%ax
 		mov    EXPORT_SYMBOL(lbKeyOn)(%eax),%al
@@ -6333,11 +6333,11 @@ GLOBAL_FUNC (ASM_do_rotate_map)	/* 0x036480 */
 		sbb    %edx,%eax
 		sar    $0x2,%eax
 		mov    %eax,%ecx
-		mov    %eax,EXPORT_SYMBOL(cam_rotation_velocity)
+		mov    %eax,EXPORT_SYMBOL(engn_cam_yaw_vel)
 		movswl %di,%eax
 		shl    $0x3,%eax
 		add    %eax,%ebx
-		mov    %ebx,EXPORT_SYMBOL(cam_tilt)
+		mov    %ebx,EXPORT_SYMBOL(engn_cam_tilt)
 		pop    %edi
 		pop    %esi
 		pop    %edx
@@ -48288,7 +48288,7 @@ GLOBAL_FUNC(ASM_track_angle)	/* 0x060D18 */
 		push   %ecx
 		push   %edx
 		xor    %eax,%eax
-		mov    EXPORT_SYMBOL(engn_anglexz),%ebx
+		mov    EXPORT_SYMBOL(engn_cam_yaw),%ebx
 		mov    EXPORT_SYMBOL(ingame)+0x982,%ax # ingame.fld_unkCA6
 		sar    $0x5,%ebx
 		sub    %ebx,%eax
@@ -48317,7 +48317,7 @@ GLOBAL_FUNC(ASM_track_angle)	/* 0x060D18 */
 		xor    %eax,%eax
 		mov    EXPORT_SYMBOL(ingame)+0x982,%ax # ingame.fld_unkCA6
 		shl    $0x5,%eax
-		mov    %eax,EXPORT_SYMBOL(engn_anglexz)
+		mov    %eax,EXPORT_SYMBOL(engn_cam_yaw)
 		pop    %edx
 		pop    %ecx
 		pop    %ebx
@@ -48335,12 +48335,12 @@ GLOBAL_FUNC(ASM_track_angle)	/* 0x060D18 */
 		xor    %eax,%eax
 		mov    EXPORT_SYMBOL(ingame)+0x984,%ax # ingame.fld_unkCA8
 		imul   %eax,%ebx
-		mov    EXPORT_SYMBOL(engn_anglexz),%edx
+		mov    EXPORT_SYMBOL(engn_cam_yaw),%edx
 		add    %ebx,%edx
 		mov    %edx,%ebx
-		mov    %edx,EXPORT_SYMBOL(engn_anglexz)
+		mov    %edx,EXPORT_SYMBOL(engn_cam_yaw)
 		and    $0xffe0,%ebx
-		mov    %ebx,EXPORT_SYMBOL(engn_anglexz)
+		mov    %ebx,EXPORT_SYMBOL(engn_cam_yaw)
 	jump_60db5:
 		pop    %edx
 		pop    %ecx
@@ -62922,9 +62922,9 @@ GLOBAL_FUNC (ASM_gproc3_unknsub2)	/* 0x73798 */
 		mov    EXPORT_SYMBOL(ingame)+0x92F,%ebp # ingame.Flags+0
 		mov    %eax,0x18(%esp)
 		mov    EXPORT_SYMBOL(engn_zc),%eax
-		mov    EXPORT_SYMBOL(engn_anglexz),%edi
+		mov    EXPORT_SYMBOL(engn_cam_yaw),%edi
 		mov    %eax,0x14(%esp)
-		mov    EXPORT_SYMBOL(cam_tilt),%eax
+		mov    EXPORT_SYMBOL(engn_cam_tilt),%eax
 		xor    %esi,%esi
 		mov    %eax,0x4(%esp)
 		xor    %eax,%eax
@@ -63084,7 +63084,7 @@ GLOBAL_FUNC (ASM_gproc3_unknsub2)	/* 0x73798 */
 		mov    %ebx,EXPORT_SYMBOL(dword_155014)
 	jump_73a5a:
 		mov    EXPORT_SYMBOL(dword_1AAB78),%eax
-		mov    %eax,EXPORT_SYMBOL(cam_tilt)
+		mov    %eax,EXPORT_SYMBOL(engn_cam_tilt)
 		mov    EXPORT_SYMBOL(dword_155010),%eax
 		mov    %eax,EXPORT_SYMBOL(engn_xc)
 		mov    EXPORT_SYMBOL(dword_155018),%eax
@@ -63097,7 +63097,7 @@ GLOBAL_FUNC (ASM_gproc3_unknsub2)	/* 0x73798 */
 		mov    $0x100,%ebx
 		shl    $0x5,%eax
 		mov    EXPORT_SYMBOL(vec_tmap),%edx
-		mov    %eax,EXPORT_SYMBOL(engn_anglexz)
+		mov    %eax,EXPORT_SYMBOL(engn_cam_yaw)
 		mov    EXPORT_SYMBOL(vec_tmap)+20,%eax
 		call   ac_setup_vecs
 		call   ac_process_engine_unk1
@@ -63141,12 +63141,12 @@ GLOBAL_FUNC (ASM_gproc3_unknsub2)	/* 0x73798 */
 		mov    %eax,EXPORT_SYMBOL(engn_zc)
 		mov    0x4(%esp),%eax
 		mov    %ebp,EXPORT_SYMBOL(ingame)+0x92F # ingame.Flags+0
-		mov    %eax,EXPORT_SYMBOL(cam_tilt)
+		mov    %eax,EXPORT_SYMBOL(engn_cam_tilt)
 		mov    0x18(%esp),%eax
 		mov    %si,EXPORT_SYMBOL(render_area_a)
 		mov    %eax,EXPORT_SYMBOL(engn_yc)
 		mov    0xc(%esp),%al
-		mov    %edi,EXPORT_SYMBOL(engn_anglexz)
+		mov    %edi,EXPORT_SYMBOL(engn_cam_yaw)
 		mov    %al,unkn_flags_01
 		call   ac_process_engine_unk1
 		add    $0x1c,%esp
@@ -129340,7 +129340,7 @@ GLOBAL_FUNC (ASM_traffic_unkn_func_01)	/* 0x0CB738 */
 		mov    %bx,data_1dd90a
 		mov    data_1dd908,%eax
 		mov    data_1dd90c,%ebp
-		mov    %eax,EXPORT_SYMBOL(engn_anglexz)
+		mov    %eax,EXPORT_SYMBOL(engn_cam_yaw)
 		mov    data_1556f0,%eax
 		sub    %ebp,%eax
 		mov    %esi,data_1dd910
@@ -129373,7 +129373,7 @@ GLOBAL_FUNC (ASM_traffic_unkn_func_01)	/* 0x0CB738 */
 		and    $0x7ff,%esi
 		mov    %ebx,data_1dd914
 		mov    %esi,data_1dd90c
-		mov    %esi,EXPORT_SYMBOL(cam_tilt)
+		mov    %esi,EXPORT_SYMBOL(engn_cam_tilt)
 		add    $0x7c,%esp
 		pop    %ebp
 		pop    %edi

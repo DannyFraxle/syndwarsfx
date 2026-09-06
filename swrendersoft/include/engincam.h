@@ -30,13 +30,31 @@ extern "C" {
 
 #pragma pack()
 /******************************************************************************/
+
 extern s32 engn_xc;
 extern s32 engn_yc;
 extern s32 engn_zc;
-extern s32 engn_anglexz;
+
+/** Camera yaw/pan axis (XZ axis) rotation angle.
+ *
+ * Controls left-to-right rotation. In bflib angular units x 32.
+ */
+extern s32 engn_cam_yaw;
+
+/** Camera tilt/pitch axis rotation angle.
+ *
+ * Controls up-and-down rotation. In bflib angular units, no multiplier.
+ */
+extern s32 engn_cam_tilt;
 
 extern s32 engn_x_vel;
 extern s32 engn_y_vel;
+
+/** Velocity of camera yaw angle change.
+ *
+ * The value is added to engn_cam_yaw once per turn.
+ */
+extern s32 engn_cam_yaw_vel;
 
 extern ushort overall_scale;
 extern ubyte game_perspective;
@@ -44,6 +62,9 @@ extern ubyte game_perspective;
 
 void camera_setup_view(int *p_pos_beg_x, int *p_pos_beg_z,
   int *p_rend_beg_x, int *p_rend_beg_z, int *p_tlcount_x, int *p_tlcount_z);
+
+
+void camera_apply_velocity(void);
 
 /******************************************************************************/
 #ifdef __cplusplus

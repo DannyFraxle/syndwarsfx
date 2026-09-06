@@ -120,7 +120,7 @@ void draw_multicolor_sprite_shadow(short scr_x, short scr_y, ushort sbfrm,
     ep2.pp.U = ep3.pp.U;
     ep2.pp.V = ep1.pp.V;
 
-    k = shangl - (engn_anglexz >> 8);
+    k = shangl - (engn_cam_yaw >> 8);
     ssh_x = mucol_shadow_F850[2 * k + 1];
     ssh_y = -mucol_shadow_F850[2 * k + 0];
     sh_y = (6 * ssh_y + 64) >> 7;

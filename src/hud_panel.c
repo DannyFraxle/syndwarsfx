@@ -2430,7 +2430,7 @@ void draw_new_panel(void)
             draw_panel_thermal_button(panel);
             break;
         case PanT_Scanner:
-            SCANNER_set_center_point(engn_xc, engn_zc, (2*LbFPMath_PI - 1) - ((engn_anglexz >> 5) & LbFPMath_AngleMask));
+            SCANNER_set_center_point(engn_xc, engn_zc, (2*LbFPMath_PI - 1) - ((engn_cam_yaw >> 5) & LbFPMath_AngleMask));
             SCANNER_draw_new_transparent();
             break;
         case PanT_Objective:

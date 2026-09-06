@@ -3655,9 +3655,9 @@ void gproc3_unknsub2(void)
     int i;
 
     int bkp_ingame_flags;
-    int long bkp_engn_anglexz;
+    s32 bkp_engn_cam_yaw;
     ushort bkp_render_area_a, bkp_render_area_b;
-    long bkp_cam_tilt;
+    s32 bkp_engn_cam_tilt;
     ubyte bkp_unkn_flags_01;
     ushort bkp_overall_scale;
     s32 bkp_engn_xc, bkp_engn_yc, bkp_engn_zc;
@@ -3678,9 +3678,9 @@ void gproc3_unknsub2(void)
     bkp_engn_xc = engn_xc;
     bkp_engn_yc = engn_yc;
     bkp_engn_zc = engn_zc;
-    bkp_engn_anglexz = engn_anglexz;
+    bkp_engn_cam_yaw = engn_cam_yaw;
     bkp_ingame_flags = ingame.Flags;
-    bkp_cam_tilt = cam_tilt;
+    bkp_engn_cam_tilt = engn_cam_tilt;
     render_area_a = 24;
     render_area_b = 24;
 
@@ -3729,11 +3729,11 @@ void gproc3_unknsub2(void)
     if (dword_155014 > 0x8000)
         dword_155014 = 0;
 
-    cam_tilt = dword_1AAB78;
+    engn_cam_tilt = dword_1AAB78;
     engn_xc = dword_155010;
     engn_yc = dword_155018;
     engn_zc = dword_155014;
-    engn_anglexz = 32 * dword_1AAB74;
+    engn_cam_yaw = 32 * dword_1AAB74;
 
 #if 0
     outbuf = vec_tmap[5];
@@ -3763,8 +3763,8 @@ void gproc3_unknsub2(void)
     engn_xc = bkp_engn_xc;
     engn_yc = bkp_engn_yc;
     engn_zc = bkp_engn_zc;
-    engn_anglexz = bkp_engn_anglexz;
-    cam_tilt = bkp_cam_tilt;
+    engn_cam_yaw = bkp_engn_cam_yaw;
+    engn_cam_tilt = bkp_engn_cam_tilt;
 
     ingame.Flags = bkp_ingame_flags;
     unkn_flags_01 = bkp_unkn_flags_01;
@@ -4872,7 +4872,7 @@ void do_scroll_map(void)
         }
     }
 
-    abase = -engn_anglexz >> 5;
+    abase = -engn_cam_yaw >> 5;
     angle = -1;
     if (dx > 0)
         angle = (abase + 3583) & LbFPMath_AngleMask;
@@ -5095,19 +5095,19 @@ void do_rotate_map(void)
 
     if (tilt_input != 0)
     {
-        long new_cam_tilt = cam_tilt + (tilt_input * CAMERA_TILT_INPUT_MULTIPLIER);
+        s32 new_cam_tilt = engn_cam_tilt + (tilt_input * CAMERA_TILT_INPUT_MULTIPLIER);
         if (new_cam_tilt < CAMERA_TILT_MIN) {
             new_cam_tilt = CAMERA_TILT_MIN;
         }
         else if (new_cam_tilt > CAMERA_TILT_MAX) {
             new_cam_tilt = CAMERA_TILT_MAX;
         }
-        cam_tilt = new_cam_tilt;
+        engn_cam_tilt = new_cam_tilt;
     }
 
-    long new_cam_rotation_velocity = cam_rotation_velocity + (rotate_input * CAMERA_ROTATION_INPUT_MULTIPLIER);
-    new_cam_rotation_velocity = (3 * new_cam_rotation_velocity) / 4;
-    cam_rotation_velocity = new_cam_rotation_velocity;
+    s32 new_cam_yaw_vel = engn_cam_yaw_vel + (rotate_input * CAMERA_ROTATION_INPUT_MULTIPLIER);
+    new_cam_yaw_vel = (3 * new_cam_yaw_vel) / 4;
+    engn_cam_yaw_vel = new_cam_yaw_vel;
 }
 
 ubyte process_mouse_inputs(void)

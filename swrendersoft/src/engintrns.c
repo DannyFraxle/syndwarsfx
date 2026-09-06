@@ -24,8 +24,6 @@
 #define SCREEN_POINT_COORD_MIN (-MAX_SUPPORTED_SCREEN_WIDTH)
 #define SCREEN_POINT_COORD_MAX (2 * MAX_SUPPORTED_SCREEN_WIDTH)
 
-s32 cam_tilt = -172;
-
 s32 dword_176D0C;
 s32 dword_176D10;
 s32 dword_176D14;
@@ -34,8 +32,6 @@ s32 dword_176D1C;
 s32 dword_176D3C;
 s32 dword_176D40;
 s32 dword_176D44;
-s32 dword_176D4C;
-s32 cam_rotation_velocity = 0;
 /******************************************************************************/
 
 /**
@@ -306,20 +302,22 @@ int transform_shpoint_y(int dxc, int dyc, int dzc)
     return scr_y;
 }
 
-void process_engine_unk1(void)
+void transform_reinit_vec_window(void)
+{
+    dword_176D3C = vec_window_width / 2;
+    dword_176D40 = vec_window_height / 2;
+    dword_176D44 = 4 * (vec_window_width / 2) / 3;
+}
+
+void transform_reinit_camera(void)
 {
     int angle;
 
-    dword_176D4C = 0;
-    dword_176D3C = vec_window_width / 2;
-    dword_176D40 = vec_window_height / 2;
-    engn_anglexz += cam_rotation_velocity;
-    dword_176D44 = 4 * (vec_window_width / 2) / 3;
-    angle = (engn_anglexz >> 5) & LbFPMath_AngleMask;
+    angle = (engn_cam_yaw >> 5) & LbFPMath_AngleMask;
     dword_176D0C = angle;
     dword_176D14 = lbSinTable[angle + LbFPMath_PI/2];
     dword_176D10 = lbSinTable[angle];
-    angle = cam_tilt & LbFPMath_AngleMask;
+    angle = engn_cam_tilt & LbFPMath_AngleMask;
     dword_176D18 = lbSinTable[angle];
     dword_176D1C = lbSinTable[angle + LbFPMath_PI/2];
 }

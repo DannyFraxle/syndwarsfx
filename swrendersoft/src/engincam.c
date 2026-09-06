@@ -30,7 +30,11 @@ s32 engn_xc = 0x3280;
 s32 engn_yc = 0;
 s32 engn_zc = 0x3280;
 
-s32 engn_anglexz = 0;
+s32 engn_cam_tilt = -(303 * LbFPMath_PI / 1800); // -30.3 degree in bflib units
+
+s32 engn_cam_yaw = 0;
+
+s32 engn_cam_yaw_vel = 0;
 
 s32 dword_176D70;
 s32 dword_176D74;
@@ -55,7 +59,7 @@ void camera_setup_view(int *p_pos_beg_x, int *p_pos_beg_z,
     int pos_beg_x, pos_beg_z;
     int tlcount_x, tlcount_z;
 
-    angXZ = (engn_anglexz >> 5) & LbFPMath_AngleMask;
+    angXZ = (engn_cam_yaw >> 5) & LbFPMath_AngleMask;
 
     byte_176D48 = ((angXZ + 256) >> 9) & 0x3;
     byte_176D49 = ((angXZ + 128) >> 8) & 0x7;
@@ -96,6 +100,11 @@ void camera_setup_view(int *p_pos_beg_x, int *p_pos_beg_z,
     *p_rend_beg_z = rend_beg_z;
     *p_tlcount_x = tlcount_x;
     *p_tlcount_z = tlcount_z;
+}
+
+void camera_apply_velocity(void)
+{
+    engn_cam_yaw += engn_cam_yaw_vel;
 }
 
 /******************************************************************************/

@@ -203,9 +203,16 @@ extern ubyte *scratch_buf1;
  */
 extern u32 stat_drawlist_faces;
 
+extern s32 dword_176D4C;
+
 /** Callback for debug of 3D objects primitives.
  */
 extern void (*prim_obj_mem_debug)(ubyte itm_kind, int itm_beg, int itm_end);
+
+/******************************************************************************/
+
+void reset_drawlist_stats(void);
+
 /******************************************************************************/
 #ifdef __cplusplus
 }
