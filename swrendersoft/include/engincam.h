@@ -63,6 +63,9 @@ extern ubyte game_perspective;
 void camera_setup_view(int *p_pos_beg_x, int *p_pos_beg_z,
   int *p_rend_beg_x, int *p_rend_beg_z, int *p_tlcount_x, int *p_tlcount_z);
 
+/** Partial camera view setup, which only prepare fractional angles.
+ */
+void camera_setup_angle_fractions(void);
 
 void camera_apply_velocity(void);
 

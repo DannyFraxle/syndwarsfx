@@ -51,6 +51,18 @@ ubyte byte_176D4A;
 ubyte byte_176D4B;
 /******************************************************************************/
 
+void camera_setup_angle_fractions(void)
+{
+    int angXZ;
+
+    angXZ = (engn_cam_yaw >> 5) & LbFPMath_AngleMask;
+
+    byte_176D48 = ((angXZ + 256) >> 9) & 0x3;
+    byte_176D49 = ((angXZ + 128) >> 8) & 0x7;
+    byte_176D4B = ((angXZ + 64) >> 7) & 0xF;
+    byte_176D4A = ((angXZ + 85) / 170) % 12;
+}
+
 void camera_setup_view(int *p_pos_beg_x, int *p_pos_beg_z,
   int *p_rend_beg_x, int *p_rend_beg_z, int *p_tlcount_x, int *p_tlcount_z)
 {
@@ -59,13 +71,9 @@ void camera_setup_view(int *p_pos_beg_x, int *p_pos_beg_z,
     int pos_beg_x, pos_beg_z;
     int tlcount_x, tlcount_z;
 
-    angXZ = (engn_cam_yaw >> 5) & LbFPMath_AngleMask;
+    camera_setup_angle_fractions();
 
-    byte_176D48 = ((angXZ + 256) >> 9) & 0x3;
-    byte_176D49 = ((angXZ + 128) >> 8) & 0x7;
-    byte_176D4A = ((angXZ + 85) / 170) % 12;
-    byte_176D4B = ((angXZ + 64) >> 7) & 0xF;
-    byte_19EC7A = ((angXZ + 256) >> 9) & 0x3;
+    angXZ = (engn_cam_yaw >> 5) & LbFPMath_AngleMask;
 
     rend_beg_x = (engn_xc & 0xFF00) + (render_area_a << 7);
     rend_beg_z = (engn_zc & 0xFF00) - (render_area_b << 7);
