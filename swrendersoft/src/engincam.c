@@ -55,7 +55,7 @@ void camera_setup_view(int *p_pos_beg_x, int *p_pos_beg_z,
     int pos_beg_x, pos_beg_z;
     int tlcount_x, tlcount_z;
 
-    angXZ = (engn_anglexz >> 5) & 0x7FF;
+    angXZ = (engn_anglexz >> 5) & LbFPMath_AngleMask;
 
     byte_176D48 = ((angXZ + 256) >> 9) & 0x3;
     byte_176D49 = ((angXZ + 128) >> 8) & 0x7;
