@@ -717,7 +717,6 @@ void lvdraw_do_floor_flyby(int cor_z_beg, int ranges_x_len, struct Range *smrang
 
 void func_2e440(void)
 {
-    int angXZ;
     ubyte slt_zmin;
 
     struct Range smrang_x[160];
@@ -746,11 +745,8 @@ void func_2e440(void)
             embanim_do_next_frame(AniSl_BILLBOARD);
         }
     }
-    angXZ = (engn_cam_yaw >> 5) & 0x7FF;
-    byte_176D4B = ((angXZ + 64) >> 7) & 0xF;
-    byte_176D48 = ((angXZ + 256) >> 9) & 0x3;
-    byte_176D49 = ((angXZ + 128) >> 8) & 0x7;
-    byte_19EC7A = byte_176D48;
+
+    camera_setup_angle_fractions();
 
     lvdraw_do_objects(cor_z_beg, ranges_x_len, ranges_x);
 
