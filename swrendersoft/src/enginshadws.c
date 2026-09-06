@@ -150,14 +150,14 @@ void draw_multicolor_sprite_shadow(short scr_x, short scr_y, ushort sbfrm,
     ep2.pp.X = 4 * sc_a + scr_x - sh_x;
     ep2.pp.Y = 4 * sc_b + scr_y - sh_y;
 
-    dword_176D4C++;
     if (vec_mode == 2)
         vec_mode = 27;
     draw_trigpoly(&ep1.pp, &ep4.pp, &ep3.pp);
-    dword_176D4C++;
+    stat_drawexec_faces++;
     if (vec_mode == 2)
         vec_mode = 27;
     draw_trigpoly(&ep2.pp, &ep1.pp, &ep3.pp);
+    stat_drawexec_faces++;
 }
 
 void draw_sort_sprite_person_shadow(ushort sspr)

@@ -549,20 +549,19 @@ void draw_object_face4g_textrd(ushort face4)
             point4.S = (mag * point4.S) >> 3;
         }
     }
-    dword_176D4C++;
 
     {
         if (vec_mode == 2)
             vec_mode = 27;
         draw_trigpoly(&point1, &point2, &point3);
     }
-
     if ((p_face4->GFlags & FGFlg_Unkn01) != 0)
     {
         if (vec_mode == 2)
             vec_mode = 27;
         draw_trigpoly(&point1, &point3, &point2);
     }
+    stat_drawexec_faces++;
 
     if (p_face4->Texture != 0)
     {
@@ -574,20 +573,19 @@ void draw_object_face4g_textrd(ushort face4)
               &point2, &point4, p_face4->GFlags);
         }
     }
-    dword_176D4C++;
 
     {
         if (vec_mode == 2)
             vec_mode = 27;
         draw_trigpoly(&point4, &point3, &point2);
     }
-
     if ((p_face4->GFlags & FGFlg_Unkn01) != 0)
     {
         if (vec_mode == 2)
             vec_mode = 27;
         draw_trigpoly(&point4, &point2, &point3);
     }
+    stat_drawexec_faces++;
 }
 
 /**
@@ -634,20 +632,19 @@ void draw_object_face3_reflect(ushort face3)
         point3.X = p_scrpoint->X + dword_176D00;
         point3.Y = p_scrpoint->Y + dword_176D04;
     }
-    dword_176D4C++;
 
     {
         if (vec_mode == 2)
             vec_mode = 27;
         draw_trigpoly(&point1, &point2, &point3);
     }
-
     if ((p_face->GFlags & FGFlg_Unkn01) != 0)
     {
         if (vec_mode == 2)
             vec_mode = 27;
         draw_trigpoly(&point1, &point3, &point2);
     }
+    stat_drawexec_faces++;
 }
 
 /**
@@ -704,34 +701,32 @@ void draw_object_face4_reflect(ushort face4)
         point4.X = p_scrpoint->X + dword_176D00;
         point4.Y = p_scrpoint->Y + dword_176D04;
     }
-    dword_176D4C++;
 
     {
         if (vec_mode == 2)
             vec_mode = 27;
         draw_trigpoly(&point1, &point2, &point3);
     }
-
     if ((p_face4->GFlags & FGFlg_Unkn01) != 0)
     {
         if (vec_mode == 2)
             vec_mode = 27;
         draw_trigpoly(&point1, &point3, &point2);
     }
-    dword_176D4C++;
+    stat_drawexec_faces++;
 
     {
         if (vec_mode == 2)
             vec_mode = 27;
         draw_trigpoly(&point4, &point3, &point2);
     }
-
     if ((p_face4->GFlags & FGFlg_Unkn01) != 0)
     {
         if (vec_mode == 2)
             vec_mode = 27;
         draw_trigpoly(&point4, &point2, &point3);
     }
+    stat_drawexec_faces++;
 }
 
 void draw_ex_face(ushort exface)
@@ -774,7 +769,7 @@ void draw_ex_face(ushort exface)
       if (vec_mode == 2)
           vec_mode = 27;
       draw_trigpoly(&point3, &point2, &point1);
-      dword_176D4C++;
+      stat_drawexec_faces++;
       break;
     case 2:
     case 4:
@@ -805,6 +800,7 @@ void draw_ex_face(ushort exface)
       if (vec_mode == 2)
           vec_mode = 27;
       draw_trigpoly(&point3, &point2, &point1);
+      stat_drawexec_faces++;
 
       if (vec_mode == 2)
           vec_mode = 27;
@@ -813,7 +809,7 @@ void draw_ex_face(ushort exface)
       if (vec_mode == 2)
           vec_mode = 27;
       draw_trigpoly(&point4, &point3, &point2);
-      dword_176D4C++;
+      stat_drawexec_faces++;
       break;
     default:
       break;
@@ -927,16 +923,14 @@ void draw_object_face3g_textrd(ushort face3)
         if (vec_mode == 2)
             vec_mode = 27;
         draw_trigpoly(&point1, &point2, &point3);
-        dword_176D4C++;
     }
-
     if ((p_face->GFlags & FGFlg_Unkn01) != 0)
     {
         if (vec_mode == 2)
             vec_mode = 27;
         draw_trigpoly(&point1, &point3, &point2);
-        dword_176D4C++;
     }
+    stat_drawexec_faces++;
 }
 
 void draw_object_face4d_textrd_dk(ushort face4)
@@ -1076,7 +1070,7 @@ void draw_object_face4d_textrd_dk(ushort face4)
             vec_mode = 27;
         draw_trigpoly(&point1, &point3, &point2);
     }
-    dword_176D4C++;
+    stat_drawexec_faces++;
 
     if (p_face4->Texture != 0)
     {
@@ -1095,7 +1089,7 @@ void draw_object_face4d_textrd_dk(ushort face4)
             vec_mode = 27;
         draw_trigpoly(&point4, &point2, &point3);
     }
-    dword_176D4C++;
+    stat_drawexec_faces++;
 }
 
 void draw_floor_tile1a(ushort tl)
@@ -1150,6 +1144,7 @@ void draw_floor_tile1a(ushort tl)
             vec_mode = 27;
         draw_trigpoly(&point1, &point2, &point3);
     }
+    stat_drawexec_faces++;
 
     dist = (point2.X - point3.X) * (point4.Y - point2.Y)
        - (point2.Y - point3.Y) * (point4.X - point2.X);
@@ -1159,7 +1154,7 @@ void draw_floor_tile1a(ushort tl)
             vec_mode = 27;
         draw_trigpoly(&point3, &point2, &point4);
     }
-    dword_176D4C += 2;
+    stat_drawexec_faces++;
 
     // damage overlays
     if ((p_floortl->Page > 0) && (p_floortl->Page <= 12))
@@ -1167,10 +1162,11 @@ void draw_floor_tile1a(ushort tl)
         vec_mode = 6;
         set_floor_texture_uv_damaged_ground(&point1, &point2, &point3, &point4, p_floortl->Page);
         draw_trigpoly(&point1, &point2, &point3);
+        stat_drawexec_faces++;
         if (vec_mode == 2)
             vec_mode = 27;
         draw_trigpoly(&point3, &point2, &point4);
-        dword_176D4C += 2;
+        stat_drawexec_faces++;
     }
 }
 
@@ -1226,6 +1222,7 @@ void draw_floor_tile1b(ushort tl)
             vec_mode = 27;
         draw_trigpoly(&point1, &point2, &point4);
     }
+    stat_drawexec_faces++;
 
     dist = (point3.X - point4.X) * (point1.Y - point3.Y)
        - (point3.Y - point4.Y) * (point1.X - point3.X);
@@ -1235,7 +1232,7 @@ void draw_floor_tile1b(ushort tl)
             vec_mode = 27;
         draw_trigpoly(&point4, &point3, &point1);
     }
-    dword_176D4C += 2;
+    stat_drawexec_faces++;
 
     // damage overlays
     if ((p_floortl->Page > 0) && (p_floortl->Page <= 12))
@@ -1243,10 +1240,11 @@ void draw_floor_tile1b(ushort tl)
         vec_mode = 6;
         set_floor_texture_uv_damaged_ground(&point1, &point2, &point3, &point4, p_floortl->Page);
         draw_trigpoly(&point1, &point2, &point4);
+        stat_drawexec_faces++;
         if (vec_mode == 2)
             vec_mode = 27;
         draw_trigpoly(&point4, &point3, &point1);
-        dword_176D4C += 2;
+        stat_drawexec_faces++;
     }
     //TODO why the second time using the same page?
     if ((p_floortl->Page > 0) && (p_floortl->Page <= 12))
@@ -1254,10 +1252,11 @@ void draw_floor_tile1b(ushort tl)
         vec_mode = 6;
         set_floor_texture_uv_damaged_ground(&point1, &point2, &point3, &point4, p_floortl->Page);
         draw_trigpoly(&point1, &point2, &point4);
+        stat_drawexec_faces++;
         if (vec_mode == 2)
             vec_mode = 27;
         draw_trigpoly(&point4, &point3, &point1);
-        dword_176D4C += 2;
+        stat_drawexec_faces++;
     }
 }
 
@@ -1318,6 +1317,7 @@ void draw_special_object_face4(ushort face4)
         set_floor_texture_uv(p_face4->Texture, &point2, &point1, &point3,
           &point4, p_face4->GFlags);
     }
+
     {
         if (vec_mode == 2)
             vec_mode = 27;
@@ -1329,7 +1329,7 @@ void draw_special_object_face4(ushort face4)
             vec_mode = 27;
         draw_trigpoly(&point3, &point2, &point1);
     }
-    dword_176D4C++;
+    stat_drawexec_faces++;
 
     {
         if (vec_mode == 2)
@@ -1342,7 +1342,7 @@ void draw_special_object_face4(ushort face4)
             vec_mode = 27;
         draw_trigpoly(&point4, &point3, &point1);
     }
-    dword_176D4C++;
+    stat_drawexec_faces++;
 }
 
 /**
@@ -1408,15 +1408,15 @@ void draw_object_face4_pole(ushort face4)
         point4.S = 0x200000;
     }
 
-    dword_176D4C++;
     if (vec_mode == 2)
         vec_mode = 27;
     draw_trigpoly(&point1, &point2, &point3);
+    stat_drawexec_faces++;
 
-    dword_176D4C++;
     if (vec_mode == 2)
         vec_mode = 27;
     draw_trigpoly(&point4, &point1, &point3);
+    stat_drawexec_faces++;
 }
 
 /**
@@ -1542,7 +1542,6 @@ void draw_object_face3d_textrd(ushort face3)
         point2.S = 0x200000;
         point3.S = 0x200000;
     }
-    dword_176D4C++;
 
     if (game_perspective == 3)
     {
@@ -1556,6 +1555,7 @@ void draw_object_face3d_textrd(ushort face3)
             poly_line(&point2, &point3);
             poly_line(&point1, &point2);
         }
+        stat_drawexec_faces++;
     }
     else
     {
@@ -1567,8 +1567,8 @@ void draw_object_face3d_textrd(ushort face3)
             if (vec_mode == 2)
                 vec_mode = 27;
             draw_trigpoly(&point1, &point3, &point2);
-            dword_176D4C++;
         }
+        stat_drawexec_faces++;
     }
 
     if ((p_face->GFlags & FGFlg_Unkn04) != 0)
@@ -1723,20 +1723,19 @@ void draw_object_face4d_textrd(ushort face4)
         point3.S = 0x200000;
         point4.S = 0x200000;
     }
-    dword_176D4C++;
 
     {
         if (vec_mode == 2)
             vec_mode = 27;
         draw_trigpoly(&point1, &point2, &point3);
     }
-
     if ((p_face4->GFlags & FGFlg_Unkn01) != 0)
     {
         if (vec_mode == 2)
             vec_mode = 27;
         draw_trigpoly(&point1, &point3, &point2);
     }
+    stat_drawexec_faces++;
 
     if ((p_face4->GFlags & FGFlg_Unkn04) != 0)
     {
@@ -1753,20 +1752,19 @@ void draw_object_face4d_textrd(ushort face4)
               &point2, &point4, 0);
         }
     }
-    dword_176D4C++;
 
     {
         if (vec_mode == 2)
             vec_mode = 27;
         draw_trigpoly(&point4, &point3, &point2);
     }
-
     if ((p_face4->GFlags & FGFlg_Unkn01) != 0)
     {
         if (vec_mode == 2)
             vec_mode = 27;
         draw_trigpoly(&point4, &point2, &point3);
     }
+    stat_drawexec_faces++;
 
     if ((p_face4->GFlags & FGFlg_Unkn04) != 0)
     {
@@ -1878,7 +1876,6 @@ void draw_object_face3d_textrd_dk(ushort face3)
         point2.S = 0x200000;
         point3.S = 0x200000;
     }
-    dword_176D4C++;
 
     if (game_perspective == 3)
     {
@@ -1889,6 +1886,7 @@ void draw_object_face3d_textrd_dk(ushort face3)
             poly_line(&point2, &point3);
             poly_line(&point1, &point2);
         }
+        stat_drawexec_faces++;
     }
     else
     {
@@ -1900,8 +1898,8 @@ void draw_object_face3d_textrd_dk(ushort face3)
             if (vec_mode == 2)
                 vec_mode = 27;
             draw_trigpoly(&point1, &point3, &point2);
-            dword_176D4C++;
         }
+        stat_drawexec_faces++;
     }
 }
 

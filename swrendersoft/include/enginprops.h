@@ -203,7 +203,11 @@ extern ubyte *scratch_buf1;
  */
 extern u32 stat_drawlist_faces;
 
-extern s32 dword_176D4C;
+/** Amount of faces for whom drawlist execution was performed, for statistics.
+ *
+ *  Double sided faces count as one. But square faces countas two triangles.
+ */
+extern s32 stat_drawexec_faces;
 
 /** Callback for debug of 3D objects primitives.
  */
