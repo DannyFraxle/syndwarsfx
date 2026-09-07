@@ -1024,15 +1024,30 @@ void draw_screen(void)
     {
         draw_drawlist_2();
     }
-#if 0
-    //TODO Setting first palette colour was often used as debug helper; to be removed
-    outp(0x3C8u, 0);
-    outp(0x3C9u, byte_1C83E0);
-    outp(0x3C9u, 0);
-    outp(0x3C9u, 0);
-#endif
+
     reset_drawlist();
     ingame.NextRocket = 0;
+}
+
+void engine_check_draw_billboard_frame(void)
+{
+    if ((ingame.Flags & GamF_BillboardBAT) != 0)
+    {
+        // Curently BAT has no separation of input and draw, so no action is needed here
+    }
+    else if ((ingame.Flags & GamF_BillboardMovies) != 0)
+    {
+        dword_176CBC += fifties_per_gameturn;
+        if (dword_176CBC > 80)
+        {
+            dword_176CBC = 0;
+            if (!in_network_game && ((ingame.Flags & GamF_Unkn00040000) != 0))
+            {
+                ingame.Flags &= ~GamF_Unkn00040000;
+                embanim_do_next_frame(AniSl_BILLBOARD);
+            }
+        }
+    }
 }
 
 void engine_draw_whole_screen_flyby(void)
@@ -1060,14 +1075,7 @@ void engine_draw_whole_screen_flyby(void)
 
     player_target_clear(local_player_no);
 
-    if ((ingame.Flags & GamF_BillboardMovies) != 0)
-    {
-        dword_176CC0 += fifties_per_gameturn;
-        if (dword_176CC0 > 80) {
-            dword_176CC0 = 0;
-            embanim_do_next_frame(AniSl_BILLBOARD);
-        }
-    }
+    engine_check_draw_billboard_frame();
 
     camera_setup_angle_fractions();
 
@@ -1095,20 +1103,7 @@ void engine_draw_whole_screen_top_down(void)
 
     player_target_clear(local_player_no); // set during HUD redraw (should be separated!)
 
-    if (((ingame.Flags & GamF_BillboardBAT) == 0) &&
-      ((ingame.Flags & GamF_BillboardMovies) != 0))
-    {
-        dword_176CBC += fifties_per_gameturn;
-        if (dword_176CBC > 80)
-        {
-            dword_176CBC = 0;
-            if (!in_network_game && ((ingame.Flags & GamF_Unkn00040000) != 0))
-            {
-                ingame.Flags &= ~GamF_Unkn00040000;
-                embanim_do_next_frame(AniSl_BILLBOARD);
-            }
-        }
-    }
+    engine_check_draw_billboard_frame();
 
     int rend_beg_x, rend_beg_z;
     int pos_beg_x, pos_beg_z;
