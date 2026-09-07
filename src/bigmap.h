@@ -70,6 +70,17 @@ extern "C" {
  */
 #define MAX_WALKABLE_STEEPNESS_PER_256 98
 
+enum MyMapElementFlags {
+    MEF1_Unkn01     = 0x01,
+    MEF1_Unkn02     = 0x02,
+    MEF1_Unkn04     = 0x04,
+    MEF1_Unkn08     = 0x08,
+    MEF1_Unkn10     = 0x10,
+    MEF1_Unkn20     = 0x20,
+    MEF1_Unkn40     = 0x40,
+    MEF1_Unkn80     = 0x80,
+};
+
 enum MyMapElementFlags2 {
     MEF2_Unkn01     = 0x01,
     MEF2_Unkn02     = 0x02,

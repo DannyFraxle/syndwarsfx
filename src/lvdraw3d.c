@@ -135,6 +135,18 @@ short shpoint_compute_shade_fading(struct ShEnginePoint *p_sp, struct MyMapEleme
     return shd;
 }
 
+void screen_position_face_render_null_callback(
+  struct PolyPoint *p_pt1,
+  struct PolyPoint *p_pt2,
+  struct PolyPoint *p_pt3,
+  ushort face, ubyte type)
+{
+}
+
+void screen_sorted_sprite_render_null_callback(ushort sspr)
+{
+}
+
 ubyte lvdraw_fill_bound_points(struct TbPoint *bound_pts)
 {
     int fctr_x1, fctr_z1, fctr_x2, fctr_z2;
@@ -290,18 +302,21 @@ void lvdraw_do_objects(int cor_z_beg, uint ranges_x_len, struct Range *ranges_x)
     {
         cor_x = ranges_x[rn + 1].beg;
         cor_x_end = ranges_x[rn + 1].fin;
-        for (; cor_x <= cor_x_end; cor_x += (1 << 8))
+        for (; cor_x <= cor_x_end; cor_x += TILE_TO_MAPCOORD(1,0))
         {
             struct Thing *p_objtng;
             struct MyMapElement *p_mapel;
             ThingIdx objtng;
             short tile_x, tile_z;
 
-            if ((cor_x <= 0) || (cor_x >= 0x8000) || (cor_z <= 0) || (cor_z >= 0x8000))
+            if ((cor_x <= 0) || (cor_x >= MAP_COORD_WIDTH))
                 continue;
 
-            tile_z = cor_z >> 8;
-            tile_x = cor_x >> 8;
+            if ((cor_z <= 0) || (cor_z >= MAP_COORD_HEIGHT))
+                continue;
+
+            tile_z = MAPCOORD_TO_TILE(cor_z);
+            tile_x = MAPCOORD_TO_TILE(cor_x);
             p_mapel = &game_my_big_map[MAP_TILE_WIDTH * tile_z + tile_x];
             objtng = game_col_vects_list[p_mapel->ColHead].Object;
             if (objtng > 0)
@@ -311,7 +326,7 @@ void lvdraw_do_objects(int cor_z_beg, uint ranges_x_len, struct Range *ranges_x)
                     draw_thing_object(p_objtng);
             }
         }
-        cor_z += (1 << 8);
+        cor_z += TILE_TO_MAPCOORD(1,0);
     }
 }
 
@@ -432,7 +447,8 @@ void lvdraw_do_floor(void)
 
             if ( (((p_spcr[2].Flags | p_spnx[2].Flags | p_spcr[0].Flags | p_spnx[0].Flags) & 0x20) != 0)
               || (((p_spnx[2].Flags & p_spcr[0].Flags & p_spnx[0].Flags & p_spcr[2].Flags) & 0x0F) != 0)
-              || (elcr_x <= 0) || (elcr_x >= 0x8000) || (elcr_z <= 0) || (elcr_z >= 0x8000)
+              || (elcr_x <= 0) || (elcr_x >= MAP_COORD_WIDTH)
+              || (elcr_z <= 0) || (elcr_z >= MAP_COORD_HEIGHT)
               || ((game_perspective != 2) && ((p_mapel->Flags & 0x80) != 0)))
             {
                 p_sqlight++;
@@ -464,17 +480,17 @@ void lvdraw_do_floor(void)
                 {
                     int alt;
                     if (p_mapel->Alt <= 0)
-                      alt = 15000 * overall_scale;
+                        alt = 15000 * overall_scale;
                     else
-                      alt = 500 * overall_scale;
+                        alt = 500 * overall_scale;
                     dpthalt = alt >> 8;
                 }
                 else
                 {
                     if (p_mapel->Alt <= 0)
-                      dpthalt = 3500;
+                        dpthalt = 3500;
                     else
-                      dpthalt = 2500;
+                        dpthalt = 2500;
                 }
             }
             dpthalt += 200;
@@ -643,12 +659,12 @@ void lvdraw_do_floor_flyby(int cor_z_beg, int ranges_x_len, struct Range *smrang
                 floor_flags2 |= 0x01;
                 if (byte_1C8444)
                 {
-                    uint tmp;
+                    int alt;
                     if (p_mapel->Alt <= 0)
-                        tmp = 15000 * overall_scale;
+                        alt = 15000 * overall_scale;
                     else
-                        tmp = 500 * overall_scale;
-                    dpthalt = tmp >> 8;
+                        alt = 500 * overall_scale;
+                    dpthalt = alt >> 8;
                 }
                 else
                 {
@@ -726,6 +742,9 @@ void func_2e440(void)
 
     reset_drawlist();
     ingame.NextRocket = 0;
+    screen_position_face_render_cb = screen_position_face_render_null_callback;
+    screen_sorted_sprite_statc_render_cb = screen_sorted_sprite_render_null_callback;
+    screen_sorted_sprite_persn_render_cb = screen_sorted_sprite_render_null_callback;
 
     slt_zmin = lvdraw_fill_bound_points(bound_pts);
 

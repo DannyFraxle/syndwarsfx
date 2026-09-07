@@ -290,13 +290,6 @@ extern long dword_1AAB74;
 extern long dword_1AAB78;
 extern ushort word_1AABD0;
 
-extern long mech_unkn_tile_x1;
-extern long mech_unkn_tile_y1;
-extern long mech_unkn_tile_x2;
-extern long mech_unkn_tile_y2;
-extern long mech_unkn_tile_x3;
-extern long mech_unkn_tile_y3;
-
 extern struct OutroHotChar outro_hot_chars[OUTRO_HOT_CHARS_COUNT];
 
 //TODO this is not an extern only because I was unable to locate it in asm
@@ -1804,6 +1797,7 @@ void process_engine_unk3(void)
     PlayerInfo *p_locplayer;
 
     get_engine_inputs();
+    mech_gameturn_reinit();
 
     reset_drawlist();
     ingame.NextRocket = 0;
@@ -1811,12 +1805,6 @@ void process_engine_unk3(void)
     screen_sorted_sprite_statc_render_cb = screen_sorted_sprite_statc_render_callback;
     screen_sorted_sprite_persn_render_cb = screen_sorted_sprite_persn_render_callback;
     player_target_clear(local_player_no);
-    mech_unkn_dw_1DC880 = mech_unkn_tile_x1;
-    mech_unkn_dw_1DC884 = mech_unkn_tile_y1;
-    mech_unkn_dw_1DC888 = mech_unkn_tile_x2;
-    mech_unkn_dw_1DC88C = mech_unkn_tile_y2;
-    mech_unkn_dw_1DC890 = mech_unkn_tile_x3;
-    mech_unkn_dw_1DC894 = mech_unkn_tile_y3;
 
     process_map_craters();
 

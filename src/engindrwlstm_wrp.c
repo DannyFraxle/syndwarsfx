@@ -997,9 +997,9 @@ void draw_vehicle_health(struct Thing *p_thing, int bckt)
         bar_col = 19;
     }
 
-    cor_x = (p_thing->X >> 8);
-    cor_y = (p_thing->Y >> 5);
-    cor_z = (p_thing->Z >> 8);
+    cor_x = PRCCOORD_TO_MAPCOORD(p_thing->X);
+    cor_y = PRCCOORD_TO_YCOORD(p_thing->Y);
+    cor_z = PRCCOORD_TO_MAPCOORD(p_thing->Z);
 
     enlist_draw_long_health_bar(cor_x, cor_y, cor_z, depth_shift,
       bckt, p_thing->Health, p_thing->U.UVehicle.MaxHealth,

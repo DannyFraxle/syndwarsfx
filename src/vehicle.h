@@ -227,7 +227,21 @@ struct VehStateConfig
 extern struct unkn_mech_struc7 *unkn_mech_stct7; // = NULL;
 extern void *dword_177750;
 
+extern s32 mech_rocket1_launch_cor_x;
+extern s32 mech_rocket1_launch_cor_y;
+extern s32 mech_rocket1_launch_cor_z;
+extern s32 mech_rocket2_launch_cor_x;
+extern s32 mech_rocket2_launch_cor_y;
+extern s32 mech_rocket2_launch_cor_z;
+
+/******************************************************************************/
+
 void init_mech(void);
+
+/** Reinit per-gameturn state of mech vehicles.
+ */
+void mech_gameturn_reinit(void);
+
 void mech_unkn_func_02(void);
 void mech_unkn_func_09(ThingIdx thing);
 void init_mech_explode(struct Thing *p_vehicle);

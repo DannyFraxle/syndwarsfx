@@ -4201,12 +4201,14 @@ void process_mech_weapon(struct Thing *p_vehicle, struct Thing *p_person)
     if ((p_vehicle->U.UVehicle.TNode & 0x0001) != 0)
     {
         p_vehicle->U.UVehicle.TNode &= ~0x0001;
-        init_mech_rocket(p_person, p_vehicle, mech_unkn_dw_1DC880, mech_unkn_dw_1DC884, mech_unkn_dw_1DC888);
+        init_mech_rocket(p_person, p_vehicle, mech_rocket1_launch_cor_x,
+          mech_rocket1_launch_cor_y, mech_rocket1_launch_cor_z);
     }
     if ((p_vehicle->U.UVehicle.TNode & 0x0002) != 0)
     {
         p_vehicle->U.UVehicle.TNode &= ~0x0002;
-        init_mech_rocket(p_person, p_vehicle, mech_unkn_dw_1DC88C, mech_unkn_dw_1DC890, mech_unkn_dw_1DC894);
+        init_mech_rocket(p_person, p_vehicle, mech_rocket2_launch_cor_x,
+          mech_rocket2_launch_cor_y, mech_rocket2_launch_cor_z);
     }
     if ((p_vehicle->U.UVehicle.TNode & 0x0008) != 0)
     {

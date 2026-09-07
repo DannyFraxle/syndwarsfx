@@ -282,6 +282,13 @@ extern ubyte *unkn_mech_arr6; // = NULL;
 extern struct unkn_mech_struc2 *unkn_mech_arr2; // = NULL;
 extern struct M33 unkn_mech_mat8;
 
+extern s32 mech_last_cor_x;
+extern s32 mech_last_cor_y;
+extern s32 mech_last_cor_z;
+extern s32 mech_unkn_tile_y2;
+extern s32 mech_unkn_tile_x3;
+extern s32 mech_unkn_tile_y3;
+
 const char *vehicle_type_name(ushort vtype)
 {
 #if 0
@@ -376,6 +383,20 @@ void init_mech(void)
     a1idx = unkn_mech_arr2[unkn_mech_arr3->field_6C].field_0;
     unkn_mech_arr3->field_64 = a1idx;
     unkn_mech_arr3->mech3_unkn_fld_54[2] = unkn_mech_arr1[a1idx].field_9;
+}
+
+void mech_gameturn_reinit(void)
+{
+    // Mech rocket coordinates should be recomputed later using proper matrix
+    // transforms; but to avoid them being unset, init to last body location
+    //TODO why do we think there is a chance of the coords not being properly updated from things?
+    mech_rocket1_launch_cor_x = mech_last_cor_x;
+    mech_rocket1_launch_cor_y = mech_last_cor_y;
+    mech_rocket1_launch_cor_z = mech_last_cor_z;
+
+    mech_rocket2_launch_cor_x = mech_last_cor_x;
+    mech_rocket2_launch_cor_y = mech_last_cor_y;
+    mech_rocket2_launch_cor_z = mech_last_cor_z;
 }
 
 TbBool vehicle_is_destroyed(ThingIdx thing)
