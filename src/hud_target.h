@@ -34,8 +34,11 @@ struct Thing;
 /******************************************************************************/
 extern TbBool hud_show_target_health;
 
+void show_goto_point(u32 flag);
 
+void init_draw_target(void);
 void draw_hud_lock_target(void);
+void draw_hud_target_mouse(ThingIdx dcthing);
 void draw_target_person(struct Thing *p_person, uint radius);
 void draw_hud_target2(short dcthing, short target);
 

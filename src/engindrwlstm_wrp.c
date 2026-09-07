@@ -105,8 +105,6 @@ struct unkn_mech_struc3 { // sizeof=0x76
 
 #pragma pack()
 /******************************************************************************/
-extern short word_1552F8;
-
 extern ubyte byte_176D49;
 
 extern long dword_176CAC;

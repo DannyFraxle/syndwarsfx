@@ -28,6 +28,7 @@
 #include "engincam.h"
 #include "engincolour.h"
 #include "engindrwlstm.h"
+#include "enginfexpl.h"
 #include "enginfloor.h"
 #include "enginlights.h"
 #include "enginpeff.h"
@@ -44,10 +45,13 @@
 #include "game.h"
 #include "game_options.h"
 #include "game_speed.h"
+#include "hud_draw.h"
 #include "player.h"
 #include "scanner.h"
 #include "swlog.h"
 #include "thing.h"
+#include "thing_onface.h"
+#include "thing_ovmous.h"
 #include "tngcolisn.h"
 #include "tngobjdrw.h"
 /******************************************************************************/
@@ -65,7 +69,8 @@ s32 dword_152E50 = 256;
 s32 dword_152E54 = 80;
 s32 dword_152E58 = 410;
 
-extern long dword_176CC0;
+extern s32 dword_176CBC;
+extern s32 dword_176CC0;
 
 extern short word_19CC64;
 extern short word_19CC66;
@@ -145,6 +150,85 @@ void screen_position_face_render_null_callback(
 
 void screen_sorted_sprite_render_null_callback(ushort sspr)
 {
+}
+
+void screen_position_face_render_callback(
+  struct PolyPoint *p_pt1,
+  struct PolyPoint *p_pt2,
+  struct PolyPoint *p_pt3,
+  ushort face, ubyte type)
+{
+    PlayerInfo *p_locplayer;
+
+    p_locplayer = &players[local_player_no];
+    if (p_locplayer->TargetType < TrgTp_Unkn3) {
+        check_mouse_over_face(p_pt1, p_pt2, p_pt3, face, type);
+    }
+}
+
+void screen_sorted_sprite_statc_render_callback(ushort sspr)
+{
+    struct Thing *p_thing;
+    PlayerInfo *p_locplayer;
+
+    p_locplayer = &players[local_player_no];
+    p_thing = (struct Thing *)game_sort_sprites[sspr].SrcItem;
+
+    if ((p_locplayer->TargetType <= TrgTp_DroppedTng) && (p_thing->Type == SmTT_DROPPED_ITEM)) {
+        check_mouse_overlap_item(sspr);
+    }
+
+    if ((p_locplayer->TargetType < TrgTp_Unkn6) && (p_thing->Type == TT_MINE))
+    {
+        if ((p_thing->SubType == 7) || (p_thing->SubType == 3))
+            check_mouse_overlap_item(sspr);
+        else if (p_thing->SubType == 48)
+            check_mouse_overlap(sspr);
+    }
+}
+
+void screen_sorted_sprite_persn_render_callback(ushort sspr)
+{
+    struct Thing *p_thing;
+
+    p_thing = (struct Thing *)game_sort_sprites[sspr].SrcItem;
+
+    if (p_thing->U.UPerson.EffectiveGroup != ingame.MyGroup)
+    {
+        PlayerInfo *p_locplayer;
+
+        p_locplayer = &players[local_player_no];
+        if ((p_thing->Flag & TngF_Destroyed) != 0)
+        {
+            if (p_locplayer->TargetType < TrgTp_Unkn1)
+                check_mouse_overlap_corpse(sspr);
+        }
+        else
+        {
+            if (p_locplayer->TargetType < TrgTp_Unkn7)
+                check_mouse_overlap(sspr);
+        }
+    }
+
+    if (in_network_game)
+    {
+        struct Thing *p_owntng;
+
+        p_owntng = NULL;
+        if (person_is_other_players_agent(p_thing, local_player_no))
+        {
+            p_owntng = p_thing;
+        }
+        else if ((p_thing->Flag & TngF_Persuaded) != 0)
+        {
+            p_owntng = &things[p_thing->Owner];
+            if (!person_is_other_players_agent(p_owntng, local_player_no))
+                p_owntng = NULL;
+        }
+        if ((p_owntng != NULL) && (p_owntng->U.UPerson.CurrentWeapon != WEP_CLONESHLD)) {
+            check_mouse_over_unkn2(sspr, p_owntng);
+        }
+    }
 }
 
 ubyte lvdraw_fill_bound_points(struct TbPoint *bound_pts)
@@ -327,6 +411,117 @@ void lvdraw_do_objects(int cor_z_beg, uint ranges_x_len, struct Range *ranges_x)
             }
         }
         cor_z += TILE_TO_MAPCOORD(1,0);
+    }
+}
+
+void engine_draw_things(int pos_beg_x, int pos_beg_z, int rend_beg_x, int rend_beg_z, short tlcount_x, short tlcount_z)
+{
+    int tlno_x, pos_x;
+    int view_end_x, view_beg_z;
+    int view_beg_x, view_end_z;
+
+    view_end_x = rend_beg_x + 512;
+    view_beg_z = rend_beg_z - 512;
+    view_beg_x = rend_beg_x - ((render_area_a << 8) + 512);
+    view_end_z = rend_beg_z + ((render_area_b << 8) + 512);
+
+    for (tlno_x = 0, pos_x = pos_beg_x; tlno_x < tlcount_x; tlno_x++, pos_x += -256)
+    {
+        int tlno_z, pos_z;
+
+        for (tlno_z = 0, pos_z = pos_beg_z; tlno_z < tlcount_z; tlno_z++, pos_z += 256)
+        {
+            struct MyMapElement *p_mapel;
+
+            if (pos_x <= TILE_TO_MAPCOORD(0,0) || pos_x >= MAP_COORD_WIDTH)
+                continue;
+            if (pos_z <= TILE_TO_MAPCOORD(0,0) || pos_z >= MAP_COORD_HEIGHT)
+                continue;
+
+            p_mapel = &game_my_big_map[MAPCOORD_TO_TILE(pos_x) + MAPCOORD_TO_TILE(pos_z) * MAP_TILE_WIDTH];
+
+            if (pos_x >= view_beg_x && pos_x <= view_end_x && pos_z >= view_beg_z && pos_z <= view_end_z)
+            {
+                ThingIdx thing;
+                ushort lv;
+
+                lv = p_mapel->ColHead;
+                if (lv != 0)
+                {
+                    thing = game_col_vects_list[lv].Object;
+                    if (thing > 0)
+                    {
+                        struct Thing *p_thing;
+                        p_thing = &things[thing];
+                        if ((p_thing->Type == TT_BUILDING)
+                         && (p_thing->U.UObject.DrawTurn != drawturn)) {
+                            draw_thing_object(p_thing);
+                        }
+                    }
+                }
+                thing = p_mapel->Child;
+                while (thing != 0)
+                {
+                    if (thing > 0)
+                    {
+                        struct Thing *p_thing;
+                        p_thing = &things[thing];
+                        thing = draw_thing_object(p_thing);
+                        continue;
+                    }
+                    else
+                    {
+                        struct SimpleThing *p_sthing;
+                        p_sthing = &sthings[thing];
+                        thing = draw_sthing_object(p_sthing);
+                        continue;
+                    }
+                }
+            }
+            else
+            {
+                ThingIdx thing;
+                ushort lv;
+
+                lv = p_mapel->ColHead;
+                if (lv != 0)
+                {
+                    thing = game_col_vects_list[lv].Object;
+                    if (thing > 0)
+                    {
+                        struct Thing *p_thing;
+                        p_thing = &things[thing];
+                        if ((p_thing->Type == TT_BUILDING)
+                          && (p_thing->U.UObject.DrawTurn != drawturn)
+                          && (p_thing->U.UObject.BHeight > 1400)) {
+                            draw_thing_object(p_thing);
+                        }
+                    }
+                }
+                thing = p_mapel->Child;
+                while (thing != 0)
+                {
+                    if (thing > 0)
+                    {
+                        struct Thing *p_thing;
+                        p_thing = &things[thing];
+                        if ( p_thing->Type == TT_BUILDING
+                          && (p_thing->U.UObject.DrawTurn != drawturn)
+                          && (p_thing->U.UObject.BHeight > 1400)) {
+                            thing = draw_thing_object(p_thing);
+                            continue;
+                        }
+                        thing = p_thing->Next;
+                    }
+                    else
+                    {
+                        struct SimpleThing *p_sthing;
+                        p_sthing = &sthings[thing];
+                        thing = p_sthing->Next;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -731,54 +926,6 @@ void lvdraw_do_floor_flyby(int cor_z_beg, int ranges_x_len, struct Range *smrang
     }
 }
 
-void func_2e440(void)
-{
-    ubyte slt_zmin;
-
-    struct Range smrang_x[160];
-    struct Range ranges_x[160];
-    struct TbPoint bound_pts[4];
-    int cor_z_beg, ranges_x_len;
-
-    reset_drawlist();
-    ingame.NextRocket = 0;
-    screen_position_face_render_cb = screen_position_face_render_null_callback;
-    screen_sorted_sprite_statc_render_cb = screen_sorted_sprite_render_null_callback;
-    screen_sorted_sprite_persn_render_cb = screen_sorted_sprite_render_null_callback;
-
-    slt_zmin = lvdraw_fill_bound_points(bound_pts);
-
-    cor_z_beg = bound_pts[slt_zmin].y << 8;
-
-    ranges_x_len = lvdraw_fill_ranges_x(slt_zmin, ranges_x, bound_pts);
-
-    filter_ranges_max_of_two(ranges_x_len, smrang_x, ranges_x);
-
-    player_target_clear(local_player_no);
-
-    if ((ingame.Flags & GamF_BillboardMovies) != 0)
-    {
-        dword_176CC0 += fifties_per_gameturn;
-        if (dword_176CC0 > 80) {
-            dword_176CC0 = 0;
-            embanim_do_next_frame(AniSl_BILLBOARD);
-        }
-    }
-
-    camera_setup_angle_fractions();
-
-    lvdraw_do_objects(cor_z_beg, ranges_x_len, ranges_x);
-
-    lvdraw_do_floor_flyby(cor_z_beg, ranges_x_len, smrang_x, ranges_x);
-
-    assert(vec_tmap[1] != NULL);
-    vec_map = vec_tmap[1];
-    face_transp_tinted_surface_col = deep_radar_surface_col;
-    face_transp_tinted_line_col = deep_radar_line_col;
-
-    draw_screen();
-}
-
 #define SUPER_QUICK_RADIUS 5
 void apply_super_quick_light(short lx, short lz, ushort b)
 {
@@ -886,6 +1033,129 @@ void draw_screen(void)
 #endif
     reset_drawlist();
     ingame.NextRocket = 0;
+}
+
+void func_2e440(void)
+{
+    ubyte slt_zmin;
+
+    struct Range smrang_x[160];
+    struct Range ranges_x[160];
+    struct TbPoint bound_pts[4];
+    int cor_z_beg, ranges_x_len;
+
+    reset_drawlist();
+    ingame.NextRocket = 0;
+    screen_position_face_render_cb = screen_position_face_render_null_callback;
+    screen_sorted_sprite_statc_render_cb = screen_sorted_sprite_render_null_callback;
+    screen_sorted_sprite_persn_render_cb = screen_sorted_sprite_render_null_callback;
+
+    slt_zmin = lvdraw_fill_bound_points(bound_pts);
+
+    cor_z_beg = bound_pts[slt_zmin].y << 8;
+
+    ranges_x_len = lvdraw_fill_ranges_x(slt_zmin, ranges_x, bound_pts);
+
+    filter_ranges_max_of_two(ranges_x_len, smrang_x, ranges_x);
+
+    player_target_clear(local_player_no);
+
+    if ((ingame.Flags & GamF_BillboardMovies) != 0)
+    {
+        dword_176CC0 += fifties_per_gameturn;
+        if (dword_176CC0 > 80) {
+            dword_176CC0 = 0;
+            embanim_do_next_frame(AniSl_BILLBOARD);
+        }
+    }
+
+    camera_setup_angle_fractions();
+
+    lvdraw_do_objects(cor_z_beg, ranges_x_len, ranges_x);
+
+    lvdraw_do_floor_flyby(cor_z_beg, ranges_x_len, smrang_x, ranges_x);
+
+    assert(vec_tmap[1] != NULL);
+    vec_map = vec_tmap[1];
+    face_transp_tinted_surface_col = deep_radar_surface_col;
+    face_transp_tinted_line_col = deep_radar_line_col;
+
+    draw_screen();
+}
+
+void engine_draw_whole_screen_top_down(void)
+{
+    PlayerInfo *p_locplayer;
+
+    reset_drawlist();
+    ingame.NextRocket = 0;
+    screen_position_face_render_cb = screen_position_face_render_callback;
+    screen_sorted_sprite_statc_render_cb = screen_sorted_sprite_statc_render_callback;
+    screen_sorted_sprite_persn_render_cb = screen_sorted_sprite_persn_render_callback;
+
+    player_target_clear(local_player_no); // set during HUD redraw (should be separated!)
+
+    if (((ingame.Flags & GamF_BillboardBAT) == 0) &&
+      ((ingame.Flags & GamF_BillboardMovies) != 0))
+    {
+        dword_176CBC += fifties_per_gameturn;
+        if (dword_176CBC > 80)
+        {
+            dword_176CBC = 0;
+            if (!in_network_game && ((ingame.Flags & GamF_Unkn00040000) != 0))
+            {
+                ingame.Flags &= ~GamF_Unkn00040000;
+                embanim_do_next_frame(AniSl_BILLBOARD);
+            }
+        }
+    }
+
+    int rend_beg_x, rend_beg_z;
+    int pos_beg_x, pos_beg_z;
+    int tlcount_x, tlcount_z;
+
+    camera_setup_view(&pos_beg_x, &pos_beg_z, &rend_beg_x, &rend_beg_z, &tlcount_x, &tlcount_z);
+
+    if ((ingame.Flags & GamF_RenderScene) != 0)
+    {
+        engine_draw_things(pos_beg_x, pos_beg_z, rend_beg_x, rend_beg_z, tlcount_x, tlcount_z);
+    }
+
+    if ((ingame.Flags & GamF_RenderScene) != 0)
+    {
+        if ((gamep_scene_effect_type == ScEff_SPACE) && engine_render_lights)
+            draw_background_stars();
+        if (game_perspective == 6) {
+            draw_background_stars();
+        } else {
+            lvdraw_do_floor();
+        }
+    }
+
+    if (word_1552F8 != 36 && !byte_1C8444)
+    {
+        clear_super_quick_lights();
+    }
+    assert(vec_tmap[1] != NULL);
+    vec_map = vec_tmap[1];
+    face_transp_tinted_surface_col = deep_radar_surface_col;
+    face_transp_tinted_line_col = deep_radar_line_col;
+
+    p_locplayer = &players[local_player_no];
+    if ((ingame.Flags & GamF_RenderScene) != 0)
+    {
+        draw_explode();
+        draw_screen();
+        draw_hud(p_locplayer->DirectControl[0]);
+        if (in_network_game)
+            draw_engine_net_text();
+        if (debug_hud_collision)
+            draw_engine_unk3_last(engn_xc, engn_zc);
+    }
+    else
+    {
+        draw_hud(p_locplayer->DirectControl[0]);
+    }
 }
 
 /******************************************************************************/

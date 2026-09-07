@@ -35,12 +35,103 @@
 #include "frame_sprani.h"
 #include "game_sprts.h"
 #include "game.h"
+#include "mouse.h"
+#include "player.h"
 #include "thing.h"
 #include "weapon.h"
 #include "swlog.h"
 /******************************************************************************/
 
 TbBool hud_show_target_health = false;
+
+extern s32 target_old_frameno; // = 0
+
+/******************************************************************************/
+
+void show_goto_point(u32 flag)
+{
+    asm volatile ("call ASM_show_goto_point\n"
+        : : "a" (flag));
+    return;
+}
+
+void draw_hud_target_mouse(ThingIdx dcthing)
+{
+    PlayerInfo *p_locplayer;
+    struct Thing *p_dcthing;
+
+    p_dcthing = &things[dcthing];
+    p_locplayer = &players[local_player_no];
+    if (p_locplayer->Target > 0)
+    {
+        struct Thing *p_targtng;
+        int weprange;
+        ushort msspr;
+        uint range;
+
+        weprange = current_hand_weapon_range(p_dcthing);
+        switch (p_locplayer->TargetType)
+        {
+        case TrgTp_Unkn1:
+        case TrgTp_Unkn2:
+        case TrgTp_Unkn6:
+        case TrgTp_Unkn7:
+            p_locplayer->field_102 = p_locplayer->Target;
+            p_locplayer->TargetType = TrgTp_Unkn7;
+            p_targtng = &things[p_locplayer->Target];
+            range = weprange * weprange;
+            if (can_i_see_thing(p_dcthing, p_targtng, range, 3) ) {
+                msspr = 3;
+            } else {
+                msspr = 2;
+            }
+            do_change_mouse(msspr);
+            break;
+        case TrgTp_Unkn3:
+            p_locplayer->field_102 = p_locplayer->Target;
+            do_change_mouse(7);
+            break;
+        case TrgTp_Unkn4:
+            p_locplayer->field_102 = p_locplayer->Target;
+            p_targtng = &things[p_locplayer->field_102];
+            p_dcthing = &things[p_locplayer->DirectControl[mouser]];
+            if (can_i_enter_vehicle(p_dcthing, p_targtng)) {
+              msspr = 6;
+            } else {
+              range = p_targtng->Radius * p_targtng->Radius + weprange * weprange;
+              if (can_i_see_thing(p_dcthing, p_targtng, range, 3) ) {
+                msspr = 3;
+              } else {
+                msspr = 2;
+              }
+            }
+            do_change_mouse(msspr);
+            break;
+        default:
+            break;
+        }
+    }
+    else if (p_locplayer->Target < 0)
+    {
+        if (p_locplayer->TargetType == TrgTp_Unkn3) {
+          p_locplayer->field_102 = p_locplayer->Target;
+          do_change_mouse(7);
+        } else {
+          p_locplayer->field_102 = p_locplayer->Target;
+          do_change_mouse(5);
+        }
+    }
+    else
+    {
+        do_change_mouse(8);
+    }
+}
+
+void init_draw_target(void)
+{
+    if (target_old_frameno == 0)
+        target_old_frameno = nstart_ani[983];
+}
 
 void draw_hud_lock_target(void)
 {

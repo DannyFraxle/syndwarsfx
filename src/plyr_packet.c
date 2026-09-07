@@ -35,6 +35,7 @@
 #include "game.h"
 #include "guitext.h"
 #include "hud_panel.h"
+#include "hud_target.h"
 #include "keyboard.h"
 #include "network.h"
 #include "packet.h"
