@@ -36,7 +36,7 @@ void clear_super_quick_lights(void);
 void apply_super_quick_light(short lx, short lz, ushort b);
 
 void lvdraw_do_floor(void);
-void func_2e440(void);
+void engine_draw_whole_screen_flyby(void);
 
 void engine_draw_whole_screen_top_down(void);
 

@@ -63110,7 +63110,7 @@ GLOBAL_FUNC (ASM_gproc3_unknsub2)	/* 0x73798 */
 		mov    %cx,EXPORT_SYMBOL(overall_scale)
 		call   ac_memset
 		subl   $0xa,EXPORT_SYMBOL(gameturn)
-		call   ac_func_2e440
+		call   ac_engine_draw_whole_screen_flyby
 		addl   $0xa,EXPORT_SYMBOL(gameturn)
 		mov    EXPORT_SYMBOL(lbDisplay)+28,%edx # lbDisplay.PhysicalScreenHeight
 		mov    EXPORT_SYMBOL(lbDisplay)+24,%ecx # lbDisplay.PhysicalScreenWidth

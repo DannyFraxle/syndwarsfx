@@ -1035,7 +1035,7 @@ void draw_screen(void)
     ingame.NextRocket = 0;
 }
 
-void func_2e440(void)
+void engine_draw_whole_screen_flyby(void)
 {
     ubyte slt_zmin;
 

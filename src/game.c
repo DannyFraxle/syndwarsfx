@@ -1623,7 +1623,7 @@ void init_outro(void)
         camera_apply_velocity();
         prepare_drawlist();
         process_sound_heap();
-        func_2e440();
+        engine_draw_whole_screen_flyby();
         if (outro_credits_enabled)
         {
             outro_unkn02++;
@@ -3299,7 +3299,7 @@ void gproc3_unknsub2(void)
 
     clear_vecs_screen(0);
     drawturn -= 10;
-    func_2e440();
+    engine_draw_whole_screen_flyby();
     drawturn += 10;
 
     setup_vecs(lbDisplay.WScreen, vec_tmap[0],
