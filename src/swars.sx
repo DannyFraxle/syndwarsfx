@@ -36297,7 +36297,7 @@ GLOBAL_FUNC(ASM_build_same_type_headers)	/* 0x056E34 */
 		push   %edx
 		push   %esi
 		mov    things,%esi
-		mov    data_1552f6,%eax
+		mov    EXPORT_SYMBOL(word_1552F8)-2,%eax
 		sar    $0x10,%eax
 		xor    %cl,%cl
 		cmp    $0x24,%eax
@@ -131609,7 +131609,6 @@ GLOBAL (text_colours)	/* 0x1552e4 */
 		.ascii  "\x32\xf4\xb0\xae\x57\xf7\xf6"
 		.ascii  "\xf5\xf8\xda\x32\xae\xaf\xb0\x32"
 		.ascii  "\x00\x01\x00"
-data_1552f6:	/* 0x1552F6 */
 		.short  0x1
 GLOBAL (word_1552F8)	/* 0x1552F8 */
 		.short  0x1

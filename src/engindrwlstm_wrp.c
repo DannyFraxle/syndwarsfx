@@ -825,7 +825,8 @@ short draw_object_faces(int cor_dx, int cor_dy, int cor_dz,
 
     depth_shift = point_object->field_1E;
 
-    if ((point_object->field_1C & 0x0100) != 0 && ((doflags & DrwObjF_NoWobblyElevation) == 0))
+    if ((point_object->field_1C & 0x0100) != 0 &&
+      ((doflags & DrwObjF_NoWobblyElevation) == 0))
         cor_dy += waft_table[render_anim_turn & 0x1F];
 
     bckt_max = 0;
