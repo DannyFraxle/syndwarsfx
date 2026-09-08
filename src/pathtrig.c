@@ -1068,34 +1068,25 @@ void reset_things_col_vect_range(void)
  */
 TbBool face_has_walk_item(short face, short walk_face)
 {
-    struct WalkHeader *p_walk_head;
-    ushort wh, wi;
+    ushort wlkhead;
 
     if (face < 0)
     {
         struct SingleObjectFace4 *p_face;
         p_face = &game_object_faces4[-face];
-        wh = p_face->WalkHeader;
+        wlkhead = p_face->WalkHeader;
     }
     else if (face > 0)
     {
         struct SingleObjectFace3 *p_face;
         p_face = &game_object_faces3[face];
-        wh = p_face->WalkHeader;
+        wlkhead = p_face->WalkHeader;
     } else
     {
         return false;
     }
 
-    p_walk_head = &game_walk_headers[wh];
-
-    for (wi = p_walk_head->StartItem;
-      wi < p_walk_head->StartItem + p_walk_head->Count; wi++)
-    {
-        if (game_walk_items[wi] == walk_face)
-            return true;
-    }
-    return false;
+    return walk_face_is_in_list(wlkhead, walk_face);
 }
 
 /** Adds given walk face to a list of walk items of another face.
@@ -1104,8 +1095,7 @@ TbBool face_has_walk_item(short face, short walk_face)
  */
 void add_face_walk_item(short face, short walk_face)
 {
-    struct WalkHeader *p_walk_head;
-    ushort wh, wi;
+    ushort wlkhead;
 
     if (face_has_walk_item(face, walk_face)) {
         return;
@@ -1115,26 +1105,20 @@ void add_face_walk_item(short face, short walk_face)
     {
         struct SingleObjectFace4 *p_face;
         p_face = &game_object_faces4[-face];
-        wh = p_face->WalkHeader;
+        wlkhead = p_face->WalkHeader;
     }
     else if (face > 0)
     {
         struct SingleObjectFace3 *p_face;
         p_face = &game_object_faces3[face];
-        wh = p_face->WalkHeader;
+        wlkhead = p_face->WalkHeader;
     } else
     {
         LOGERR("no walk head assigned to face %d", (int)face);
         return;
     }
 
-    p_walk_head = &game_walk_headers[wh];
-    assert(p_walk_head->StartItem + p_walk_head->Count == next_walk_item);
-    wi = next_walk_item;
-    next_walk_item++;
-
-    p_walk_head->Count++;
-    game_walk_items[wi] = walk_face;
+    add_walk_face_to_list(wlkhead, walk_face);
 }
 
 int face_to_object_position(short face, short *x, short *y, short *z)
@@ -1350,35 +1334,28 @@ void add_walk_items_for_face_things_near(short x, short y, short z, short radius
  *
  * The WalkHeader is initialized to have 0 items starting at given item index.
  */
-TbBool prepare_face_for_having_walk_items(short face, ushort walk_item)
+TbBool prepare_face_for_having_walk_items(short face)
 {
-    struct WalkHeader *p_walk_head;
-    ushort new_wh;
+    ushort wlkhead;
+
+    wlkhead = create_walk_list();
 
     if (face > 0)
     {
         struct SingleObjectFace3 *p_face;
-
-        new_wh = next_walk_header;
-        next_walk_header++;
         p_face = &game_object_faces3[face];
-        p_face->WalkHeader = new_wh;
+        p_face->WalkHeader = wlkhead;
     }
     else if (face < 0)
     {
         struct SingleObjectFace4 *p_face;
-
-        new_wh = next_walk_header;
-        next_walk_header++;
         p_face = &game_object_faces4[-face];
-        p_face->WalkHeader = new_wh;
+        p_face->WalkHeader = wlkhead;
     } else
     {
+        destroy_walk_list(wlkhead);
         return false;
     }
-    p_walk_head = &game_walk_headers[new_wh];
-    p_walk_head->Count = 0;
-    p_walk_head->StartItem = walk_item;
     return true;
 }
 
@@ -1386,7 +1363,7 @@ void add_walk_items_for_face(short face)
 {
     short obj_x, obj_y, obj_z;
 
-    prepare_face_for_having_walk_items(face, next_walk_item);
+    prepare_face_for_having_walk_items(face);
     face_to_object_position(face, &obj_x, &obj_y, &obj_z);
     add_walk_items_for_face_things_near(obj_x, obj_y, obj_z, 31 << 8, face);
 }
@@ -1395,8 +1372,8 @@ void generate_walk_items(void)
 {
     short face;
 
-    next_walk_header = 1;
-    next_walk_item = 1;
+    reset_all_walk_lists();
+
     for (face = 1; face < next_object_face3; face++)
     {
         if ((game_object_faces3[face].GFlags & FGFlg_Unkn04) != 0)

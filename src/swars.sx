@@ -111,6 +111,9 @@
 .global EXPORT_SYMBOL(engn_nuclear_shade_z); /* 0x19F508 */
 .global EXPORT_SYMBOL(game_anim_tmaps);		/* 0x19f510 */
 .global EXPORT_SYMBOL(game_commands);		/* 0x19f514 */
+.global EXPORT_SYMBOL(game_walk_headers)	/* 0x19f52c */
+.global EXPORT_SYMBOL(game_walk_items)		/* 0x19f534 */
+
 .global EXPORT_SYMBOL(next_col_column);		/* 0x19f73a */
 .global EXPORT_SYMBOL(textwalk_data);		/* 0x19F73C */
 
@@ -46248,7 +46251,7 @@ GLOBAL_FUNC(ASM_find_and_set_connected_face)	/* 0x05EC6C */
 		mov    0x8(%esp),%ax
 		cmp    %edx,%eax
 		jge    jump_5eeb2
-		mov    game_walk_items,%edx
+		mov    EXPORT_SYMBOL(game_walk_items),%edx
 		add    %eax,%eax
 		add    %eax,%edx
 		movswl (%edx),%eax
@@ -46276,7 +46279,7 @@ GLOBAL_FUNC(ASM_find_and_set_connected_face)	/* 0x05EC6C */
 		mov    0x1c(%ebp),%eax
 		mov    0x8(%esp),%dx
 		mov    %eax,0x4(%esp)
-		mov    game_walk_items,%eax
+		mov    EXPORT_SYMBOL(game_walk_items),%eax
 		add    %edx,%edx
 		add    %eax,%edx
 		movswl (%edx),%eax
@@ -46358,7 +46361,7 @@ GLOBAL_FUNC(ASM_find_and_set_connected_face)	/* 0x05EC6C */
 		xor    %eax,%eax
 		mov    0x8(%esp),%ax
 		lea    0x0(,%eax,2),%edx
-		mov    game_walk_items,%eax
+		mov    EXPORT_SYMBOL(game_walk_items),%eax
 		mov    (%edx,%eax,1),%ax
 		xor    %ecx,%ecx
 		neg    %eax
@@ -46396,13 +46399,13 @@ GLOBAL_FUNC(ASM_find_and_set_connected_face)	/* 0x05EC6C */
 		ret
 	jump_5eebb:
 		xor    %eax,%eax
-		mov    game_walk_items,%edx
+		mov    EXPORT_SYMBOL(game_walk_items),%edx
 		mov    0x8(%esp),%ax
 		mov    (%edx,%eax,2),%ax
 		mov    %ax,0x6e(%ebp)
 	jump_5eed0:
 		xor    %eax,%eax
-		mov    game_walk_items,%edx
+		mov    EXPORT_SYMBOL(game_walk_items),%edx
 		mov    0x8(%esp),%ax
 		mov    (%edx,%eax,2),%ax
 	jump_5eee1:
@@ -73845,7 +73848,7 @@ GLOBAL_FUNC(ASM_train_unkn_st20_func_1)	/* 0x07BF7C */
 		cmp    %eax,%ebp
 		jge    jump_7c07d
 		mov    0x4(%esp),%edx
-		mov    game_walk_items,%eax
+		mov    EXPORT_SYMBOL(game_walk_items),%eax
 		add    %edx,%eax
 		mov    (%eax),%dx
 		mov    %edx,%eax
@@ -73879,7 +73882,7 @@ GLOBAL_FUNC(ASM_train_unkn_st20_func_1)	/* 0x07BF7C */
 		add    %esi,%eax
 		cmp    %eax,%edx
 		jge    jump_7bfce
-		mov    game_walk_items,%eax
+		mov    EXPORT_SYMBOL(game_walk_items),%eax
 		mov    (%ebx,%eax,1),%ax
 		neg    %eax
 		and    $0xffff,%eax
@@ -132231,12 +132234,10 @@ GLOBAL (game_objectives)			/* 0x19f524 */
 		.long	0x0
 GLOBAL (game_col_vects)				/* 0x19f528 */
 		.long	0x0
-GLOBAL (game_walk_headers)			/* 0x19f52c */
-		.long	0x0
+
 GLOBAL (game_col_vects_list)		/* 0x19f530 */
 		.long	0x0
-GLOBAL (game_walk_items)			/* 0x19f534 */
-		.long	0x0
+
 GLOBAL (game_user_heap)				/* 0x19f538 */
 		.long	0x0
 GLOBAL (game_my_big_map)			/* 0x19f53c */

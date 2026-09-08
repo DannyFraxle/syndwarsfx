@@ -23,7 +23,73 @@
 #include "swlog.h"
 /******************************************************************************/
 
+struct WalkHeader *game_walk_headers = NULL;
 ushort next_walk_header = 1;
+
+short *game_walk_items = NULL;
 ushort next_walk_item = 1;
+
+/******************************************************************************/
+
+void reset_all_walk_lists(void)
+{
+    next_walk_header = 1;
+    next_walk_item = 1;
+}
+
+ushort add_walk_face_to_list(ushort wlkhead, short wlkface)
+{
+    struct WalkHeader *p_walk_head;
+    ushort wi;
+
+    p_walk_head = &game_walk_headers[wlkhead];
+
+    assert(p_walk_head->StartItem + p_walk_head->Count == next_walk_item);
+
+    wi = next_walk_item;
+    next_walk_item++;
+
+    p_walk_head->Count++;
+    game_walk_items[wi] = wlkface;
+
+    return wi;
+}
+
+ushort create_walk_list(void)
+{
+    struct WalkHeader *p_walk_head;
+    ushort wlkhead;
+
+    wlkhead = next_walk_header;
+    next_walk_header++;
+
+    p_walk_head = &game_walk_headers[wlkhead];
+    p_walk_head->Count = 0;
+    p_walk_head->StartItem = next_walk_item;
+
+    return wlkhead;
+}
+
+void destroy_walk_list(ushort wlkhead)
+{
+    assert (wlkhead + 1 == next_walk_header);
+    next_walk_header--;
+}
+
+TbBool walk_face_is_in_list(ushort wlkhead, short walk_face)
+{
+    struct WalkHeader *p_walk_head;
+    ushort wi;
+
+    p_walk_head = &game_walk_headers[wlkhead];
+
+    for (wi = p_walk_head->StartItem;
+      wi < p_walk_head->StartItem + p_walk_head->Count; wi++)
+    {
+        if (game_walk_items[wi] == walk_face)
+            return true;
+    }
+    return false;
+}
 
 /******************************************************************************/

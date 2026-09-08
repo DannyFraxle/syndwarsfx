@@ -54,6 +54,34 @@ extern short *game_walk_items;
 extern ushort next_walk_item;
 
 /******************************************************************************/
+
+/** Mark all walk list headers and items as free.
+ */
+void reset_all_walk_lists(void);
+
+/** Adds new walk item under given walk head, and fills with given walk face.
+ *
+ * Works only on the last created walk head.
+ */
+ushort add_walk_face_to_list(ushort wlkhead, short wlkface);
+
+/** Reserves and initializes WalkHeader.
+ *
+ * The WalkHeader is initialized to have 0 items starting at first currently free item.
+ */
+ushort create_walk_list(void);
+
+/** Undo creation of walk list.
+ *
+ * Works only on the last created walk head.
+ */
+void destroy_walk_list(ushort wlkhead);
+
+/** Check if a walk face is within the list starting at given header.
+ */
+TbBool walk_face_is_in_list(ushort wlkhead, short walk_face);
+
+/******************************************************************************/
 #ifdef __cplusplus
 }
 #endif
