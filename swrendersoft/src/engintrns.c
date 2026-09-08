@@ -95,7 +95,7 @@ void transform_point(struct EnginePoint *p_ep)
     p_ep->X3d = fctr_a * overall_scale;
     p_ep->Y3d = fctr_c * overall_scale;
 
-    if ((game_perspective == 5) && (p_ep->Z3d > 0x4000 / 16))
+    if ((game_perspective == ProjM_Perspective) && (p_ep->Z3d > 0x4000 / 16))
         // With large depth (upper parts of the screen), the simplification of
         // using depth buffer for perspective would cause wrap-around effect.
         // To avoid that, switch to more complex algorithm before the values
@@ -103,7 +103,7 @@ void transform_point(struct EnginePoint *p_ep)
         p_ep->Z3d = 0x4000 * p_ep->Z3d / (p_ep->Z3d + 0x4000);
 
     scr_shx = p_ep->X3d >> 11;
-    if (game_perspective == 5)
+    if (game_perspective == ProjM_Perspective)
         scr_shx = scr_shx * (0x4000 - p_ep->Z3d) >> 14;
 
     p_ep->pp.X = dword_176D3C + scr_shx;
@@ -121,7 +121,7 @@ void transform_point(struct EnginePoint *p_ep)
     }
 
     scr_shy = p_ep->Y3d >> 11;
-    if (game_perspective == 5)
+    if (game_perspective == ProjM_Perspective)
         scr_shy = scr_shy * (0x4000 - p_ep->Z3d) >> 14;
 
     p_ep->pp.Y = dword_176D40 - scr_shy;
@@ -155,12 +155,12 @@ void transform_shpoint(struct ShEnginePoint *p_sp, int dxc, int dyc, int dzc)
     sca_y = fctr_c * overall_scale;
     flg = 0;
 
-    if ((game_perspective == 5) && (scr_d > 0x4000 / 16))
+    if ((game_perspective == ProjM_Perspective) && (scr_d > 0x4000 / 16))
         // Mitigate wrap-around effect by using non-simplified computations.
         scr_d = 0x4000 * scr_d / (scr_d + 0x4000);
 
     scr_shx = sca_x >> 11;
-    if (game_perspective == 5)
+    if (game_perspective == ProjM_Perspective)
         scr_shx = scr_shx * (0x4000 - scr_d) >> 14;
 
     scr_x = dword_176D3C + scr_shx;
@@ -178,7 +178,7 @@ void transform_shpoint(struct ShEnginePoint *p_sp, int dxc, int dyc, int dzc)
     }
 
     scr_shy = sca_y >> 11;
-    if (game_perspective == 5)
+    if (game_perspective == ProjM_Perspective)
         scr_shy = scr_shy * (0x4000 - scr_d) >> 14;
 
     scr_y = dword_176D40 - scr_shy;
@@ -279,12 +279,12 @@ int transform_shpoint_y(int dxc, int dyc, int dzc)
     scr_d = (dword_176D18 * dyc + dword_176D1C * fctr_b) >> 16;
     sca_y = fctr_c * overall_scale;
 
-    if ((game_perspective == 5) && (scr_d > 0x4000 / 16))
+    if ((game_perspective == ProjM_Perspective) && (scr_d > 0x4000 / 16))
         // Mitigate wrap-around effect by using non-simplified computations.
         scr_d = 0x4000 * scr_d / (scr_d + 0x4000);
 
     scr_shy = sca_y >> 11;
-    if (game_perspective == 5)
+    if (game_perspective == ProjM_Perspective)
         scr_shy = scr_shy * (0x4000 - scr_d) >> 14;
 
     scr_y = dword_176D40 - scr_shy;

@@ -24,7 +24,7 @@
 #include "privrdlog.h"
 /******************************************************************************/
 ushort overall_scale = 256;
-ubyte game_perspective = 0;
+ubyte game_perspective = ProjM_Isometric;
 
 s32 engn_xc = 0x3280;
 s32 engn_yc = 0;

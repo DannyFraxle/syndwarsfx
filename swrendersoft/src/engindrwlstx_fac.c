@@ -1131,7 +1131,7 @@ void draw_floor_tile1a(ushort tl)
     point4.Y = p_floortl->Y[2];
     point4.S = p_floortl->Shade[2] << 7;
 
-    if (game_perspective == 7) {
+    if (game_perspective == ProjM_IsomSimpLight) {
         vec_mode = 7;
         vec_colour = point3.S >> 16;
     }
@@ -1209,7 +1209,7 @@ void draw_floor_tile1b(ushort tl)
     point4.Y = p_floortl->Y[2];
     point4.S = p_floortl->Shade[2] << 7;
 
-    if (game_perspective == 7) {
+    if (game_perspective == ProjM_IsomSimpLight) {
         vec_mode = 7;
         vec_colour = point3.S << 16;
     }
@@ -1479,7 +1479,7 @@ void draw_object_face3d_textrd(ushort face3)
         point2.X = p_scrpoint->X + dword_176D00;
         point2.Y = p_scrpoint->Y + dword_176D04;
     }
-    if (game_perspective == 7)
+    if (game_perspective == ProjM_IsomSimpLight)
     {
         vec_mode = 7;
         vec_colour = point1.S >> 16;
@@ -1543,7 +1543,7 @@ void draw_object_face3d_textrd(ushort face3)
         point3.S = 0x200000;
     }
 
-    if (game_perspective == 3)
+    if (game_perspective == ProjM_IsomObjWirefr)
     {
         vec_mode = 0;
         vec_colour = pixmap.fade_table[256 * (point3.S >> 16) + colour_lookup[ColLU_RED]];
@@ -1644,7 +1644,7 @@ void draw_object_face4d_textrd(ushort face4)
         point2.X = p_scrpoint->X + dword_176D00;
         point2.Y = p_scrpoint->Y + dword_176D04;
     }
-    if (game_perspective == 7)
+    if (game_perspective == ProjM_IsomSimpLight)
     {
         vec_mode = 7;
         vec_colour = point1.S >> 16;
@@ -1877,7 +1877,7 @@ void draw_object_face3d_textrd_dk(ushort face3)
         point3.S = 0x200000;
     }
 
-    if (game_perspective == 3)
+    if (game_perspective == ProjM_IsomObjWirefr)
     {
         vec_colour = colour_lookup[ColLU_GREEN];
         if ((render_faces_flags & RendFacF_Perspectv3SkipWireframe) == 0)

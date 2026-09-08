@@ -27,6 +27,25 @@ extern "C" {
 /******************************************************************************/
 #pragma pack(1)
 
+enum ProjectionMode {
+  /** Standard isometric projection mode */
+  ProjM_Isometric = 0,
+  /** Isometric projection with no height change on the floor. */
+  ProjM_IsomFloorFlat,
+  /** Isometric projection with no buildings drawn. */
+  ProjM_IsomNoBuildng,
+  /** Isometric projection with parts of objects drawn as wireframe, for debug purposes. */
+  ProjM_IsomObjWirefr,
+  /** Isometric projection with custom debug alterations, for debug purposes. */
+  ProjM_IsomDbgCust4,
+  /** Perspective mode, lens-distorted isometric projection. */
+  ProjM_Perspective,
+  /** Isometric projection with stars background instead of the floor. */
+  ProjM_IsomFloorStars,
+  /** Isometric projection with simplified light casting. */
+  ProjM_IsomSimpLight,
+};
+
 struct CameraState {
     s32 xc;
     s32 yc;
