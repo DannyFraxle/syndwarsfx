@@ -89614,13 +89614,13 @@ ASM_create_crater:	/* 0x88e88 */
 		xor    %edx,%edx
 		mov    %bx,data_1c4308(,%eax,8)
 		mov    %dx,data_1c430a(,%eax,8)
-		incb   EXPORT_SYMBOL(byte_1C4769)
+		incb   EXPORT_SYMBOL(map_crater_next)
 		mov    data_1c4766,%eax
 		sar    $0x18,%eax
 		test   %eax,%eax
 		jge    jump_88f0c
 		xor    %dl,%dl
-		mov    %dl,EXPORT_SYMBOL(byte_1C4769)
+		mov    %dl,EXPORT_SYMBOL(map_crater_next)
 	jump_88f0c:
 		add    $0x64,%esp
 		pop    %edi
@@ -91225,7 +91225,7 @@ GLOBAL_FUNC(ASM_process_map_craters)	/* 0x08A1EC */
 /*----------------------------------------------------------------*/
 		push   %edx
 		mov    EXPORT_SYMBOL(map_crater_first),%al
-		mov    EXPORT_SYMBOL(byte_1C4769),%ah
+		mov    EXPORT_SYMBOL(map_crater_next),%ah
 		cmp    %ah,%al
 		je     jump_8a21c
 		mov    %al,%dl
@@ -91240,7 +91240,7 @@ GLOBAL_FUNC(ASM_process_map_craters)	/* 0x08A1EC */
 		jge    jump_8a214
 		xor    %dl,%dl
 	jump_8a214:
-		cmp    EXPORT_SYMBOL(byte_1C4769),%dl
+		cmp    EXPORT_SYMBOL(map_crater_next),%dl
 		jne    jump_8a200
 	jump_8a21c:
 		pop    %edx
@@ -132686,7 +132686,7 @@ data_1c4767:
 		.byte	0x0
 GLOBAL (map_crater_first)	/* 0x1C4768 */
 		.byte	0x0
-GLOBAL (byte_1C4769)		/* 0x1C4769 */
+GLOBAL (map_crater_next)	/* 0x1C4769 */
 		.byte	0x0
 GLOBAL (map_crater_last)	/* 0x1C476A */
 		.byte	0x0
