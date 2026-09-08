@@ -81,7 +81,7 @@ int shpoint_compute_coord_y(struct ShEnginePoint *p_sp, struct MyMapElement *p_m
 {
     int elcr_y;
 
-    if (game_perspective == 1)
+    if (game_perspective == ProjM_IsomFloorFlat)
     {
         elcr_y = 0;
         p_sp->ReflShade = 0;
@@ -644,7 +644,7 @@ void lvdraw_do_floor(void)
               || (((p_spnx[2].Flags & p_spcr[0].Flags & p_spnx[0].Flags & p_spcr[2].Flags) & 0x0F) != 0)
               || (elcr_x <= 0) || (elcr_x >= MAP_COORD_WIDTH)
               || (elcr_z <= 0) || (elcr_z >= MAP_COORD_HEIGHT)
-              || ((game_perspective != 2) && ((p_mapel->Flags & 0x80) != 0)))
+              || ((game_perspective != ProjM_IsomNoBuildng) && ((p_mapel->Flags & 0x80) != 0)))
             {
                 p_sqlight++;
                 p_spcr += 2;
@@ -1120,7 +1120,7 @@ void engine_draw_whole_screen_top_down(void)
     {
         if ((gamep_scene_effect_type == ScEff_SPACE) && engine_render_lights)
             draw_background_stars();
-        if (game_perspective == 6) {
+        if (game_perspective == ProjM_IsomFloorStars) {
             draw_background_stars();
         } else {
             lvdraw_do_floor();

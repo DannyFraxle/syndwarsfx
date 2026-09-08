@@ -1071,13 +1071,15 @@ void init_options_gfx_screen_boxes(void)
         val++;
     }
 
-    val = 0;
+    static const ubyte allowed_perspective_vals[] = {
+      ProjM_Isometric, ProjM_Perspective,
+    };
     for (i = 6; i < 8; i++)
     {
+        val = allowed_perspective_vals[i - 6];
         options_gfx_buttons[i].Radio = &game_perspective;
         options_gfx_buttons[i].RadioValue = val;
         options_gfx_buttons[i].Flags |= GBxFlg_RadioBtn;
-        val += 5;
     }
 
     val = 0;

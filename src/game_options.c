@@ -220,7 +220,7 @@ int game_option_min(int option_no)
     case GOpt_DetailLevel:
         return 0;
     case GOpt_CameraPerspective:
-        return 0;
+        return ProjM_Isometric;
     case GOpt_AdvancedLights:
     case GOpt_BillboardMovies:
     case GOpt_DeepRadar:
@@ -318,10 +318,10 @@ void game_option_toggle(int option_no)
             ingame.DetailLevel = 1;
         break;
     case GOpt_CameraPerspective:
-        if (game_perspective == 5)
-            game_perspective = 0;
+        if (game_perspective == ProjM_Perspective)
+            game_perspective = ProjM_Isometric;
         else
-            game_perspective = 5;
+            game_perspective = ProjM_Perspective;
         break;
     case GOpt_AdvancedLights:
         if ((ingame.Flags & GamF_AdvLights) == 0)
@@ -488,7 +488,7 @@ void set_default_gfx_settings(void)
     game_gfx_deep_radar = 0;
     game_high_resolution = true;
     game_projector_speed = 0;
-    game_perspective = 5;
+    game_perspective = ProjM_Perspective;
     deep_radar_surface_col = 216;
     deep_radar_line_col = 100;
 }

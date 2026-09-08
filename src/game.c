@@ -1430,7 +1430,7 @@ ubyte get_engine_inputs(void)
         clear_gamekey_pressed(GKey_TRANS_OBJ_LINE_COL);
         did_inp |= GINPUT_DIRECT;
     }
-    if (game_perspective == 3)
+    if (game_perspective == ProjM_IsomObjWirefr)
     {
         if (lbKeyOn[KC_RALT]) {
             render_faces_flags |= RendFacF_Perspectv3SkipWireframe;

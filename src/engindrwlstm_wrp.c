@@ -927,7 +927,7 @@ short draw_object(int sh_x, int sh_y, int sh_z,
 
     doflags = 0;
 
-    if ((game_perspective == 2) && engine_render_lights)
+    if ((game_perspective == ProjM_IsomNoBuildng) && engine_render_lights)
         return 0;
 
     cor_dx = point_object->MapX - engn_xc;

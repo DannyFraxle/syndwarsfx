@@ -452,7 +452,7 @@ void adjust_memory_use(void)
     if (ingame.LowerMemoryUse == 1)
     {
         engine_mem_alloc_size = (2000000 + total + 0xFFFF) & ~0xFFFF;
-        game_perspective = 5;
+        game_perspective = ProjM_Perspective;
     } else
     {
         engine_mem_alloc_size = (2850000 + total + 0xFFFF) & ~0xFFFF;
