@@ -33,10 +33,18 @@ pkg-dist:
 	MAKE='$(MAKE)' $(SHELL) $(top_srcdir)/util/mkpkgdist \
 	  -o '$(PKGDIST_DIR)' $$opt
 
+# Repack the staged tree from pkg-dist into a "copy this over your installation"
+# zip in $(builddir)/$(PKGCOPY_DIR), together with the FX3D setup guide. Run
+# pkg-dist first. Set PKGCOPY_NAME to override the archive basename.
+PKGCOPY_DIR = pkg_dist
+PKGCOPY_NAME =
+pkg-copyover:
+	@name='$(PKGCOPY_NAME)'; test -z "$$name" || opt="-n $$name"; $(SHELL) $(top_srcdir)/util/mkcopyover -p '$(PKGDIST_DIR)/syndwarsfx' -o '$(PKGCOPY_DIR)' $$opt
+
 # Fetch the NSIS plugins the FX3D installer needs into $(builddir)/nsis-plugins,
 # where syndwarsfx-fx3d-setup.nsi picks them up with !addplugindir.
 NSIS_PLUGIN_DIR = nsis-plugins
 nsis-plugins:
 	$(SHELL) $(top_srcdir)/util/getnsisplugins -d '$(NSIS_PLUGIN_DIR)'
 
-.PHONY: pkg-dist nsis-plugins
+.PHONY: pkg-dist pkg-copyover nsis-plugins

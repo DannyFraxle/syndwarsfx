@@ -100,3 +100,24 @@ upstream data packages change; `PRODUCT_VERSION` comes from `configure.ac`.
 
 The GitHub Actions workflow builds only the standard installer. This one is built locally,
 on demand.
+
+## The plain zip alternative
+
+Not everyone wants an installer. `util/mkcopyover` repacks the same staged tree into a
+"copy this over your installation" archive:
+
+```bash
+cd release && make pkg-dist && make pkg-copyover
+```
+
+That writes `pkg_dist/SyndWarsFX-fx3d-<version>-<date>.zip`, containing a single top-level
+folder with `syndwarsfx3d.exe`, the runtime DLLs, `conf/`, `language/`, the licence files,
+a short `INSTALL.txt` and `README-FX3D.md` (a copy of `docs/FX3D-Setup-Guide.md`). The user
+unpacks it and copies the contents into their existing game folder.
+
+Unlike the installer it takes no backup and does not keep an existing `fx3d.ini` — the
+`INSTALL.txt` and the guide both say so. Override the archive name with
+`make pkg-copyover PKGCOPY_NAME=SyndWarsFX-fx3d-nightly`.
+
+`zip` is not part of a stock MSYS2/MinGW install, so the script falls back to Python's
+`zipfile` module when `zip` is missing.

@@ -1,0 +1,133 @@
+#!/bin/bash
+# Build the FX3D "copy over your installation" zip.
+#
+# Takes the tree staged by `make pkg-dist` and repacks the parts a user needs to
+# drop into an existing Syndicate Wars fan port folder: the FX3D executable, the
+# runtime DLLs, conf/, language/ and the setup guide. Nothing here is game data,
+# so the zip is safe to redistribute.
+#
+# Usage (from the build directory):
+#   util/mkcopyover [-p PKGDIR] [-o OUTDIR] [-n NAME]
+#
+#   -p PKGDIR   staged tree from `make pkg-dist`; default `pkg/syndwarsfx`
+#   -o OUTDIR   where to write the zip; default `pkg_dist`
+#   -n NAME     zip basename; default SyndWarsFX-fx3d-<version>-<date>
+
+set -e
+
+SRCDIR="$(cd "$(dirname "$0")" && pwd)"
+PKGDIR="pkg/syndwarsfx"
+OUTDIR="pkg_dist"
+NAME=""
+
+while getopts "p:o:n:h" opt; do
+  case "$opt" in
+    p) PKGDIR="$OPTARG" ;;
+    o) OUTDIR="$OPTARG" ;;
+    n) NAME="$OPTARG" ;;
+    h) sed -n '2,15p' "$0"; exit 0 ;;
+    *) echo "Try '$0 -h'" >&2; exit 1 ;;
+  esac
+done
+
+if [ ! -f "$PKGDIR/syndwarsfx3d.exe" ]; then
+  echo "error: $PKGDIR/syndwarsfx3d.exe not found - run 'make pkg-dist' first" >&2
+  exit 1
+fi
+
+if [ -z "$NAME" ]; then
+  VER="$(sed -n 's/^#define VERSION "\(.*\)".*/\1/p' src/config.h 2>/dev/null | head -n 1)"
+  [ -n "$VER" ] || VER="unknown"
+  NAME="SyndWarsFX-fx3d-$VER-$(date +%Y%m%d)"
+fi
+
+OUTDIR="$(cd "$(dirname "$OUTDIR")" && pwd)/$(basename "$OUTDIR")"
+mkdir -p "$OUTDIR"
+STAGE="$OUTDIR/$NAME"
+rm -rf "$STAGE"
+mkdir -p "$STAGE"
+
+echo "Assembling $STAGE"
+
+# Executable and the runtime DLLs resolved by mkpkgdist.
+cp -f "$PKGDIR/syndwarsfx3d.exe" "$STAGE/"
+cp -f "$PKGDIR"/*.dll "$STAGE/"
+
+# Configuration and language data.
+cp -a "$PKGDIR/conf" "$STAGE/"
+[ -d "$PKGDIR/language" ] && cp -a "$PKGDIR/language" "$STAGE/"
+[ -d "$PKGDIR/lang" ] && cp -a "$PKGDIR/lang" "$STAGE/"
+
+# Licence text - this is a GPL binary distribution.
+for f in AUTHORS COPYING GPL3; do
+  [ -f "$PKGDIR/$f" ] && cp -f "$PKGDIR/$f" "$STAGE/"
+done
+
+# The user-facing guide, as the first thing they see in the archive.
+GUIDE="$SRCDIR/../docs/FX3D-Setup-Guide.md"
+if [ -f "$GUIDE" ]; then
+  cp -f "$GUIDE" "$STAGE/README-FX3D.md"
+else
+  echo "warning: $GUIDE not found, packaging without the setup guide" >&2
+fi
+
+# Short note at the root of the archive, for people who never open a .md file.
+cat > "$STAGE/INSTALL.txt" <<'TXT'
+SyndWarsFX 3D - OpenGL renderer
+===============================
+
+This is an UPDATE to an existing Syndicate Wars fan port installation.
+It contains no game data and will not install the game for you.
+
+To install:
+
+  1. Back up your game folder, or at least syndwarsfx.exe and conf\.
+  2. Copy everything in this archive INTO your existing game folder -
+     the one that already contains syndwarsfx.exe and the data folder.
+     Say yes when Windows asks to merge and replace.
+  3. Run syndwarsfx3d.exe.
+
+Your original syndwarsfx.exe is not touched, so the software renderer
+remains available alongside the 3D one.
+
+If you have already tuned conf\fx3d.ini yourself, save a copy first -
+this archive ships a fresh one and will replace it.
+
+Every renderer setting lives in conf\fx3d.ini and is documented inside
+that file. See README-FX3D.md for the full guide, including the in-game
+lighting panel (F7) and what to turn down if the frame rate is poor.
+TXT
+
+# Windows users get CRLF in the plain-text note.
+sed -i 's/$/\r/' "$STAGE/INSTALL.txt"
+
+ZIP="$OUTDIR/$NAME.zip"
+rm -f "$ZIP"
+
+# `zip` is not part of a stock MSYS2/MinGW toolchain, so fall back to Python's
+# zipfile, which is. Either way the archive holds a single top-level folder.
+if command -v zip >/dev/null 2>&1; then
+  ( cd "$OUTDIR" && zip -q -r -9 "$NAME.zip" "$NAME" )
+elif command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
+  PY="$(command -v python3 || command -v python)"
+  ( cd "$OUTDIR" && "$PY" -c "
+import os, sys, zipfile
+name = sys.argv[1]
+with zipfile.ZipFile(name + '.zip', 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+    for root, dirs, files in os.walk(name):
+        dirs.sort(); files.sort()
+        for f in files:
+            p = os.path.join(root, f)
+            z.write(p, p.replace(os.sep, '/'))
+" "$NAME" )
+else
+  echo "error: neither 'zip' nor python found - cannot build the archive" >&2
+  echo "the unpacked tree is left in $STAGE" >&2
+  exit 1
+fi
+
+rm -rf "$STAGE"
+
+echo
+echo "Package:"
+ls -la "$ZIP"
