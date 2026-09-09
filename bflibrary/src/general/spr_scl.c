@@ -36,8 +36,6 @@ long alpha_scale_up;
 // TODO move these to rendering/trig data module
 TbPixel *render_ghost = NULL;
 TbPixel *render_alpha = NULL;
-//TODO currently, render_ghost is unused; but to make it ready to use, we need to set:
-//render_ghost = lbSpriteReMapPtr;
 
 
 void LbSpriteSetScalingWidthClippedArray(long * xsteps_arr, long x, long swidth, long dwidth, long gwidth)

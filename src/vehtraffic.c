@@ -29,6 +29,7 @@
 #include "vehicle.h"
 #include "swlog.h"
 /******************************************************************************/
+struct TrafficNode *game_traffic_nodes = NULL;
 ushort next_traffic_node = 1;
 
 extern uint dword_1C8470;
@@ -836,6 +837,9 @@ void process_next_tnode(struct Thing *p_vehicle)
             {
                 int i, lnk;
                 int dx, dz;
+
+                dx = 0;
+                dz = 1;
 
                 for (i = 0; i < 8; i++)
                 {

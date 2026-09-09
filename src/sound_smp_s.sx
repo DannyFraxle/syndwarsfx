@@ -1,0 +1,1063 @@
+
+#ifdef NEED_UNDERSCORE
+# define TRANSFORM_SYMBOLS
+# define EXPORT_SYMBOL(sym) _ ## sym
+#else
+# define EXPORT_SYMBOL(sym) sym
+#endif
+
+#ifndef TRANSFORM_SYMBOLS
+
+# define GLOBAL(sym) \
+  .global sym; \
+  sym ##:
+
+# define GLOBAL_FUNC(sym) \
+  GLOBAL (sym)
+
+#else
+
+# define GLOBAL(sym) \
+  .global EXPORT_SYMBOL (sym); \
+  EXPORT_SYMBOL (sym) ##: \
+  sym ##:
+
+# define GLOBAL_FUNC(sym) \
+  .global sym; \
+  GLOBAL (sym)
+
+#endif
+
+
+.text
+
+.global EXPORT_SYMBOL(ingame);
+.global EXPORT_SYMBOL(things);
+.global EXPORT_SYMBOL(sthings);
+.global EXPORT_SYMBOL(sthings_used);
+
+.global EXPORT_SYMBOL(engn_xc);
+.global EXPORT_SYMBOL(engn_zc);
+
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC(ASM_fill_ail_sample_ids)	/* 0x0D5AD0 */
+/*----------------------------------------------------------------*/
+		push   %ebx
+		push   %ecx
+		push   %edx
+		push   %esi
+		call   ac_GetSoundInstalled
+		test   %al,%al
+		je     jump_d5b0b
+		call   ac_GetFirstSampleInfoStructure
+		mov    %eax,%ecx
+		call   ac_GetLastSampleInfoStructure
+		xor    %edx,%edx
+		mov    %eax,%ebx
+		mov    %eax,%esi
+		mov    %ecx,%eax
+		cmp    %ebx,%ecx
+		ja     jump_d5b0b
+	jump_d5af5:
+		xor    %ebx,%ebx
+		mov    (%eax),%ecx
+		mov    %dx,%bx
+		add    $0x19,%eax
+		inc    %edx
+		mov    %ecx,EXPORT_SYMBOL(ail_sample_ids)(,%ebx,4)
+		cmp    %esi,%eax
+		jbe    jump_d5af5
+	jump_d5b0b:
+		pop    %esi
+		pop    %edx
+		pop    %ecx
+		pop    %ebx
+		ret
+
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC(ASM_create_sound_effect)	/* 0x0D5B60 */
+/*----------------------------------------------------------------*/
+		push   %esi
+		push   %edi
+		mov    %eax,%edi
+		test   %eax,%eax
+		jl     jump_d5b6f
+		cmp    $0x8000,%eax
+		jl     jump_d5b76
+	jump_d5b6f:
+		xor    %esi,%esi
+		jmp    jump_d5c24
+	jump_d5b76:
+		test   %ebx,%ebx
+		jl     jump_d5b82
+		cmp    $0x8000,%ebx
+		jl     jump_d5b8b
+	jump_d5b82:
+		xor    %esi,%esi
+		mov    %esi,%eax
+		pop    %edi
+		pop    %esi
+		ret    $0x8
+	jump_d5b8b:
+		xor    %eax,%eax
+		mov    EXPORT_SYMBOL(sthings_used),%ax
+		cmp    $0x5d7,%eax
+		jle    jump_d5ba3
+		xor    %esi,%esi
+		mov    %esi,%eax
+		pop    %edi
+		pop    %esi
+		ret    $0x8
+	jump_d5ba3:
+		call   ac_get_new_sthing
+		movswl %ax,%esi
+		test   %esi,%esi
+		je     jump_d5c24
+		cmp    $0xffffffff,%esi
+		jg     jump_d5bbc
+		cmp    $0xfffffa24,%esi
+		jge    jump_d5bc5
+	jump_d5bbc:
+		xor    %esi,%esi
+		mov    %esi,%eax
+		pop    %edi
+		pop    %esi
+		ret    $0x8
+	jump_d5bc5:
+		mov    %esi,%eax
+		shl    $0x4,%esi
+		sub    %eax,%esi
+		mov    EXPORT_SYMBOL(sthings),%eax
+		shl    $0x2,%esi
+		add    %eax,%esi
+		movb   $0x35,0x9(%esi)
+		movw   $0x64,0x28(%esi)
+		push   $0x1
+		movl   $0x4,0xc(%esi)
+		shl    $0x8,%ebx
+		movw   $0x0,0xa(%esi)
+		shl    $0x8,%edx
+		mov    %ebx,0x20(%esi)
+		shl    $0x8,%edi
+		mov    %edx,0x1c(%esi)
+		mov    0x12(%esp),%eax
+		mov    %cl,0x8(%esi)
+		sar    $0x10,%eax
+		xor    %edx,%edx
+		push   %eax
+		mov    $0x7f,%ebx
+		mov    %cx,%dx
+		push   $0x64
+		mov    $0x40,%ecx
+		mov    %esi,%eax
+		mov    %edi,0x18(%esi)
+		call   ac_play_dist_ssample
+	jump_d5c24:
+		mov    %esi,%eax
+		pop    %edi
+		pop    %esi
+		ret    $0x8
+
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC(ASM_snd_unkn1_volume_all_samples)	/* 0x0D5D1C */
+/*----------------------------------------------------------------*/
+		push   %ebx
+		push   %ecx
+		push   %edx
+		push   %esi
+		push   %edi
+		testb  $0x2,EXPORT_SYMBOL(ingame)+0x931 # ingame.Flags+2
+		je     jump_d5d83
+		mov    $0x2,%eax
+		call   ac_update_danger_music
+		call   ac_GetFirstSampleInfoStructure
+		mov    %eax,%edx
+		call   ac_GetLastSampleInfoStructure
+		mov    %eax,%edi
+		mov    %edx,%ecx
+		cmp    %eax,%edx
+		jmp    jump_d5d4d
+	jump_d5d48:
+		add    $0x19,%ecx
+		cmp    %edi,%ecx
+	jump_d5d4d:
+		ja     jump_d5d83
+		mov    (%ecx),%ebx
+		xor    %edx,%edx
+		xor    %eax,%eax
+		mov    0xe(%ecx),%si
+		call   ac_IsSamplePlaying
+		test   %al,%al
+		je     jump_d5d48
+		mov    0x10(%ecx),%edx
+		sar    $0x10,%edx
+		cmp    $0x8,%edx
+		je     jump_d5d48
+		cmp    $0x4d,%edx
+		je     jump_d5d48
+		cmp    $0x4e,%edx
+		je     jump_d5d48
+		movswl %si,%eax
+		xor    %ebx,%ebx
+		call   ac_SetSampleVolume
+		jmp    jump_d5d48
+	jump_d5d83:
+		pop    %edi
+		pop    %esi
+		pop    %edx
+		pop    %ecx
+		pop    %ebx
+		ret
+
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC(ASM_monitor_all_samples)	/* 0x0D5D8C */
+/*----------------------------------------------------------------*/
+		push   %ebx
+		push   %ecx
+		push   %edx
+		push   %esi
+		push   %edi
+		push   %ebp
+		sub    $0x8c,%esp
+		xor    %edx,%edx
+		mov    EXPORT_SYMBOL(ingame)+0x931,%ah # ingame.Flags+2
+		mov    %edx,0x84(%esp)
+		test   $0x2,%ah
+		je     jump_d6124
+		mov    $0x18f,%ebx
+		mov    $data_1dded8,%eax
+		mov    %dx,0x88(%esp)
+		xor    %edx,%edx
+		call   ac_memset
+		call   ac_GetFirstSampleInfoStructure
+		mov    %eax,%edx
+		call   ac_GetLastSampleInfoStructure
+		mov    %eax,0x74(%esp)
+		mov    %edx,%ecx
+		cmp    %eax,%edx
+		jmp    jump_d60c8
+	jump_d5de2:
+		jge    jump_d5def
+		imul   $0x3c,%eax,%eax
+		mov    EXPORT_SYMBOL(sthings),%edi
+	jump_d5ded:
+		add    %eax,%edi
+	jump_d5def:
+		mov    0x10(%ecx),%eax
+		sar    $0x10,%eax
+		cmp    $0x270f,%eax
+		je     jump_d5e02
+		incb   data_1dded8(%eax)
+	jump_d5e02:
+		mov    0x10(%ecx),%eax
+		sar    $0x10,%eax
+		cmp    $0x270f,%eax
+		je     jump_d5e91
+		test   %si,%si
+		je     jump_d5e59
+		mov    (%ecx),%ebp
+		xor    %edx,%edx
+		push   %ebp
+		mov    0xa(%ecx),%dx
+		push   %edx
+		xor    %edx,%edx
+		mov    data_1dded8(%eax),%dl
+		push   %edx
+		mov    0x4(%ecx),%edx
+		push   %edx
+		push   %eax
+		xor    %eax,%eax
+		mov    0x9(%edi),%al
+		push   %eax
+		movswl %si,%eax
+		push   %eax
+		mov    0xa2(%esp),%eax
+		sar    $0x10,%eax
+		push   %eax
+		push   $aDIdDTypeDSampl
+		lea    0x24(%esp),%eax
+		push   %eax
+		call   ac_sprintf
+		add    $0x28,%esp
+		jmp    jump_d5e91
+	jump_d5e59:
+		xor    %edx,%edx
+		mov    0xa(%ecx),%dx
+		push   %edx
+		xor    %edx,%edx
+		mov    data_1dded8(%eax),%dl
+		push   %edx
+		mov    0x4(%ecx),%edx
+		push   %edx
+		push   %eax
+		push   $0x0
+		movswl %si,%eax
+		push   %eax
+		mov    0x9e(%esp),%eax
+		sar    $0x10,%eax
+		push   %eax
+		push   $aDIdDTypeDSam_0
+		lea    0x20(%esp),%eax
+		push   %eax
+		call   ac_sprintf
+		add    $0x24,%esp
+	jump_d5e91:
+		test   %si,%si
+		je     jump_d60b0
+		movswl %si,%eax
+		cmp    $0x270f,%eax
+		je     jump_d60b0
+		mov    EXPORT_SYMBOL(engn_xc),%edx
+		mov    EXPORT_SYMBOL(engn_zc),%ebx
+		mov    0x18(%edi),%eax
+		mov    0x20(%edi),%ebp
+		sar    $0x8,%eax
+		sar    $0x8,%ebp
+		sub    %edx,%eax
+		sub    %ebx,%ebp
+		lea    0x68(%esp),%ebx
+		lea    0x6c(%esp),%edx
+		mov    %eax,0x7c(%esp)
+		mov    %eax,0x64(%esp)
+		lea    0x64(%esp),%eax
+		mov    %ebp,0x68(%esp)
+		call   ac_local_to_worldr
+		mov    0x64(%esp),%eax
+		sar    $0x3,%eax
+		mov    %eax,0x64(%esp)
+		cmp    $0x39c,%eax
+		jle    jump_d5efa
+		mov    $0x6f,%eax
+		jmp    jump_d5f18
+	jump_d5efa:
+		cmp    $0xfffffc64,%eax
+		jge    jump_d5f12
+		mov    $0x10,%eax
+		cmp    $0x10,%eax
+		jge    jump_d5f24
+		mov    $0x10,%eax
+		jmp    jump_d5f2e
+	jump_d5f12:
+		sar    $0x4,%eax
+		add    $0x4a,%eax
+	jump_d5f18:
+		cmp    $0x10,%eax
+		jge    jump_d5f24
+		mov    $0x10,%eax
+		jmp    jump_d5f2e
+	jump_d5f24:
+		cmp    $0x6f,%eax
+		jle    jump_d5f2e
+		mov    $0x6f,%eax
+	jump_d5f2e:
+		mov    %eax,0x70(%esp)
+		movl   $0x7f,0x78(%esp)
+		mov    0x7c(%esp),%eax
+		cltd
+		xor    %edx,%eax
+		sub    %edx,%eax
+		mov    %eax,%ebx
+		mov    %ebp,%eax
+		cltd
+		xor    %edx,%eax
+		sub    %edx,%eax
+		cmp    %eax,%ebx
+		jle    jump_d5f5f
+		mov    %ebp,%eax
+		cltd
+		xor    %edx,%eax
+		sub    %edx,%eax
+		mov    %eax,%ebx
+		mov    0x7c(%esp),%eax
+		jmp    jump_d5f6c
+	jump_d5f5f:
+		mov    0x7c(%esp),%eax
+		cltd
+		xor    %edx,%eax
+		sub    %edx,%eax
+		mov    %eax,%ebx
+		mov    %ebp,%eax
+	jump_d5f6c:
+		sar    %ebx
+		cltd
+		xor    %edx,%eax
+		sub    %edx,%eax
+		add    %ebx,%eax
+		cmp    $0xa00,%eax
+		jge    jump_d5f83
+		imul   $0x7f,0x78(%esp),%eax
+		jmp    jump_d5fa4
+	jump_d5f83:
+		cmp    $0x1a00,%eax
+		jl     jump_d5f8e
+		xor    %eax,%eax
+		jmp    jump_d5fa7
+	jump_d5f8e:
+		sub    $0xa00,%eax
+		mov    $0x7f,%edx
+		sar    $0x5,%eax
+		sub    %eax,%edx
+		mov    %edx,%eax
+		imul   0x78(%esp),%eax
+	jump_d5fa4:
+		sar    $0x7,%eax
+	jump_d5fa7:
+		mov    0xc(%edi),%dh
+		mov    %eax,0x80(%esp)
+		test   $0x2,%dh
+		je     jump_d5fcf
+		mov    0x10(%ecx),%eax
+		sar    $0x10,%eax
+		cmp    $0x34,%eax
+		je     jump_d5fc6
+		cmp    $0x7,%eax
+		jne    jump_d5fcf
+	jump_d5fc6:
+		xor    %ebp,%ebp
+		mov    %ebp,0x80(%esp)
+	jump_d5fcf:
+		cmpl   $0x5,0x80(%esp)
+		jl     jump_d5ff5
+		mov    0x10(%ecx),%eax
+		sar    $0x10,%eax
+		mov    data_1dded8(%eax),%al
+		and    $0xff,%eax
+		cmp    $0x3,%eax
+		jle    jump_d6032
+		testb  $0x20,0xd(%edi)
+		jne    jump_d6032
+	jump_d5ff5:
+		mov    0x10(%ecx),%eax
+		sar    $0x10,%eax
+		cmp    $0x2c,%eax
+		je     jump_d6005
+		cmp    $0x38,%eax
+		jne    jump_d601f
+	jump_d6005:
+		mov    0x10(%ecx),%eax
+		sar    $0x10,%eax
+		mov    data_1dded8(%eax),%al
+		and    $0xff,%eax
+		cmp    $0x3,%eax
+		jle    jump_d60b0
+	jump_d601f:
+		mov    0x10(%ecx),%edx
+		movswl %si,%eax
+		sar    $0x10,%edx
+		call   ac_stop_sample_using_heap
+		jmp    jump_d60b0
+	jump_d6032:
+		cmpl   $0x7f,0x80(%esp)
+		jle    jump_d6047
+		movl   $0x7f,0x80(%esp)
+	jump_d6047:
+		xor    %eax,%eax
+		mov    0x9(%edi),%al
+		cmp    $0x2,%eax
+		jne    jump_d6086
+		mov    0x36(%edi),%eax
+		sar    $0x10,%eax
+		movswl %si,%ebp
+		sar    $0x6,%eax
+		mov    0x10(%ecx),%edx
+		add    $0x64,%eax
+		sar    $0x10,%edx
+		movswl %ax,%ebx
+		mov    %ebp,%eax
+		call   ac_SetSamplePitch
+		mov    0x80(%esp),%eax
+		mov    0x10(%ecx),%edx
+		sar    %eax
+		sar    $0x10,%edx
+		movswl %ax,%ebx
+		mov    %ebp,%eax
+		jmp    jump_d6096
+	jump_d6086:
+		mov    0x7e(%esp),%ebx
+		movswl %si,%eax
+		mov    0x10(%ecx),%edx
+		sar    $0x10,%ebx
+		sar    $0x10,%edx
+	jump_d6096:
+		call   ac_SetSampleVolume
+		movswl %si,%eax
+		xor    %ebx,%ebx
+		mov    0x10(%ecx),%edx
+		mov    0x70(%esp),%bx
+		sar    $0x10,%edx
+		call   ac_SetSamplePan
+	jump_d60b0:
+		mov    0x84(%esp),%esi
+		mov    0x74(%esp),%edx
+		inc    %esi
+		add    $0x19,%ecx
+		mov    %esi,0x84(%esp)
+		cmp    %edx,%ecx
+	jump_d60c8:
+		ja     jump_d6124
+		xor    %eax,%eax
+		mov    0x84(%esp),%ax
+		lea    0x0(,%eax,4),%edx
+		mov    (%ecx),%eax
+		cmp    EXPORT_SYMBOL(ail_sample_ids)(%edx),%eax
+		jne    jump_d60b0
+		mov    (%ecx),%ebx
+		xor    %edx,%edx
+		xor    %eax,%eax
+		call   ac_IsSamplePlaying
+		test   %al,%al
+		je     jump_d60b0
+		mov    0x88(%esp),%edx
+		mov    0xe(%ecx),%si
+		inc    %edx
+		movswl %si,%eax
+		mov    %dx,0x88(%esp)
+		test   %eax,%eax
+		jle    jump_d5de2
+		imul   $0xa8,%eax,%eax
+		mov    EXPORT_SYMBOL(things),%edi
+		jmp    jump_d5ded
+	jump_d6124:
+		add    $0x8c,%esp
+		pop    %ebp
+		pop    %edi
+		pop    %esi
+		pop    %edx
+		pop    %ecx
+		pop    %ebx
+		ret
+
+
+/*----------------------------------------------------------------*/
+snd_unkn3_find_stop_sample:	/* 0x0D6134 */
+/*----------------------------------------------------------------*/
+		push   %ebx
+		push   %ecx
+		push   %esi
+		push   %edi
+		push   %ebp
+		sub    $0x8,%esp
+		mov    %ax,0x4(%esp)
+		mov    %edx,(%esp)
+		call   ac_GetFirstSampleInfoStructure
+		mov    $0x270f,%edi
+		mov    %eax,%ebx
+		call   ac_GetLastSampleInfoStructure
+		mov    %edi,%esi
+		mov    %eax,%ebp
+		mov    %ebx,%ecx
+		cmp    %eax,%ebx
+		jmp    jump_d6164
+	jump_d615f:
+		add    $0x19,%ecx
+		cmp    %ebp,%ecx
+	jump_d6164:
+		ja     jump_d61a3
+		mov    (%ecx),%ebx
+		xor    %edx,%edx
+		xor    %eax,%eax
+		call   ac_IsSamplePlaying
+		test   %al,%al
+		je     jump_d615f
+		xor    %eax,%eax
+		mov    0x10(%ecx),%ebx
+		mov    0x4(%esp),%ax
+		sar    $0x10,%ebx
+		cmp    %eax,%ebx
+		jne    jump_d615f
+		xor    %eax,%ebx
+		mov    (%esp),%bx
+		cmp    0x4(%ecx),%ebx
+		jle    jump_d615f
+		movswl %si,%ebx
+		cmp    0x4(%ecx),%ebx
+		jle    jump_d615f
+		mov    0xe(%ecx),%di
+		mov    0x4(%ecx),%si
+		jmp    jump_d615f
+	jump_d61a3:
+		movswl %di,%eax
+		cmp    $0x270f,%eax
+		je     jump_d61c3
+		mov    0x2(%esp),%edx
+		movswl %di,%eax
+		sar    $0x10,%edx
+		call   ac_stop_sample_using_heap
+		mov    $0x1,%eax
+		jmp    jump_d61c5
+	jump_d61c3:
+		xor    %eax,%eax
+	jump_d61c5:
+		add    $0x8,%esp
+		pop    %ebp
+		pop    %edi
+		pop    %esi
+		pop    %ecx
+		pop    %ebx
+		ret
+
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC(ASM_play_dist_sample)	/* 0x0D61D0 */
+/*----------------------------------------------------------------*/
+		push   %esi
+		push   %edi
+		push   %ebp
+		sub    $0x1c,%esp
+		mov    %eax,%edi
+		mov    %dx,0x18(%esp)
+		mov    %ebx,0x14(%esp)
+		xor    %eax,%eax
+		mov    %bx,%ax
+		mov    EXPORT_SYMBOL(things),%edx
+		mov    %eax,0x10(%esp)
+		cmp    %edx,%edi
+		jb     jump_d61fe
+		lea    0x29040(%edx),%eax
+		cmp    %eax,%edi
+		jbe    jump_d6205
+	jump_d61fe:
+		xor    %eax,%eax
+		jmp    jump_d6368
+	jump_d6205:
+		lea    0x8(%esp),%edx
+		mov    %esp,%eax
+		mov    EXPORT_SYMBOL(engn_xc),%ebx
+		mov    EXPORT_SYMBOL(engn_zc),%ebp
+		mov    0x18(%edi),%ecx
+		mov    0x20(%edi),%esi
+		sar    $0x8,%ecx
+		sar    $0x8,%esi
+		sub    %ebx,%ecx
+		sub    %ebp,%esi
+		lea    0x4(%esp),%ebx
+		mov    %ecx,(%esp)
+		mov    %esi,0x4(%esp)
+		call   ac_local_to_worldr
+		mov    (%esp),%eax
+		sar    $0x3,%eax
+		mov    %eax,(%esp)
+		cmp    $0x39c,%eax
+		jle    jump_d624e
+		mov    $0x6f,%eax
+		jmp    jump_d626c
+	jump_d624e:
+		cmp    $0xfffffc64,%eax
+		jge    jump_d6266
+		mov    $0x10,%eax
+		cmp    $0x10,%eax
+		jge    jump_d6278
+		mov    $0x10,%eax
+		jmp    jump_d6282
+	jump_d6266:
+		sar    $0x4,%eax
+		add    $0x4a,%eax
+	jump_d626c:
+		cmp    $0x10,%eax
+		jge    jump_d6278
+		mov    $0x10,%eax
+		jmp    jump_d6282
+	jump_d6278:
+		cmp    $0x6f,%eax
+		jle    jump_d6282
+		mov    $0x6f,%eax
+	jump_d6282:
+		mov    %eax,%ebp
+		mov    %ecx,%eax
+		cltd
+		xor    %edx,%eax
+		sub    %edx,%eax
+		mov    %eax,0xc(%esp)
+		mov    %esi,%eax
+		xor    %ebx,%ebx
+		cltd
+		xor    %edx,%eax
+		sub    %edx,%eax
+		mov    0xc(%esp),%edx
+		mov    0x14(%esp),%bx
+		cmp    %edx,%eax
+		jge    jump_d62bb
+		mov    %esi,%eax
+		cltd
+		xor    %edx,%eax
+		sub    %edx,%eax
+		mov    %eax,%esi
+		mov    %ecx,%eax
+		sar    %esi
+		cltd
+		xor    %edx,%eax
+		sub    %edx,%eax
+		add    %esi,%eax
+		jmp    jump_d62cf
+	jump_d62bb:
+		mov    %ecx,%eax
+		cltd
+		xor    %edx,%eax
+		sub    %edx,%eax
+		mov    %eax,%ecx
+		mov    %esi,%eax
+		sar    %ecx
+		cltd
+		xor    %edx,%eax
+		sub    %edx,%eax
+		add    %ecx,%eax
+	jump_d62cf:
+		cmp    $0xa00,%eax
+		jge    jump_d62df
+		mov    %ebx,%eax
+		shl    $0x7,%eax
+		sub    %ebx,%eax
+		jmp    jump_d62fe
+	jump_d62df:
+		cmp    $0x1a00,%eax
+		jl     jump_d62ea
+		xor    %eax,%eax
+		jmp    jump_d6301
+	jump_d62ea:
+		sub    $0xa00,%eax
+		mov    $0x7f,%edx
+		sar    $0x5,%eax
+		sub    %eax,%edx
+		mov    %edx,%eax
+		imul   %ebx,%eax
+	jump_d62fe:
+		sar    $0x7,%eax
+	jump_d6301:
+		mov    %eax,%ebx
+		cmp    $0x5,%eax
+		jg     jump_d631a
+		cmpl   $0x0,0x10(%esp)
+		je     jump_d631a
+		xor    %eax,%eax
+		add    $0x1c,%esp
+		pop    %ebp
+		pop    %edi
+		pop    %esi
+		ret    $0xc
+	jump_d631a:
+		xor    %eax,%eax
+		mov    0x18(%esp),%ax
+		xor    %edx,%edx
+		mov    data_1dded8(%eax),%dl
+		cmp    $0x2,%edx
+		jle    jump_d633d
+		xor    %edx,%edx
+		mov    %bx,%dx
+		call   snd_unkn3_find_stop_sample
+		cwtl
+		test   %eax,%eax
+		je     jump_d6368
+	jump_d633d:
+		xor    %eax,%eax
+		mov    0x34(%esp),%al
+		push   %eax
+		mov    0x31(%esp),%eax
+		sar    $0x18,%eax
+		push   %eax
+		xor    %eax,%eax
+		mov    0x1e(%esp),%edx
+		mov    0x34(%esp),%ax
+		mov    %ebp,%ecx
+		push   %eax
+		xor    %eax,%eax
+		sar    $0x10,%edx
+		mov    0x16(%edi),%ax
+		call   ac_play_sample_using_heap
+	jump_d6368:
+		add    $0x1c,%esp
+		pop    %ebp
+		pop    %edi
+		pop    %esi
+		ret    $0xc
+
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC(ASM_play_dist_ssample)	/* 0x0D6374 */
+/*----------------------------------------------------------------*/
+		push   %esi
+		push   %edi
+		push   %ebp
+		sub    $0x18,%esp
+		mov    %eax,%edi
+		mov    %dx,0x14(%esp)
+		mov    %ebx,0x10(%esp)
+		mov    EXPORT_SYMBOL(sthings),%eax
+		lea    -0x15f90(%eax),%edx
+		cmp    %edx,%edi
+		jb     jump_d6398
+		cmp    %eax,%edi
+		jbe    jump_d639f
+	jump_d6398:
+		xor    %eax,%eax
+		jmp    jump_d650a
+	jump_d639f:
+		mov    %esp,%eax
+		mov    EXPORT_SYMBOL(engn_xc),%edx
+		mov    EXPORT_SYMBOL(engn_zc),%ebx
+		mov    0x18(%edi),%ecx
+		mov    0x20(%edi),%esi
+		sar    $0x8,%ecx
+		sar    $0x8,%esi
+		sub    %edx,%ecx
+		sub    %ebx,%esi
+		lea    0x4(%esp),%ebx
+		lea    0x8(%esp),%edx
+		mov    %ecx,(%esp)
+		mov    %esi,0x4(%esp)
+		call   ac_local_to_worldr
+		mov    (%esp),%ebp
+		sar    $0x3,%ebp
+		mov    %ebp,(%esp)
+		cmp    $0x39c,%ebp
+		jle    jump_d63e9
+		mov    $0x6f,%eax
+		jmp    jump_d640a
+	jump_d63e9:
+		cmp    $0xfffffc64,%ebp
+		jge    jump_d6402
+		mov    $0x10,%eax
+		cmp    $0x10,%eax
+		jge    jump_d6416
+		mov    $0x10,%eax
+		jmp    jump_d6420
+	jump_d6402:
+		mov    %ebp,%eax
+		sar    $0x4,%eax
+		add    $0x4a,%eax
+	jump_d640a:
+		cmp    $0x10,%eax
+		jge    jump_d6416
+		mov    $0x10,%eax
+		jmp    jump_d6420
+	jump_d6416:
+		cmp    $0x6f,%eax
+		jle    jump_d6420
+		mov    $0x6f,%eax
+	jump_d6420:
+		mov    %eax,%ebp
+		mov    %ecx,%eax
+		cltd
+		xor    %edx,%eax
+		sub    %edx,%eax
+		mov    %eax,0xc(%esp)
+		mov    %esi,%eax
+		xor    %ebx,%ebx
+		cltd
+		xor    %edx,%eax
+		sub    %edx,%eax
+		mov    0xc(%esp),%edx
+		mov    0x10(%esp),%bx
+		cmp    %edx,%eax
+		jge    jump_d6459
+		mov    %esi,%eax
+		cltd
+		xor    %edx,%eax
+		sub    %edx,%eax
+		mov    %eax,%esi
+		mov    %ecx,%eax
+		sar    %esi
+		cltd
+		xor    %edx,%eax
+		sub    %edx,%eax
+		add    %esi,%eax
+		jmp    jump_d646d
+	jump_d6459:
+		mov    %ecx,%eax
+		cltd
+		xor    %edx,%eax
+		sub    %edx,%eax
+		mov    %eax,%ecx
+		mov    %esi,%eax
+		sar    %ecx
+		cltd
+		xor    %edx,%eax
+		sub    %edx,%eax
+		add    %ecx,%eax
+	jump_d646d:
+		cmp    $0xa00,%eax
+		jge    jump_d647d
+		mov    %ebx,%eax
+		shl    $0x7,%eax
+		sub    %ebx,%eax
+		jmp    jump_d649c
+	jump_d647d:
+		cmp    $0x1a00,%eax
+		jl     jump_d6488
+		xor    %eax,%eax
+		jmp    jump_d649f
+	jump_d6488:
+		sub    $0xa00,%eax
+		mov    $0x7f,%edx
+		sar    $0x5,%eax
+		sub    %eax,%edx
+		mov    %edx,%eax
+		imul   %ebx,%eax
+	jump_d649c:
+		sar    $0x7,%eax
+	jump_d649f:
+		mov    %eax,%ebx
+		cmp    $0x5,%eax
+		jg     jump_d64bc
+		xor    %eax,%eax
+		mov    0x10(%esp),%ax
+		test   %eax,%eax
+		je     jump_d64bc
+		xor    %eax,%eax
+		add    $0x18,%esp
+		pop    %ebp
+		pop    %edi
+		pop    %esi
+		ret    $0xc
+	jump_d64bc:
+		xor    %eax,%eax
+		mov    0x14(%esp),%ax
+		xor    %edx,%edx
+		mov    data_1dded8(%eax),%dl
+		cmp    $0x2,%edx
+		jle    jump_d64df
+		xor    %edx,%edx
+		mov    %bx,%dx
+		call   snd_unkn3_find_stop_sample
+		cwtl
+		test   %eax,%eax
+		je     jump_d650a
+	jump_d64df:
+		xor    %eax,%eax
+		mov    0x30(%esp),%al
+		push   %eax
+		mov    0x2d(%esp),%eax
+		sar    $0x18,%eax
+		push   %eax
+		xor    %eax,%eax
+		mov    0x1a(%esp),%edx
+		mov    0x30(%esp),%ax
+		mov    %ebp,%ecx
+		push   %eax
+		mov    0x14(%edi),%eax
+		sar    $0x10,%edx
+		sar    $0x10,%eax
+		call   ac_play_sample_using_heap
+	jump_d650a:
+		add    $0x18,%esp
+		pop    %ebp
+		pop    %edi
+		pop    %esi
+		ret    $0xc
+
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC(ASM_set_dist_volume)	/* 0x0D6598 */
+/*----------------------------------------------------------------*/
+		push   %ecx
+		push   %esi
+		push   %edi
+		push   %ebp
+		sub    $0x4,%esp
+		mov    %eax,%esi
+		mov    %edx,%edi
+		mov    %ebx,%eax
+		mov    EXPORT_SYMBOL(engn_xc),%edx
+		mov    EXPORT_SYMBOL(engn_zc),%ebp
+		mov    0x18(%esi),%ecx
+		mov    0x20(%esi),%ebx
+		sar    $0x8,%ecx
+		sar    $0x8,%ebx
+		sub    %edx,%ecx
+		sub    %ebp,%ebx
+		movzwl %ax,%ebp
+		mov    %ecx,%eax
+		cltd
+		xor    %edx,%eax
+		sub    %edx,%eax
+		mov    %eax,(%esp)
+		mov    %ebx,%eax
+		cltd
+		xor    %edx,%eax
+		sub    %edx,%eax
+		cmp    (%esp),%eax
+		jge    jump_d65f0
+		mov    %ebx,%eax
+		cltd
+		xor    %edx,%eax
+		sub    %edx,%eax
+		mov    %eax,%ebx
+		mov    %ecx,%eax
+		sar    %ebx
+		cltd
+		xor    %edx,%eax
+		sub    %edx,%eax
+		add    %ebx,%eax
+		jmp    jump_d6604
+	jump_d65f0:
+		mov    %ecx,%eax
+		cltd
+		xor    %edx,%eax
+		sub    %edx,%eax
+		mov    %eax,%ecx
+		mov    %ebx,%eax
+		sar    %ecx
+		cltd
+		xor    %edx,%eax
+		sub    %edx,%eax
+		add    %ecx,%eax
+	jump_d6604:
+		cmp    $0xa00,%eax
+		jge    jump_d6614
+		mov    %ebp,%ebx
+		shl    $0x7,%ebx
+		sub    %ebp,%ebx
+		jmp    jump_d6631
+	jump_d6614:
+		cmp    $0x1a00,%eax
+		jl     jump_d661f
+		xor    %ebx,%ebx
+		jmp    jump_d6634
+	jump_d661f:
+		sub    $0xa00,%eax
+		mov    $0x7f,%ebx
+		sar    $0x5,%eax
+		sub    %eax,%ebx
+		imul   %ebp,%ebx
+	jump_d6631:
+		sar    $0x7,%ebx
+	jump_d6634:
+		movswl %bx,%ebx
+		mov    0x14(%esi),%eax
+		movswl %di,%edx
+		sar    $0x10,%eax
+		call   ac_SetSampleVolume
+		add    $0x4,%esp
+		pop    %ebp
+		pop    %edi
+		pop    %esi
+		pop    %ecx
+		ret
+
+
+/*----------------------------------------------------------------*/
+
+.data
+
+aDIdDTypeDSampl:	/* 0x15EB93 */
+		.string "%d id %d type %d  sample %d vol %d sc %d pan %d handle %x"
+aDIdDTypeDSam_0:	/* 0x15EBCD */
+		.string "%d id %d type %d  sample %d vol %d sc %d pan %d"
+		.align  4
+
+
+GLOBAL (sound_heap_size)	/* 0x1DDEC8 */
+		.long	0x0
+GLOBAL (dword_1DDECC)	/* 0x1DDECC */
+		.long	0x0
+		.fill   0x4
+GLOBAL (sound_heap_memory)	/* 0x1DDED4 */
+		.long	0x0
+data_1dded8:
+		.fill   0x190
+GLOBAL (ail_sample_ids)	/* 0x1DE068 */
+		.fill   0x50
+

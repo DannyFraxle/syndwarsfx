@@ -37,6 +37,8 @@
 
 short frameskip = 0;
 
+GameTurn drawturn = 1;
+
 // Base simulation-tuning rate: all per-turn game values are authored against
 // this rate (16 turns/sec). It does NOT change when the display runs faster;
 // instead the sim is advanced in fractions of a turn (world_dt) - see below.

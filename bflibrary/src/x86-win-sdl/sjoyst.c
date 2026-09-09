@@ -36,19 +36,19 @@
 struct DevInput joy;
 /******************************************************************************/
 
-const char* joy_get_button_label(int button)
+const char *JoyGetButtonLabel(int button)
 {
     static char buf[16];
     snprintf(buf, sizeof(buf), "%d", button + 1);
     return buf;
 }
 
-int JoySetInterrupt(short val)
+TbResult JoySetInterrupt(short val)
 {
-    return -1;
+    return Lb_FAIL;
 }
 
-int joy_get_device_name(char *textbuf)
+TbResult JoyGetDeviceName(char *textbuf)
 {
     const char *name = "No Joystick";
     strncpy(textbuf, name, 52);
@@ -56,14 +56,14 @@ int joy_get_device_name(char *textbuf)
     return Lb_SUCCESS;
 }
 
-int joy_update_inputs(struct DevInput *dinp)
+TbResult JoyUpdateInputs(struct DevInput *dinp)
 {
-    return 0;
+    return Lb_OK;
 }
 
-int joy_refresh_devices(struct DevInput *dinp)
+TbResult JoyRefreshDevices(struct DevInput *dinp)
 {
-    return 1;
+    return Lb_SUCCESS;
 }
 
 void devinput_clear(struct DevInput *dinp)
@@ -85,23 +85,19 @@ void devinput_clear(struct DevInput *dinp)
     dinp->NumberOfDevices = 1;
 }
 
-int joy_setup_device(struct DevInput *dinp, int jtype)
+TbResult JoySetupDevice(struct DevInput *dinp, int jtype)
 {
     devinput_clear(dinp);
-    return 1;
+    return Lb_SUCCESS;
 }
 
-/** Joystick drivers initialization.
- */
-int joy_driver_init(void)
+TbResult JoyDriverInit(void)
 {
-    return 1;
+    return Lb_SUCCESS;
 }
 
-/** Joystick drivers shutdown.
- */
-int joy_driver_shutdown(void)
+TbResult JoyDriverShutdown(void)
 {
-    return 1;
+    return Lb_SUCCESS;
 }
 /******************************************************************************/

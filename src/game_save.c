@@ -358,7 +358,7 @@ void read_user_settings(void)
 
     i = -1;
     if (ctl_joystick_type)
-        i = joy_setup_device(&joy, ctl_joystick_type);
+        i = JoySetupDevice(&joy, ctl_joystick_type);
     if (i != 1)
         ctl_joystick_type = JTyp_NONE;
 }

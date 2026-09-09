@@ -39,7 +39,7 @@
 
 /* --- Game globals (resolved at the executable's link step) --- */
 /* Camera centre, from engincam.h (s32). */
-extern int32_t        engn_xc, engn_yc, engn_zc, engn_anglexz;
+extern int32_t        engn_xc, engn_yc, engn_zc, engn_cam_yaw;
 extern unsigned short overall_scale;
 /* Affine-projection factors, from engintrns.h, set every frame by the SW camera
  * setup. transform_shpoint() uses exactly these. */

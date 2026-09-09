@@ -78,19 +78,19 @@ extern struct UnkVFXStruct1 vfxunk1;
 struct DevInput joy;
 /******************************************************************************/
 
-const char* joy_get_button_label(int button)
+const char *JoyGetButtonLabel(int button)
 {
     static char buf[16];
     snprintf(buf, sizeof(buf), "%d", button + 1);
     return buf;
 }
 
-int JoySetInterrupt(short val)
+TbResult JoySetInterrupt(short val)
 {
-    if (!val)
-        return -1;
+    if (val < 1)
+        return Lb_FAIL;
     InputHandler->InterruptNo = val;
-    return 1;
+    return Lb_SUCCESS;
 }
 
 int vfx1_unkn_func_03(void)
@@ -178,11 +178,11 @@ int joy_func_251(int val, int acen, int amin, int amax)
     return result;
 }
 
-int joy_get_device_name(char *textbuf)
+TbResult JoyGetDeviceName(char *textbuf)
 {
 #if 0
     int ret;
-    asm volatile ("call ASM_joy_get_device_name\n"
+    asm volatile ("call ASM_JoyGetDeviceName\n"
         : "=r" (ret) : "a" (textbuf));
     return ret;
 #endif
@@ -728,7 +728,7 @@ int joy_update_inputs_sub5(struct DevInput *dinp, short ipos)
     return 0;
 }
 
-int joy_update_inputs(struct DevInput *dinp)
+TbResult JoyUpdateInputs(struct DevInput *dinp)
 {
     short i, ipos;
     ubyte v115;
@@ -736,7 +736,7 @@ int joy_update_inputs(struct DevInput *dinp)
 
     v115 = 0;
     if (dinp->Type == -1)
-        return -1;
+        return Lb_FAIL;
 
     for (i = 0; i < 16; i++)
     {
@@ -827,7 +827,7 @@ int joy_update_inputs(struct DevInput *dinp)
             break;
         }
     }
-    return 1;
+    return Lb_SUCCESS;
 }
 
 short vfx1_init(void)
@@ -838,10 +838,10 @@ short vfx1_init(void)
     return ret;
 }
 
-int joy_refresh_devices(struct DevInput *dinp)
+TbResult JoyRefreshDevices(struct DevInput *dinp)
 {
-    int ret;
-    asm volatile ("call ASM_joy_refresh_devices\n"
+    TbResult ret;
+    asm volatile ("call ASM_JoyRefreshDevices\n"
         : "=r" (ret) : "a" (dinp));
     return ret;
 }
@@ -1116,11 +1116,11 @@ int joy_enumerate_devices(struct DevInput *dinp)
     return dinp->NumberOfDevices;
 }
 
-int joy_setup_device(struct DevInput *dinp, int jtype)
+TbResult JoySetupDevice(struct DevInput *dinp, int jtype)
 {
 #if 0
-    int ret;
-    asm volatile ("call ASM_joy_setup_device\n"
+    TbResult ret;
+    asm volatile ("call ASM_JoySetupDevice\n"
         : "=r" (ret) : "a" (dinp), "d" (jtype));
     return ret;
 #endif
@@ -1144,7 +1144,7 @@ int joy_setup_device(struct DevInput *dinp, int jtype)
         jaddr = joy_setup_device_sub1();
         if (jaddr == 1)
         {
-            result = -1;
+            result = Lb_FAIL;
             break;
         }
 TRY_TYPE_01:
@@ -1154,7 +1154,7 @@ TRY_TYPE_01:
         if (1)
 #endif
         {
-            result = -1;
+            result = Lb_FAIL;
             dinp->Type = -1;
             break;
         }
@@ -1173,7 +1173,7 @@ TRY_TYPE_01:
         dinp->Init[0] = 1;
         dinp->ConfigType[0] = loc_jtype;
         dinp->Type = loc_jtype;
-        result = 1;
+        result = Lb_SUCCESS;
         break;
 
     case 3:
@@ -1183,7 +1183,7 @@ TRY_TYPE_01:
         jaddr = joy_setup_device_sub1();
         if (jaddr == 1)
         {
-            result = -1;
+            result = Lb_FAIL;
             break;
         }
 #if defined(DOS)||defined(GO32)
@@ -1206,7 +1206,7 @@ TRY_TYPE_01:
         dinp->Init[0] = 1;
         dinp->ConfigType[0] = loc_jtype;
         dinp->Type = loc_jtype;
-        result = 1;
+        result = Lb_SUCCESS;
         break;
 
     case 5:
@@ -1215,7 +1215,7 @@ TRY_TYPE_01:
         jaddr = joy_setup_device_sub1();
         if (jaddr == 1)
         {
-            result = -1;
+            result = Lb_FAIL;
             break;
         }
 TRY_TYPE_05:
@@ -1226,7 +1226,7 @@ TRY_TYPE_05:
 #endif
         {
             dinp->Type = -1;
-            result = -1;
+            result = Lb_FAIL;
             break;
         }
         dinp->XCentre[0] = dword_1E2F24;
@@ -1240,14 +1240,14 @@ TRY_TYPE_05:
         dinp->Init[0] = 1;
         dinp->ConfigType[0] = loc_jtype;
         dinp->Type = loc_jtype;
-        result = 1;
+        result = Lb_SUCCESS;
         break;
 
     case 6:
         jaddr = joy_setup_device_sub1();
         if (jaddr == 1)
         {
-            result = -1;
+            result = Lb_FAIL;
             break;
         }
         memset(&vfxunk1, 0, sizeof(vfxunk1));
@@ -1289,7 +1289,7 @@ TRY_TYPE_05:
             goto TRY_TYPE_09;
         }
         dinp->Type = loc_jtype;
-        result = 1;
+        result = Lb_SUCCESS;
         break;
 
     case 9:
@@ -1297,7 +1297,7 @@ TRY_TYPE_09:
         jaddr = joy_setup_device_sub1();
         if (jaddr == 1)
         {
-            result = -1;
+            result = Lb_FAIL;
             break;
         }
 #if defined(DOS)||defined(GO32)
@@ -1323,7 +1323,7 @@ TRY_TYPE_09:
         dinp->ConfigType[0] = loc_jtype;
         dinp->NumberOfButtons[0] = 6;
         dinp->Type = loc_jtype;
-        result = 1;
+        result = Lb_SUCCESS;
         break;
 
     case 11:
@@ -1331,7 +1331,7 @@ TRY_TYPE_09:
         if (!vfx1_init())
         {
             dinp->Type = -1;
-            result = -1;
+            result = Lb_FAIL;
             break;
         }
         dinp->MinXAxis[0] = -32766;
@@ -1344,7 +1344,7 @@ TRY_TYPE_09:
         dinp->ConfigType[0] = jtype;
         dinp->Init[0] = 1;
         dinp->Type = loc_jtype;
-        result = 1;
+        result = Lb_SUCCESS;
         break;
 
     case 14:
@@ -1352,7 +1352,7 @@ TRY_TYPE_09:
         jaddr = joy_setup_device_sub1();
         if (jaddr == 1)
         {
-            result = -1;
+            result = Lb_FAIL;
             break;
         }
 #if defined(DOS)||defined(GO32)
@@ -1378,7 +1378,7 @@ TRY_TYPE_09:
         dinp->Init[0] = 1;
         dinp->ConfigType[0] = loc_jtype;
         dinp->Type = loc_jtype;
-        result = 1;
+        result = Lb_SUCCESS;
         break;
 
     case 17:
@@ -1389,7 +1389,7 @@ TRY_TYPE_09:
         dinp->ConfigType[0] = 17;
         dinp->Init[0] = 1;
         dinp->Type = jtype;
-        result = 1;
+        result = Lb_SUCCESS;
         break;
 
     case 18:
@@ -1400,17 +1400,17 @@ TRY_TYPE_09:
         if (i != 1)
         {
             dinp->Type = -1;
-            result = -1;
+            result = Lb_FAIL;
             break;
         }
         joy_enumerate_devices(dinp);
         if (dinp->NumberOfDevices < 1)
         {
             dinp->Type = -1;
-            result = -1;
+            result = Lb_FAIL;
             break;
         }
-        result = 1;
+        result = Lb_SUCCESS;
         dinp->Type = loc_jtype;
         break;
 
@@ -1418,12 +1418,12 @@ TRY_TYPE_09:
         if (joy_func_049(dinp, 0) != 1)
         {
             dinp->Type = -1;
-            result = -1;
+            result = Lb_FAIL;
             break;
         }
         dinp->ConfigType[0] = jtype;
         dinp->Type = jtype;
-        result = 1;
+        result = Lb_SUCCESS;
         break;
 
     case 23:
@@ -1431,7 +1431,7 @@ TRY_TYPE_09:
         jaddr = joy_setup_device_sub1();
         if (jaddr == 1)
         {
-            result = -1;
+            result = Lb_FAIL;
             break;
         }
 #if defined(DOS)||defined(GO32)
@@ -1440,7 +1440,7 @@ TRY_TYPE_09:
         if (1)
 #endif
         {
-            result = -1;
+            result = Lb_FAIL;
             break;
         }
         dinp->XCentre[0] = dword_1E2F24;
@@ -1466,11 +1466,11 @@ TRY_TYPE_09:
         dinp->ConfigType[1] = loc_jtype;
 
         dinp->Type = loc_jtype;
-        result = 1;
+        result = Lb_SUCCESS;
         break;
     default:
         dinp->Type = loc_jtype;
-        result = 1;
+        result = Lb_SUCCESS;
         break;
     }
     return result;
@@ -1516,7 +1516,7 @@ int joy_grip_init(void)
     if ((flib = fopen(lib, "rb")) == 0)
     {
         LOGERR("Unable to load library file \"%s\"", lib);
-        return -1;
+        return Lb_FAIL;
     }
     fseek(flib, 0, SEEK_END);
     size = ftell(flib);
@@ -1528,13 +1528,13 @@ int joy_grip_init(void)
     if (size > 32*1024L)
     {
         LOGERR("Invalid library file \"%s\" (File too large)", lib);
-        return -1;
+        return Lb_FAIL;
     }
     image = LbMemoryAlloc(size);
     if (image == NULL)
     {
         LOGERR("Unable to allocate sufficient memory for library", lib);
-        return -1;
+        return Lb_FAIL;
     }
     fseek(flib, 0, SEEK_SET);
     fread(image, 1, size, flib);
@@ -1544,13 +1544,13 @@ int joy_grip_init(void)
     if (!GrLink(image, size))
     {
         LOGERR("Unable to initialize loadable library!");
-        return -1;
+        return Lb_FAIL;
     }
     LbMemoryFree(image);
-    return 1;
+    return Lb_SUCCESS;
 #else
     // No joystick support lib required for modern OSes
-    return 0;
+    return Lb_OK;
 #endif
 }
 
@@ -1595,9 +1595,7 @@ int joy_spaceball_shutdown(void)
 #endif
 }
 
-/** Joystick drivers initialization.
- */
-int joy_driver_init(void)
+TbResult JoyDriverInit(void)
 {
     int ret;
     if (!joy_grip_initialized)
@@ -1612,12 +1610,10 @@ int joy_driver_init(void)
         if (ret == 1)
             joy_spbal_initialized = 1;
     }
-    return 1;
+    return Lb_SUCCESS;
 }
 
-/** Joystick drivers shutdown.
- */
-int joy_driver_shutdown(void)
+TbResult JoyDriverShutdown(void)
 {
     if (joy_grip_initialized)
     {
@@ -1629,6 +1625,6 @@ int joy_driver_shutdown(void)
         joy_spaceball_shutdown();
         joy_spbal_initialized = 0;
     }
-    return 1;
+    return Lb_SUCCESS;
 }
 /******************************************************************************/

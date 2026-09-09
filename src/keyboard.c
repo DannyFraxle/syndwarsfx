@@ -30,6 +30,7 @@
 #include "game.h"
 #include "game_data.h"
 #include "guitext.h"
+#include "swlog.h"
 
 /******************************************************************************/
 
@@ -45,6 +46,13 @@ JoyButtonSet jskeys[GKey_KEYS_COUNT];
 ulong buffered_keys[KEYBOARD_BUFFER_SIZE];
 ulong buffered_keys_read_index;
 ulong buffered_keys_write_index;
+
+ubyte joy_types_available[] = {
+  0, 0, 0, 0, 0, 5, 6, 0,
+  0, 9, 0, 0,12,13, 0, 0,
+  0, 0,18,19, 0, 0, 0, 0,
+  24, 0, 0, 0
+};
 
 #pragma pack()
 
@@ -140,7 +148,7 @@ void sprint_joy_key(char *ostr, int buttons_num, JoyButtonSet jkeys)
         {
             if (tx_len > 0)
                 ostr[tx_len++] = '+';
-            const char *label = joy_get_button_label(jbtn);
+            const char *label = JoyGetButtonLabel(jbtn);
             while (*label && tx_len < 50) {
                 ostr[tx_len++] = *label++;
             }
@@ -525,6 +533,18 @@ void set_default_game_keys(void)
     kbkeys[GKey_SUPERSHIELD] = KC_UNASSIGNED;
     kbkeys[GKey_VIEW_THERMAL] = KC_UNASSIGNED;
     reset_hardcoded_kbd_gamekeys();
+}
+
+TbResult joy_ext_driver_irq_init(int irqno)
+{
+    TbResult ret;
+
+    ret = JoySetInterrupt(irqno);
+    if (ret != Lb_FAIL)
+        joy_types_available[JTyp_EXT_DRIVER] = JTyp_EXT_DRIVER;
+    else
+        LOGERR("Joystick with external driver failed setup at IRQ %d", irqno);
+    return ret;
 }
 
 /******************************************************************************/

@@ -66,11 +66,11 @@ enum SpecialUserInputControlModes {
     UInpCtr_Joystick3,
     UInpCtr_MODES_COUNT,
     UInpCtrF_Unkn2000 = 0x2000,
-    UInpCtrF_Unkn4000 = 0x4000,
-    UInpCtrF_Unkn8000 = 0x8000,
+    UInpCtrF_RBtnDown = 0x4000,
+    UInpCtrF_LBtnDown = 0x8000,
 };
 
-#define UInpCtr_AllFlagsMask (UInpCtrF_Unkn2000|UInpCtrF_Unkn4000|UInpCtrF_Unkn8000)
+#define UInpCtr_AllFlagsMask (UInpCtrF_Unkn2000|UInpCtrF_RBtnDown|UInpCtrF_LBtnDown)
 
 /** Per-local-player input mapping struct.
  *
@@ -112,6 +112,12 @@ void reset_user_groups(void);
 /** Clear state of user inputs to get rid of half-finished operations.
  */
 void reset_user_input(void);
+
+void user_input_control_mode_set(PlayerIdx plyr, ubyte dmuser, ushort ctrmode);
+ushort user_input_control_mode_get(PlayerIdx plyr, ubyte dmuser);
+void user_input_control_flags_raise(PlayerIdx plyr, ubyte dmuser, ushort ctrflags);
+void user_input_control_flags_clear(PlayerIdx plyr, ubyte dmuser, ushort ctrflags);
+TbBool user_input_control_flags_check(PlayerIdx plyr, ubyte dmuser, ushort ctrflags);
 
 /** Initialize selected control scheme for local users.
  *

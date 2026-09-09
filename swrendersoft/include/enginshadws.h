@@ -27,6 +27,17 @@ extern "C" {
 /******************************************************************************/
 #pragma pack(1)
 
+/** Multicolor shadows texture dimension; both dimensions are the same.
+ *
+ * Would be a bit wierd if this was different from texture dimension,
+ * but sill, it is a separate entity.
+ */
+#define MUCOL_SHADOW_BITMAP_DIM 256
+
+#define MUCOL_SHADOW_ANIMS_COUNT 13
+#define MUCOL_SHADOW_ANGLES_COUNT 8
+#define MUCOL_SHADOW_FRAMES_COUNT 6
+
 struct SortMapPoint;
 
 struct ShadowTexture {
@@ -48,7 +59,7 @@ extern ushort shadow_tmap_page;
 extern struct ShadowTexture shadowtexture[];
 /******************************************************************************/
 
-void draw_shadows_for_multicolor_sprites(void);
+void draw_shadows_for_multicolor_sprites(const ushort *anims, ushort anims_len);
 void generate_shadows_angle_shifts(void);
 void copy_from_screen_ani(ubyte *buf);
 

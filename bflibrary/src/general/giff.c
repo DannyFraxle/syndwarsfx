@@ -171,6 +171,7 @@ TbResult LbIffLoad(const char *fname, ubyte *buf, struct TbIff *iff)
     if (handle == INVALID_FILE) {
         return Lb_FAIL;
     }
+    ret = Lb_FAIL;
     if (LbBufferFileSetup(handle) == Lb_SUCCESS)
     {
         ret = read_iff(iff, buf);

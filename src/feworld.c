@@ -85,12 +85,6 @@ ubyte ac_do_unkn2_ACCEPT(ubyte click);
 
 ubyte do_unkn2_CANCEL(ubyte click)
 {
-#if 0
-    ubyte ret;
-    asm volatile ("call ASM_do_unkn2_CANCEL\n"
-        : "=r" (ret) : "a" (click));
-    return ret;
-#endif
     if (map_from_mission)
     {
         change_screen = ChSCRT_MISBRIEF;
@@ -105,12 +99,6 @@ ubyte do_unkn2_CANCEL(ubyte click)
 
 ubyte do_unkn2_ACCEPT(ubyte click)
 {
-#if 0
-    ubyte ret;
-    asm volatile ("call ASM_do_unkn2_ACCEPT\n"
-        : "=r" (ret) : "a" (click));
-    return ret;
-#endif
     if (unkn_city_no == -1)
         return 0;
 
@@ -126,12 +114,6 @@ ubyte do_unkn2_ACCEPT(ubyte click)
 
 ubyte show_world_city_info_box(struct ScreenTextBox *p_box)
 {
-#if 0
-    ubyte ret;
-    asm volatile ("call ASM_show_world_city_info_box\n"
-        : "=r" (ret) : "a" (p_box));
-    return ret;
-#endif
     ushort i;
     int n_lines;
     int tx_height, ln_height, scr_y;
@@ -456,7 +438,8 @@ void draw_world_cities_names(struct ScreenBox *p_box)
         ms_y = lbDisplay.GraphicsScreenHeight < 400 ? 2 * lbDisplay.MMouseY : lbDisplay.MMouseY;
 
         k = cities[city].TextIndex[0];
-        strncpy(locstr, (char *)&memload[k], sizeof(locstr));
+        strncpy(locstr, (char *)&memload[k], sizeof(locstr) - 1);
+        locstr[sizeof(locstr) - 1] = '\0';
         LbStringToUpper(locstr);
 
         if (byte_15511C < 3)

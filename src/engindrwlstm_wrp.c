@@ -33,6 +33,7 @@
 #include "engindrwlstx.h"
 #include "enginfloor.h"
 #include "enginpeff.h"
+#include "enginshadws.h"
 #include "enginsngobjs.h"
 #include "enginsngtxtr.h"
 #include "enginshrapn.h"
@@ -49,6 +50,7 @@
 #include "people.h"
 #include "swlog.h"
 #include "thing.h"
+#include "tngobjdrw.h"
 #include "vehicle.h"
 /******************************************************************************/
 #pragma pack(1)
@@ -103,15 +105,11 @@ struct unkn_mech_struc3 { // sizeof=0x76
 
 #pragma pack()
 /******************************************************************************/
-extern short word_1552F8;
-
 extern ubyte byte_176D49;
 
 extern long dword_176CAC;
 extern long dword_176CB0;
-extern long dword_152E4C;
-
-extern const ubyte byte_154F2C[32];
+u32 dword_152E4C = 0x3F69A093;
 
 extern struct BulStart bul_starts[4000];
 
@@ -152,13 +150,16 @@ void draw_thing_e_graphic(struct Thing *p_thing, int x, int y, int z,
 static void draw_pers_shadow(struct Thing *p_thing,
   int scr_x, int scr_y, int scr_depth)
 {
-    ushort frm, anmode;
+    ushort sbfrm, anmode;
     ushort shpak;
     short strng;
     ubyte shangl, angl;
 
-    angl = p_thing->U.UObject.Angle;
-    frm = p_thing->Frame - nstart_ani[p_thing->StartFrame + 1 + angl];
+    angl = p_thing->U.UPerson.Angle;
+    sbfrm = get_person_anim_subframe(p_thing);
+    /* shadows are strictly limited in amount of frames */
+    if (sbfrm >= MUCOL_SHADOW_FRAMES_COUNT)
+        sbfrm = sbfrm % MUCOL_SHADOW_FRAMES_COUNT;
 
     anmode = p_thing->U.UPerson.AnimMode;
     if ((anmode == ANIM_PERS_WEPHEAVY_IDLE) ||
@@ -168,14 +169,14 @@ static void draw_pers_shadow(struct Thing *p_thing,
     else if ((anmode == ANIM_PERS_WEPLIGHT_IDLE) ||
       (anmode == ANIM_PERS_Unkn14) ||
       (anmode == ANIM_PERS_Unkn06))
-        shpak = byte_154F2C[2 * p_thing->SubType + 1];
+        shpak = pers_subtype_to_shpak[2 * p_thing->SubType + 1];
     else
-        shpak = byte_154F2C[2 * p_thing->SubType + 0];
+        shpak = pers_subtype_to_shpak[2 * p_thing->SubType + 0];
 
     shangl = p_thing->U.UPerson.Shadows[0];
     strng = p_thing->U.UPerson.Shadows[1];
 
-    enlist_draw_tall_spr_shadow(scr_x, scr_y, scr_depth, frm,
+    enlist_draw_tall_spr_shadow(scr_x, scr_y, scr_depth, sbfrm,
       angl, shangl, shpak, strng, (intptr_t)p_thing);
 }
 
@@ -238,7 +239,7 @@ void draw_pers_e_graphic(struct Thing *p_thing,
     br_inc = person_shield_glow_brightness(p_thing);
 
     if ((render_floor_flags & RendFlrF_WobblyTerrain) != 0)
-        cor_dy += waft_table[gameturn & 0x1F] >> 3;
+        cor_dy += waft_table[render_anim_turn & 0x1F] >> 3;
 
     transform_shpoint(&sp, cor_dx, 8 * cor_dy - 8 * engn_yc, cor_dz);
 
@@ -766,7 +767,7 @@ int draw_rot_object(int cor_dx, int cor_dy, int cor_dz,
     assert((p_thing->U.UObject.MatrixIndex < next_local_mat) || (p_thing->Type == TT_ROCKET));
 
     if ((render_floor_flags & RendFlrF_WobblyTerrain) != 0)
-        cor_dy += waft_table[gameturn & 0x1F];
+        cor_dy += waft_table[render_anim_turn & 0x1F];
 
     object_points_clear_flags(point_object);
 
@@ -824,8 +825,9 @@ short draw_object_faces(int cor_dx, int cor_dy, int cor_dz,
 
     depth_shift = point_object->field_1E;
 
-    if ((point_object->field_1C & 0x0100) != 0 && ((doflags & DrwObjF_NoWobblyElevation) == 0))
-        cor_dy += waft_table[gameturn & 0x1F];
+    if ((point_object->field_1C & 0x0100) != 0 &&
+      ((doflags & DrwObjF_NoWobblyElevation) == 0))
+        cor_dy += waft_table[render_anim_turn & 0x1F];
 
     bckt_max = 0;
 
@@ -925,7 +927,7 @@ short draw_object(int sh_x, int sh_y, int sh_z,
 
     doflags = 0;
 
-    if ((game_perspective == 2) && engine_render_lights)
+    if ((game_perspective == ProjM_IsomNoBuildng) && engine_render_lights)
         return 0;
 
     cor_dx = point_object->MapX - engn_xc;
@@ -1009,9 +1011,9 @@ void draw_vehicle_health(struct Thing *p_thing, int bckt)
         bar_col = 19;
     }
 
-    cor_x = (p_thing->X >> 8);
-    cor_y = (p_thing->Y >> 5);
-    cor_z = (p_thing->Z >> 8);
+    cor_x = PRCCOORD_TO_MAPCOORD(p_thing->X);
+    cor_y = PRCCOORD_TO_YCOORD(p_thing->Y);
+    cor_z = PRCCOORD_TO_MAPCOORD(p_thing->Z);
 
     enlist_draw_long_health_bar(cor_x, cor_y, cor_z, depth_shift,
       bckt, p_thing->Health, p_thing->U.UVehicle.MaxHealth,

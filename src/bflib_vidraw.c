@@ -29,20 +29,14 @@
 #include "engintrns.h"
 /******************************************************************************/
 
-extern ubyte byte_1DDC44[640];
-extern ubyte byte_1DDEC4;
+ubyte byte_1DDC44[640];
+ubyte byte_1DDEC4 = 0;
 extern ubyte byte_1C4B7F;// = 0;
 extern ubyte byte_1C6DED;// = 0;
 extern ubyte byte_155189;// = 0xF7;
 
 void draw_noise_box(short x, short y, ushort w, ushort h)
 {
-#if 0
-    asm volatile (
-      "call ASM_draw_noise_box\n"
-        :  : "a" (X), "d" (Y), "b" (a3), "c" (a4));
-    return;
-#endif
     uint dx, dy;
     ushort rnd;
 

@@ -24,13 +24,19 @@
 #include "privrdlog.h"
 /******************************************************************************/
 ushort overall_scale = 256;
-ubyte game_perspective = 0;
+ubyte game_perspective = ProjM_Isometric;
 
 s32 engn_xc = 0x3280;
 s32 engn_yc = 0;
 s32 engn_zc = 0x3280;
 
-s32 engn_anglexz = 0;
+s32 engn_cam_tilt = -(303 * LbFPMath_PI / 1800); // -30.3 degree in bflib units
+
+s32 engn_cam_yaw = 0;
+
+s32 engn_x_vel = 0;
+s32 engn_z_vel = 0;
+s32 engn_cam_yaw_vel = 0;
 
 s32 dword_176D70;
 s32 dword_176D74;
@@ -47,6 +53,18 @@ ubyte byte_176D4A;
 ubyte byte_176D4B;
 /******************************************************************************/
 
+void camera_setup_angle_fractions(void)
+{
+    int angXZ;
+
+    angXZ = (engn_cam_yaw >> 5) & LbFPMath_AngleMask;
+
+    byte_176D48 = ((angXZ + 256) >> 9) & 0x3;
+    byte_176D49 = ((angXZ + 128) >> 8) & 0x7;
+    byte_176D4B = ((angXZ + 64) >> 7) & 0xF;
+    byte_176D4A = ((angXZ + 85) / 170) % 12;
+}
+
 void camera_setup_view(int *p_pos_beg_x, int *p_pos_beg_z,
   int *p_rend_beg_x, int *p_rend_beg_z, int *p_tlcount_x, int *p_tlcount_z)
 {
@@ -55,13 +73,9 @@ void camera_setup_view(int *p_pos_beg_x, int *p_pos_beg_z,
     int pos_beg_x, pos_beg_z;
     int tlcount_x, tlcount_z;
 
-    angXZ = (engn_anglexz >> 5) & 0x7FF;
+    camera_setup_angle_fractions();
 
-    byte_176D48 = ((angXZ + 256) >> 9) & 0x3;
-    byte_176D49 = ((angXZ + 128) >> 8) & 0x7;
-    byte_176D4A = ((angXZ + 85) / 170) % 12;
-    byte_176D4B = ((angXZ + 64) >> 7) & 0xF;
-    byte_19EC7A = ((angXZ + 256) >> 9) & 0x3;
+    angXZ = (engn_cam_yaw >> 5) & LbFPMath_AngleMask;
 
     rend_beg_x = (engn_xc & 0xFF00) + (render_area_a << 7);
     rend_beg_z = (engn_zc & 0xFF00) - (render_area_b << 7);
@@ -96,6 +110,43 @@ void camera_setup_view(int *p_pos_beg_x, int *p_pos_beg_z,
     *p_rend_beg_z = rend_beg_z;
     *p_tlcount_x = tlcount_x;
     *p_tlcount_z = tlcount_z;
+}
+
+void camera_save_backup_state(struct CameraState *p_bkp)
+{
+    p_bkp->xc = engn_xc;
+    p_bkp->yc = engn_yc;
+    p_bkp->zc = engn_zc;
+    p_bkp->yaw = engn_cam_yaw;
+    p_bkp->tilt = engn_cam_tilt;
+    p_bkp->x_vel = engn_x_vel;
+    p_bkp->z_vel = engn_z_vel;
+    p_bkp->yaw_vel = engn_cam_yaw_vel;
+    p_bkp->overall_scale = overall_scale;
+    p_bkp->perspective = game_perspective;
+    p_bkp->area_a = render_area_a;
+    p_bkp->area_b = render_area_b;
+}
+
+void camera_load_backup_state(const struct CameraState *p_bkp)
+{
+    engn_xc = p_bkp->xc;
+    engn_yc = p_bkp->yc;
+    engn_zc = p_bkp->zc;
+    engn_cam_yaw = p_bkp->yaw;
+    engn_cam_tilt = p_bkp->tilt;
+    engn_x_vel = p_bkp->x_vel;
+    engn_z_vel = p_bkp->z_vel;
+    engn_cam_yaw_vel = p_bkp->yaw_vel;
+    overall_scale = p_bkp->overall_scale;
+    game_perspective = p_bkp->perspective;
+    render_area_a = p_bkp->area_a;
+    render_area_b = p_bkp->area_b;
+}
+
+void camera_apply_velocity(void)
+{
+    engn_cam_yaw += engn_cam_yaw_vel;
 }
 
 /******************************************************************************/

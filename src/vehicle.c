@@ -51,6 +51,95 @@ struct CarGlare { // sizeof=7
     ubyte Flag;
 };
 
+// TODO Maybe this is the same as players count, maybe not; owner field does not typically store player number
+#define MECH_OWNER_LIMIT 8
+
+struct unkn_mech_struc1 { // sizeof=0x11
+    ubyte field_0;
+    s32 field_1;
+    s32 field_5;
+    s32 field_9;
+    s32 field_D;
+};
+
+struct unkn_mech_struc2 { // sizeof=0x89
+    s32 field_0;
+    ubyte field_4[132];
+    ubyte field_88;
+};
+
+struct unkn_mech_struc3 { // sizeof=0x76
+    struct unkn_mech_struc4 *mech3_arr4_ptr;
+    s32 mech3_unkn_arr4_idx;
+    s32 mech3_unkn_fld_8;
+    struct M33 mech3_unkn_mat_C;
+    s32 mech3_unkn_X;
+    s32 mech3_unkn_Y;
+    s32 mech3_unkn_Z;
+    ubyte mech3_unkn_fld_3C[13];
+    s32 mech3_unkn_fld_49;
+    ubyte mech3_unkn_fld_4D[7];
+    s32 mech3_unkn_fld_54[3];
+    ubyte field_60;
+    ubyte field_61[3];
+    s32 field_64;
+    s32 field_68;
+    s32 field_6C;
+    ubyte field_70[3];
+    ubyte field_73[2];
+    ubyte field_75;
+};
+
+struct unkn_mech_struc4 { // sizeof=0x7A
+    short thing;
+    ubyte field_2[33];
+    short field_23;
+    s32 field_25;
+    s32 field_29;
+    s32 field_2D;
+    s32 field_31;
+    s32 field_35;
+    s32 field_39;
+    s32 field_3D;
+    s32 field_41;
+    s32 field_45;
+    s32 angle_49;
+    s32 angle_4D;
+    s32 angle_51;
+    s32 field_55;
+    s32 field_59;
+    ubyte field_5D[4];
+    struct M31 field_61;
+    struct M31 field_6D;
+    ubyte field_79;
+};
+
+struct unkn_mech_struc5_s1 { // sizeof=24
+    s32 field_0;
+    s32 field_4;
+    s32 field_8;
+    ubyte field_C[12];
+};
+
+struct unkn_mech_struc5 { // sizeof=0x1A9
+    s32 field_0;
+    s32 field_4;
+    s32 field_8;
+    struct unkn_mech_struc5_s1 field_C[16];
+    ubyte field_18C[24];
+    ubyte field_1A4[4];
+    ubyte field_1A8;
+};
+
+struct unkn_mech_struc7 { // sizeof=0x13488
+    struct unkn_mech_struc3 field_0[MECH_OWNER_LIMIT];
+    struct unkn_mech_struc4 field_3B0[256];
+    struct unkn_mech_struc5 field_7DB0[64];
+    struct unkn_mech_struc1 field_E7F0[1024];
+    ubyte field_12BF0[8];
+    struct unkn_mech_struc2 field_12BF8[16];
+};
+
 #pragma pack()
 
 /** Configuration options for each person state.
@@ -185,6 +274,21 @@ struct CarGlare car_glare[] = {
   {-96, -16, 304, 0},
 };
 
+extern struct unkn_mech_struc3 *unkn_mech_arr3; // = NULL;
+extern struct unkn_mech_struc4 *unkn_mech_arr4; // = NULL;
+extern struct unkn_mech_struc5 *unkn_mech_arr5; // = NULL;
+extern struct unkn_mech_struc1 *unkn_mech_arr1; // = NULL;
+extern ubyte *unkn_mech_arr6; // = NULL;
+extern struct unkn_mech_struc2 *unkn_mech_arr2; // = NULL;
+extern struct M33 unkn_mech_mat8;
+
+extern s32 mech_last_cor_x;
+extern s32 mech_last_cor_y;
+extern s32 mech_last_cor_z;
+extern s32 mech_unkn_tile_y2;
+extern s32 mech_unkn_tile_x3;
+extern s32 mech_unkn_tile_y3;
+
 const char *vehicle_type_name(ushort vtype)
 {
 #if 0
@@ -236,11 +340,63 @@ void snprint_vehicle_state(char *buf, ulong buflen, struct Thing *p_thing)
     snprintf(s, buflen - (s-buf), " )");
 }
 
+int load_mech_dat(const char *fname)
+{
+    int ret;
+    asm volatile ("call ASM_load_mech_dat\n"
+        : "=r" (ret) : "a" (fname));
+    return ret;
+}
 
 void init_mech(void)
 {
+#if 0
     asm volatile ("call ASM_init_mech\n"
         :  :  : "eax" );
+#endif
+    u32 a1idx;
+    int i;
+    ushort owner;
+
+    unkn_mech_arr4 = &unkn_mech_stct7->field_3B0[0];
+    unkn_mech_arr5 = &unkn_mech_stct7->field_7DB0[0];
+    unkn_mech_arr1 = &unkn_mech_stct7->field_E7F0[0];
+    unkn_mech_arr6 = unkn_mech_stct7->field_12BF0;
+    unkn_mech_arr2 = &unkn_mech_stct7->field_12BF8[0];
+    unkn_mech_arr3 = &unkn_mech_stct7->field_0[0];
+    memset(unkn_mech_stct7, 0, sizeof(struct unkn_mech_struc7));
+
+    memset(&unkn_mech_mat8, 0, sizeof(struct M33));
+    unkn_mech_mat8.R[0][0] = 0x4000;
+    unkn_mech_mat8.R[1][1] = 0x4000;
+    unkn_mech_mat8.R[2][2] = 0x4000;
+
+    load_mech_dat("data/mech.dat");
+
+    for (owner = 0; owner < MECH_OWNER_LIMIT; owner++)
+    {
+        for (i = 0; i < 2; i++) {
+            unkn_mech_arr3[owner].field_73[i] = 0;
+        }
+    }
+    unkn_mech_arr3->field_6C = 0;
+    a1idx = unkn_mech_arr2[unkn_mech_arr3->field_6C].field_0;
+    unkn_mech_arr3->field_64 = a1idx;
+    unkn_mech_arr3->mech3_unkn_fld_54[2] = unkn_mech_arr1[a1idx].field_9;
+}
+
+void mech_gameturn_reinit(void)
+{
+    // Mech rocket coordinates should be recomputed later using proper matrix
+    // transforms; but to avoid them being unset, init to last body location
+    //TODO why do we think there is a chance of the coords not being properly updated from things?
+    mech_rocket1_launch_cor_x = mech_last_cor_x;
+    mech_rocket1_launch_cor_y = mech_last_cor_y;
+    mech_rocket1_launch_cor_z = mech_last_cor_z;
+
+    mech_rocket2_launch_cor_x = mech_last_cor_x;
+    mech_rocket2_launch_cor_y = mech_last_cor_y;
+    mech_rocket2_launch_cor_z = mech_last_cor_z;
 }
 
 TbBool vehicle_is_destroyed(ThingIdx thing)

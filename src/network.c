@@ -513,7 +513,7 @@ int ipx_join_session(struct IPXSessionList *p_ipxsess, char *a2)
             if (strcasecmp(p_plyrdt->Header.field_4, p_ipxsess->Session.Name) != 0)
                 continue;
 
-            for (k = 0; k < 8; k++)
+            for (k = 0; k < NET_PLAYERS_COUNT; k++)
             {
                 struct TbIPXOnePlayer *p_nplyr;
                 p_nplyr = &p_plyrdt->Data.Data3.player[k];
@@ -827,44 +827,45 @@ TbResult ipx_receive_packet_from_player_wait(int plyr, ubyte *data, int dtlen)
 
 int ipx_session_list_conv(struct TbNetworkSessionList *p_nslist, int listlen)
 {
-    struct TbNetworkSessionList *nslent;
+    struct TbNetworkSessionList *p_nslent;
     struct IPXSessionList ipxsess;
     int n_ent;
     int i, k;
 
     memset(&ipxsess, 0, sizeof(struct IPXSessionList));
 
-    nslent = p_nslist;
+    n_ent = 0;
+    p_nslent = p_nslist;
     for (i = 0; i < listlen; i++)
     {
         TbResult ret;
 
         ret = ipx_session_list(&ipxsess, 1);
-        memset(nslent, 0, sizeof(struct TbNetworkSessionList));
+        memset(p_nslent, 0, sizeof(struct TbNetworkSessionList));
         if (ret != Lb_SUCCESS)
             continue;
-        nslent->NumberOfPlayers = ipxsess.NumberOfPlayers;
-        nslent->Session.GameId = ipxsess.Session.GameId;
-        nslent->Session.HostPlayerNumber = ipxsess.Session.HostPlayerNumber;
-        strcpy(nslent->Session.Name, ipxsess.Session.Name);
+        p_nslent->NumberOfPlayers = ipxsess.NumberOfPlayers;
+        p_nslent->Session.GameId = ipxsess.Session.GameId;
+        p_nslent->Session.HostPlayerNumber = ipxsess.Session.HostPlayerNumber;
+        strcpy(p_nslent->Session.Name, ipxsess.Session.Name);
 
-        for (k = 0; k < 8; k++)
+        for (k = 0; k < NET_PLAYERS_COUNT; k++)
         {
             if (ipxsess.Player[k].Used)
             {
-                nslent->Player[k].Id = 1;
-                nslent->Player[k].PlayerNumber = k;
-                strcpy(nslent->Player[k].Name, ipxsess.Player[k].Name);
+                p_nslent->Player[k].Id = 1;
+                p_nslent->Player[k].PlayerNumber = k;
+                strcpy(p_nslent->Player[k].Name, ipxsess.Player[k].Name);
 
                 if (k == ipxsess.Session.HostPlayerNumber) {
-                    memcpy(&nslent->Session.Reserved[0], &ipxsess.Player[k].Res0, 4);
-                    memcpy(&nslent->Session.Reserved[4], &ipxsess.Player[k].Res4, 4);
-                    memcpy(&nslent->Session.Reserved[8], &ipxsess.Player[k].Res8, 2);
+                    memcpy(&p_nslent->Session.Reserved[0], &ipxsess.Player[k].Res0, 4);
+                    memcpy(&p_nslent->Session.Reserved[4], &ipxsess.Player[k].Res4, 4);
+                    memcpy(&p_nslent->Session.Reserved[8], &ipxsess.Player[k].Res8, 2);
                 }
             }
         }
         n_ent++;
-        nslent++;
+        p_nslent++;
     }
     return n_ent;
 }
@@ -2693,6 +2694,7 @@ TbResult LbCommSessionJoin(struct TbSerialDev *serhead, char *sess_name, const c
     TbResult ret;
 
     LOGDBG("Starting");
+    LbMemorySet(locstr, 0, sizeof(locstr));
     serhead->field_10A9 = 0;
     strcpy(&serhead->field_10AD[16], a2);
 

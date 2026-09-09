@@ -62,12 +62,6 @@ int autosave_game(void)
 
 ubyte show_menu_storage_slots_box(struct ScreenTextBox *p_box)
 {
-#if 0
-    ubyte ret;
-    asm volatile ("call ASM_show_menu_storage_slots_box\n"
-        : "=r" (ret) : "a" (p_box));
-    return ret;
-#endif
     short scr_x, scr_y;
     short i, k;
     char locstr[8];

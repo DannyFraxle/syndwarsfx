@@ -492,19 +492,20 @@ void players_init_default_control_mode(void)
     reset_user_input();
 
     for (plyr = 0; plyr < PLAYERS_LIMIT; plyr++) {
-      players[plyr].UserInput[0].ControlMode = UInpCtr_Mouse;
+        user_input_control_mode_set(plyr, 0, UInpCtr_Mouse);
     }
 }
 
 void set_default_player_control(void)
 {
     PlayerInfo *p_locplayer;
-    short i;
+    ubyte dmuser;
 
     p_locplayer = &players[local_player_no];
     p_locplayer->DoubleMode = 0;
-    for (i = 0; i < LOCAL_USERS_MAX_COUNT; i++) {
-        p_locplayer->UserInput[i].ControlMode = UInpCtr_Mouse;
+
+    for (dmuser = 0; dmuser < LOCAL_USERS_MAX_COUNT; dmuser++) {
+        user_input_control_mode_set(local_player_no, dmuser, UInpCtr_Mouse);
     }
 }
 
@@ -517,8 +518,8 @@ void player_target_clear(PlayerIdx plyr)
     p_player->TargetType = TrgTp_NONE;
 }
 
-void player_set_user_vect(PlayerIdx plyr, short plagent,
-  short vx, short vy, short vz)
+void player_agent_set_user_vect(PlayerIdx plyr, short plagent,
+  MapCoord vx, MapCoord vy, MapCoord vz)
 {
     PlayerInfo *p_player;
 
@@ -532,7 +533,7 @@ void player_set_user_vect(PlayerIdx plyr, short plagent,
     p_player->UserVZ[plagent] = vz;
 }
 
-void player_clear_user_vect(PlayerIdx plyr, short plagent)
+void player_agent_clear_user_vect(PlayerIdx plyr, short plagent)
 {
     PlayerInfo *p_player;
 
@@ -546,7 +547,22 @@ void player_clear_user_vect(PlayerIdx plyr, short plagent)
     p_player->UserVZ[plagent] = 0;
 }
 
-void player_clear_user_vect_y(PlayerIdx plyr, short plagent)
+MapCoord player_agent_clear_user_vect_y(PlayerIdx plyr, short plagent)
+{
+    PlayerInfo *p_player;
+    MapCoord vy;
+
+    assert(plyr < PLAYERS_LIMIT);
+    assert(plagent >= 0);
+    assert(plagent < LOCAL_USERS_MAX_COUNT);
+
+    p_player = &players[plyr];
+    vy = p_player->UserVY[plagent];
+    p_player->UserVY[plagent] = 0;
+    return vy;
+}
+
+void player_agent_get_user_vect(PlayerIdx plyr, short plagent, struct MapCoords *p_usrv)
 {
     PlayerInfo *p_player;
 
@@ -555,7 +571,10 @@ void player_clear_user_vect_y(PlayerIdx plyr, short plagent)
     assert(plagent < LOCAL_USERS_MAX_COUNT);
 
     p_player = &players[plyr];
-    p_player->UserVY[plagent] = 0;
+
+    p_usrv->X = p_player->UserVX[plagent];
+    p_usrv->Z = p_player->UserVZ[plagent];
+    p_usrv->Y = p_player->UserVY[plagent];
 }
 
 void kill_my_players(PlayerIdx plyr)

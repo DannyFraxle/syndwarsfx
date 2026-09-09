@@ -43,13 +43,24 @@ extern struct Thing thing_on_face;
 ubyte check_big_point_triangle(int x, int y, int ux, int uy, int vx, int vy, int wx, int wy)
 {
     ubyte ret;
+    // Pushed through a register holding them: a "g" operand may be placed
+    // relative to the stack pointer, which each push moves.
+    int stkargs[4];
+
+    stkargs[0] = (int)(intptr_t)vx;
+    stkargs[1] = (int)(intptr_t)vy;
+    stkargs[2] = (int)(intptr_t)wx;
+    stkargs[3] = (int)(intptr_t)wy;
+
     asm volatile (
-      "push %8\n"
-      "push %7\n"
-      "push %6\n"
-      "push %5\n"
+      "push 12(%5)\n"
+      "push 8(%5)\n"
+      "push 4(%5)\n"
+      "push 0(%5)\n"
       "call ASM_check_big_point_triangle\n"
-        : "=r" (ret) : "a" (x), "d" (y), "b" (ux), "c" (uy), "g" (vx), "g" (vy), "g" (wx), "g" (wy));
+        : "=r" (ret)
+        : "a" (x), "d" (y), "b" (ux), "c" (uy), "S" (stkargs)
+        : "cc", "memory");
     return ret;
 }
 

@@ -51,6 +51,10 @@
 #include "vehicle.h"
 #include "hwrender_glue.h"
 /******************************************************************************/
+const ushort pers_anims_wth_shadows[] = {
+  1, 33, 113, 241, 273, 161, 193, 721, 753, 321, 401, 433, 33,
+};
+
 extern ubyte byte_1C83E4;
 
 /** Callback for setting height of shadow corners.
@@ -144,7 +148,8 @@ void generate_shadows_for_multicolor_sprites(void)
       lbDisplay.GraphicsScreenWidth, 256);
     LbScreenClear(0);
 
-    draw_shadows_for_multicolor_sprites();
+    draw_shadows_for_multicolor_sprites(pers_anims_wth_shadows,
+      sizeof(pers_anims_wth_shadows)/sizeof(pers_anims_wth_shadows[0]));
 
     copy_from_screen_ani(vec_tmap[shadow_tmap_page]);
 
@@ -383,11 +388,12 @@ void build_person(struct Thing *p_thing)
     }
     else if (p_thing->U.UPerson.AnimMode == ANIM_PERS_DEAD_BODY)
     {
-        ushort stframe_old, stframe_new;
+        ushort sbfrm;
+        ushort angl;
 
-        stframe_old = p_thing->StartFrame + 1 + p_thing->U.UPerson.Angle;
-        stframe_new = p_thing->StartFrame + 1 + ((3 * p_thing->U.UPerson.Angle >> 1) + 12 - byte_176D4A) % 12;
-        frame = p_thing->Frame + nstart_ani[stframe_new] - nstart_ani[stframe_old];
+        sbfrm = get_person_anim_subframe(p_thing);
+        angl = ((3 * p_thing->U.UPerson.Angle >> 1) + 12 - byte_176D4A) % 12;
+        frame = nstart_ani[p_thing->StartFrame + 1 + angl] + sbfrm;
         bri = p_thing->U.UPerson.Brightness;
     }
     else if ((p_thing->Flag & TngF_Unkn02000000) != 0)
@@ -401,16 +407,12 @@ void build_person(struct Thing *p_thing)
     }
     else
     {
-        ushort stframe_old, stframe_new;
+        ushort sbfrm;
+        ushort angl;
 
-        stframe_old = p_thing->StartFrame + 1 + p_thing->U.UPerson.Angle;
-        stframe_new = p_thing->StartFrame + 1 + ((p_thing->U.UObject.Angle + 8 - byte_176D49) & 7);
-        // Allow increment the frame by the currently set frame, but do not allow decrement
-        // Use abs instead of max, to make animation visible even if the difference is negative
-        //TODO would be better if a negative frame difference was fixed by states properly updating the Frame
-        // The issue workarounded by this is reproducible on stress test level 0,109 - police can
-        // look like exploding while still alive; may be related to multiple pushes by explosions
-        frame = abs(p_thing->Frame - (int)nstart_ani[stframe_old]) + nstart_ani[stframe_new];
+        sbfrm = get_person_anim_subframe(p_thing);
+        angl = (p_thing->U.UObject.Angle + 8 - byte_176D49) & 7;
+        frame = nstart_ani[p_thing->StartFrame + 1 + angl] + sbfrm;
         bri = p_thing->U.UPerson.Brightness;
     }
 
@@ -511,9 +513,9 @@ void build_building(struct Thing *p_thing)
             return;
     }
 
-    if (gameturn == p_thing->U.UObject.DrawTurn)
+    if (drawturn == p_thing->U.UObject.DrawTurn)
         return;
-    p_thing->U.UObject.DrawTurn = gameturn;
+    p_thing->U.UObject.DrawTurn = drawturn;
 
     if (p_thing->SubType == SubTT_BLD_BILLBOARD)
     {
@@ -650,13 +652,23 @@ void build_unkn18(struct Thing *p_thing)
 
 void build_electricity(int x1, int y1, int z1, int x2, int y2, int z2, int itime, struct Thing *p_owner)
 {
+    // Pushed through a register holding them: a "g" operand may be placed
+    // relative to the stack pointer, which each push moves.
+    int stkargs[4];
+
+    stkargs[0] = (int)(intptr_t)y2;
+    stkargs[1] = (int)(intptr_t)z2;
+    stkargs[2] = (int)(intptr_t)itime;
+    stkargs[3] = (int)(intptr_t)p_owner;
+
     asm volatile (
-      "push %7\n"
-      "push %6\n"
-      "push %5\n"
-      "push %4\n"
+      "push 12(%4)\n"
+      "push 8(%4)\n"
+      "push 4(%4)\n"
+      "push 0(%4)\n"
       "call ASM_build_electricity\n"
-        : : "a" (x1), "d" (y1), "b" (z1), "c" (x2), "g" (y2), "g" (z2), "g" (itime), "g" (p_owner));
+        : : "a" (x1), "d" (y1), "b" (z1), "c" (x2), "S" (stkargs)
+        : "cc", "memory");
 }
 
 void build_laser_elec(struct Thing *p_thing)
@@ -715,24 +727,44 @@ void build_nuclear_bomb(struct SimpleThing *p_sthing)
 
 void build_laser_beam(int x1, int y1, int z1, int x2, int y2, int z2, int itime, struct Thing *p_owner)
 {
+    // Pushed through a register holding them: a "g" operand may be placed
+    // relative to the stack pointer, which each push moves.
+    int stkargs[4];
+
+    stkargs[0] = (int)(intptr_t)y2;
+    stkargs[1] = (int)(intptr_t)z2;
+    stkargs[2] = (int)(intptr_t)itime;
+    stkargs[3] = (int)(intptr_t)p_owner;
+
     asm volatile (
-      "push %7\n"
-      "push %6\n"
-      "push %5\n"
-      "push %4\n"
+      "push 12(%4)\n"
+      "push 8(%4)\n"
+      "push 4(%4)\n"
+      "push 0(%4)\n"
       "call ASM_build_laser_beam\n"
-        : : "a" (x1), "d" (y1), "b" (z1), "c" (x2), "g" (y2), "g" (z2), "g" (itime), "g" (p_owner));
+        : : "a" (x1), "d" (y1), "b" (z1), "c" (x2), "S" (stkargs)
+        : "cc", "memory");
 }
 
 void build_laser_beam_q(int x1, int y1, int z1, int x2, int y2, int z2, int itime, struct Thing *p_owner)
 {
+    // Pushed through a register holding them: a "g" operand may be placed
+    // relative to the stack pointer, which each push moves.
+    int stkargs[4];
+
+    stkargs[0] = (int)(intptr_t)y2;
+    stkargs[1] = (int)(intptr_t)z2;
+    stkargs[2] = (int)(intptr_t)itime;
+    stkargs[3] = (int)(intptr_t)p_owner;
+
     asm volatile (
-      "push %7\n"
-      "push %6\n"
-      "push %5\n"
-      "push %4\n"
+      "push 12(%4)\n"
+      "push 8(%4)\n"
+      "push 4(%4)\n"
+      "push 0(%4)\n"
       "call ASM_build_laser_beam_q\n"
-        : : "a" (x1), "d" (y1), "b" (z1), "c" (x2), "g" (y2), "g" (z2), "g" (itime), "g" (p_owner));
+        : : "a" (x1), "d" (y1), "b" (z1), "c" (x2), "S" (stkargs)
+        : "cc", "memory");
 }
 
 void build_laser29(struct Thing *p_thing)
@@ -757,13 +789,23 @@ void build_electricity_strand(struct SimpleThing *p_sthing, ubyte itime)
 
 void build_razor_wire_strand(int x1, int y1, int z1, int x2, int y2, int z2, int itime, struct Thing *p_owner)
 {
+    // Pushed through a register holding them: a "g" operand may be placed
+    // relative to the stack pointer, which each push moves.
+    int stkargs[4];
+
+    stkargs[0] = (int)(intptr_t)y2;
+    stkargs[1] = (int)(intptr_t)z2;
+    stkargs[2] = (int)(intptr_t)itime;
+    stkargs[3] = (int)(intptr_t)p_owner;
+
     asm volatile (
-      "push %7\n"
-      "push %6\n"
-      "push %5\n"
-      "push %4\n"
+      "push 12(%4)\n"
+      "push 8(%4)\n"
+      "push 4(%4)\n"
+      "push 0(%4)\n"
       "call ASM_build_razor_wire_strand\n"
-        : : "a" (x1), "d" (y1), "b" (z1), "c" (x2), "g" (y2), "g" (z2), "g" (itime), "g" (p_owner));
+        : : "a" (x1), "d" (y1), "b" (z1), "c" (x2), "S" (stkargs)
+        : "cc", "memory");
 }
 
 void build_soul(struct SimpleThing *p_sthing)

@@ -84,7 +84,7 @@ TbResult prepare_unique_file_name(char *out_fname, const char *dir_base,
 
 void LbSetImagesDirectory(const char *dir_name)
 {
-    strncpy(dir_images, dir_name, sizeof(dir_images));
+    strncpy(dir_images, dir_name, sizeof(dir_images)-1);
 }
 
 TbResult LbPrepareImageFilename(char *out_fname, const char *fn_base,

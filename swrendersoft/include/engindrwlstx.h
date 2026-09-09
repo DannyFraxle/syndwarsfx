@@ -260,7 +260,22 @@ void hwr_run_sprite_pick(ushort sspr, ubyte ditype);
 
 void draw_frame_scaled_alpha(int scr_x, int scr_y, ushort frm,
   ushort scale, ushort alpha);
-void draw_sorted_sprite1a(ushort frm, short x, short y, ubyte csel);
+
+/** Draw given frame, standing at given position and with brightness.
+ *
+ * Draw all elements of given frame. The given coords on screen represent
+ * the position at which the drawn object stands - so it is generally bottom
+ * center, but pixels can be drawn below that position if the drawn thing
+ * has part of it in front of the point of standing.
+ * Honors overall_scale when sizing the frame.
+ *
+ * @param frm Frame to be drawn.
+ * @param x On-screen Coordinate of the standing position.
+ * @param y On-screen Coordinate of the standing position.
+ * @param bright Brightness of the drawn sprite.
+ */
+void draw_sorted_sprite1a(ushort frm, short x, short y, ubyte bright);
+
 void draw_sort_sprite1a(ushort sspr);
 
 void draw_floor_tile1a(ushort tl);

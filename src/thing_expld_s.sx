@@ -1,0 +1,670 @@
+
+#ifdef NEED_UNDERSCORE
+# define TRANSFORM_SYMBOLS
+# define EXPORT_SYMBOL(sym) _ ## sym
+#else
+# define EXPORT_SYMBOL(sym) sym
+#endif
+
+#ifndef TRANSFORM_SYMBOLS
+
+# define GLOBAL(sym) \
+  .global sym; \
+  sym ##:
+
+# define GLOBAL_FUNC(sym) \
+  GLOBAL (sym)
+
+#else
+
+# define GLOBAL(sym) \
+  .global EXPORT_SYMBOL (sym); \
+  EXPORT_SYMBOL (sym) ##: \
+  sym ##:
+
+# define GLOBAL_FUNC(sym) \
+  .global sym; \
+  GLOBAL (sym)
+
+#endif
+
+
+.text
+
+.global EXPORT_SYMBOL(ingame);
+
+.global EXPORT_SYMBOL(things);
+.global EXPORT_SYMBOL(sthings);
+.global EXPORT_SYMBOL(colour_lookup);
+
+.global EXPORT_SYMBOL(things_used);
+.global EXPORT_SYMBOL(things_used_head);
+
+
+vtable_e061c:
+		.long   func_e06d8
+		.long   func_e06d5
+		.long   func_e06d2
+		.long   func_e06cf
+		.long   func_e06cc
+		.long   func_e06c9
+		.long   func_e06c6
+		.long   func_e06c1
+
+vtable_e063c:
+		.long   func_e0a0e
+		.long   func_e0a2c
+		.long   func_e0a4a
+		.long   func_e0a4a
+		.long   func_e0a4a
+		.long   func_e0a2c
+		.long   func_e0a68
+		.long   func_e0a2c
+		.long   func_e0a4a
+		.long   func_e0a2c
+		.long   func_e0a86
+		.long   func_e0a68
+		.long   func_e0a86
+		.long   func_e0a68
+		.long   func_e0a2c
+		.long   func_e0a4a
+		.long   func_e0a2c
+		.long   func_e0a4a
+		.long   func_e0a2c
+		.long   func_e0a2c
+		.long   func_e0a4a
+		.long   func_e0a2c
+		.long   func_e0a2c
+		.long   func_e0a2c
+		.long   func_e0a2c
+		.long   func_e0a2c
+
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC(ASM_process_things_unkn_sub2)	/* 0x0E06A4 */
+/*----------------------------------------------------------------*/
+		push   %ebx
+		push   %ecx
+		push   %esi
+		push   %ebp
+		sub    $0x4,%esp
+		mov    %edx,%ecx
+		dec    %eax
+		xor    %ebx,%ebx
+		cmp    $0x7,%eax
+		ja     jump_e08d6
+		jmp    *%cs:vtable_e061c(,%eax,4)
+
+
+func_e06c1:
+		mov    $0x8,%ebx
+
+
+func_e06c6:
+		add    $0x15,%ebx
+
+
+func_e06c9:
+		add    $0x2a,%ebx
+
+
+func_e06cc:
+		add    $0x24,%ebx
+
+
+func_e06cf:
+		add    $0x15,%ebx
+
+
+func_e06d2:
+		add    $0xd,%ebx
+
+
+func_e06d5:
+		add    $0xd,%ebx
+
+
+func_e06d8:
+		add    $0x4,%ebx
+		je     jump_e08d6
+		xor    %edx,%edx
+		call   ac_LbRandomAnyShort
+		mov    %ax,%dx
+		mov    %edx,%eax
+		sar    $0x1f,%edx
+		idiv   %ebx
+		test   %edx,%edx
+		jge    jump_e0702
+		movl   $0x1,(%esp)
+		jmp    jump_e08c9
+	jump_e0702:
+		cmp    $0x2,%edx
+		jge    jump_e0713
+		movl   $0x2,(%esp)
+		jmp    jump_e08c9
+	jump_e0713:
+		sub    $0x2,%edx
+		cmp    $0x2,%edx
+		jge    jump_e0727
+		movl   $0x12,(%esp)
+		jmp    jump_e08c9
+	jump_e0727:
+		sub    $0x2,%edx
+		cmp    $0x3,%edx
+		jge    jump_e073b
+		movl   $0x1b,(%esp)
+		jmp    jump_e08c9
+	jump_e073b:
+		sub    $0x3,%edx
+		cmp    $0x4,%edx
+		jge    jump_e074f
+		movl   $0x7,(%esp)
+		jmp    jump_e08c9
+	jump_e074f:
+		sub    $0x4,%edx
+		cmp    $0x6,%edx
+		jge    jump_e0763
+		movl   $0xb,(%esp)
+		jmp    jump_e08c9
+	jump_e0763:
+		sub    $0x6,%edx
+		cmp    $0x5,%edx
+		jge    jump_e0777
+		movl   $0xa,(%esp)
+		jmp    jump_e08c9
+	jump_e0777:
+		sub    $0x5,%edx
+		cmp    $0x4,%edx
+		jge    jump_e078b
+		movl   $0x4,(%esp)
+		jmp    jump_e08c9
+	jump_e078b:
+		sub    $0x4,%edx
+		cmp    $0x4,%edx
+		jge    jump_e079f
+		movl   $0x3,(%esp)
+		jmp    jump_e08c9
+	jump_e079f:
+		sub    $0x4,%edx
+		cmp    $0x6,%edx
+		jge    jump_e07b3
+		movl   $0x8,(%esp)
+		jmp    jump_e08c9
+	jump_e07b3:
+		sub    $0x6,%edx
+		cmp    $0x8,%edx
+		jge    jump_e07c7
+		movl   $0xd,(%esp)
+		jmp    jump_e08c9
+	jump_e07c7:
+		sub    $0x8,%edx
+		cmp    $0x7,%edx
+		jge    jump_e07db
+		movl   $0xc,(%esp)
+		jmp    jump_e08c9
+	jump_e07db:
+		sub    $0x7,%edx
+		cmp    $0xa,%edx
+		jge    jump_e07ef
+		movl   $0x1a,(%esp)
+		jmp    jump_e08c9
+	jump_e07ef:
+		sub    $0xa,%edx
+		cmp    $0xd,%edx
+		jge    jump_e0803
+		movl   $0xf,(%esp)
+		jmp    jump_e08c9
+	jump_e0803:
+		sub    $0xd,%edx
+		cmp    $0xd,%edx
+		jge    jump_e0817
+		movl   $0x5,(%esp)
+		jmp    jump_e08c9
+	jump_e0817:
+		sub    $0xd,%edx
+		cmp    $0xf,%edx
+		jge    jump_e082b
+		movl   $0x6,(%esp)
+		jmp    jump_e08c9
+	jump_e082b:
+		sub    $0xf,%edx
+		cmp    $0x8,%edx
+		jge    jump_e083f
+		movl   $0x16,(%esp)
+		jmp    jump_e08c9
+	jump_e083f:
+		sub    $0x8,%edx
+		cmp    $0xd,%edx
+		jge    jump_e0853
+		movl   $0x1c,(%esp)
+		jmp    jump_e08c9
+	jump_e0853:
+		sub    $0xd,%edx
+		cmp    $0x6,%edx
+		jge    jump_e0867
+		movl   $0x15,(%esp)
+		jmp    jump_e08c9
+	jump_e0867:
+		sub    $0x6,%edx
+		cmp    $0x5,%edx
+		jge    jump_e087b
+		movl   $0x19,(%esp)
+		jmp    jump_e08c9
+	jump_e087b:
+		sub    $0x5,%edx
+		cmp    $0x8,%edx
+		jge    jump_e088f
+		movl   $0x10,(%esp)
+		jmp    jump_e08c9
+	jump_e088f:
+		sub    $0x8,%edx
+		cmp    $0x8,%edx
+		jge    jump_e08a3
+		movl   $0x1d,(%esp)
+		jmp    jump_e08c9
+	jump_e08a3:
+		sub    $0x8,%edx
+		cmp    $0x8,%edx
+		jge    jump_e08b7
+		movl   $0x11,(%esp)
+		jmp    jump_e08c9
+	jump_e08b7:
+		sub    $0x8,%edx
+		test   %edx,%edx
+		jge    jump_e08d6
+		movl   $0x14,(%esp)
+	jump_e08c9:
+		test   %ecx,%ecx
+		jbe    jump_e08de
+		cmp    $0x1,%ecx
+		je     jump_e0979
+	jump_e08d6:
+		add    $0x4,%esp
+		pop    %ebp
+		pop    %esi
+		pop    %ecx
+		pop    %ebx
+		ret
+	jump_e08de:
+		mov    $0x1e0,%ecx
+	jump_e08e3:
+		xor    %edx,%edx
+		call   ac_LbRandomAnyShort
+		mov    %ax,%dx
+		mov    %edx,%eax
+		sar    $0x1f,%edx
+		idiv   %ecx
+		mov    %edx,%esi
+		xor    %edx,%edx
+		call   ac_LbRandomAnyShort
+		mov    %ax,%dx
+		mov    %edx,%eax
+		sar    $0x1f,%edx
+		idiv   %ecx
+		add    $0x10,%esi
+		lea    0x10(%edx),%ebx
+		shl    $0xe,%esi
+		shl    $0xe,%ebx
+		mov    %esi,%eax
+		mov    %ebx,%edx
+		call   ASM_is_this_a_nice_place_for_a_picnic
+		test   %eax,%eax
+		je     jump_e08e3
+		sar    $0x8,%ebx
+		sar    $0x8,%esi
+		movswl %bx,%edx
+		movswl %si,%eax
+		call   ac_alt_at_point
+		mov    %eax,%edx
+		xor    %eax,%eax
+		mov    (%esp),%al
+		mov    $0x3ec,%ecx
+		push   %eax
+		sar    $0x8,%edx
+		mov    %esi,%eax
+		call   ac_create_item
+		mov    %eax,%edx
+		test   %eax,%eax
+		je     jump_e08d6
+		mov    (%esp),%eax
+		cmp    $0xc,%eax
+		je     jump_e095f
+		cmp    $0xd,%eax
+		jne    jump_e08d6
+	jump_e095f:
+		movw   $0x32,0x14(%edx)
+		movw   $0x3e7,0x28(%edx)
+		movw   $0x3e7,0x2a(%edx)
+		add    $0x4,%esp
+		pop    %ebp
+		pop    %esi
+		pop    %ecx
+		pop    %ebx
+		ret
+	jump_e0979:
+		mov    EXPORT_SYMBOL(sthings_empty_head),%edx
+		xor    %ecx,%ecx
+		sar    $0x10,%edx
+		mov    EXPORT_SYMBOL(sthings_used),%cx
+		test   %edx,%edx
+		jle    jump_e08d6
+	jump_e0993:
+		dec    %ecx
+		cmp    $0xffffffff,%ecx
+		je     jump_e08d6
+		imul   $0x3c,%edx,%edx
+		mov    EXPORT_SYMBOL(sthings),%eax
+		add    %eax,%edx
+		xor    %eax,%eax
+		mov    0x9(%edx),%al
+		cmp    $0x19,%eax
+		jne    jump_e09fc
+		call   ac_LbRandomAnyShort
+		test   $0x3,%al
+		jne    jump_e09fc
+		xor    %esi,%esi
+		mov    (%esp),%ebx
+		mov    0x2c(%edx),%si
+		test   %ebx,%ebx
+		jl     jump_e09dd
+		cmp    $0x1f,%ebx
+		jg     jump_e09dd
+		test   %esi,%esi
+		jl     jump_e09dd
+		cmp    $0x1f,%esi
+		jle    jump_e09e1
+	jump_e09dd:
+		xor    %ebx,%ebx
+		jmp    jump_e09f6
+	jump_e09e1:
+		mov    data_155d54(%ebx),%bl
+		cmp    data_155d54(%esi),%bl
+		seta   %bl
+		and    $0xff,%ebx
+	jump_e09f6:
+		jne    jump_e0aa4
+	jump_e09fc:
+		mov    0x4(%edx),%edx
+		sar    $0x10,%edx
+		test   %edx,%edx
+		jg     jump_e0993
+		add    $0x4,%esp
+		pop    %ebp
+		pop    %esi
+		pop    %ecx
+		pop    %ebx
+		ret
+
+
+/*----------------------------------------------------------------*/
+func_e0a0e:
+/*----------------------------------------------------------------*/
+		mov    EXPORT_SYMBOL(nstart_ani),%eax
+		mov    0x846(%eax),%ax
+		movw   $0x422,0x26(%edx)
+		mov    %ax,0x24(%edx)
+		add    $0x4,%esp
+		pop    %ebp
+		pop    %esi
+		pop    %ecx
+		pop    %ebx
+		ret
+
+
+/*----------------------------------------------------------------*/
+func_e0a2c:
+/*----------------------------------------------------------------*/
+		mov    EXPORT_SYMBOL(nstart_ani),%eax
+		mov    0x7d8(%eax),%ax
+		movw   $0x3eb,0x26(%edx)
+		mov    %ax,0x24(%edx)
+		add    $0x4,%esp
+		pop    %ebp
+		pop    %esi
+		pop    %ecx
+		pop    %ebx
+		ret
+
+
+/*----------------------------------------------------------------*/
+func_e0a4a:
+/*----------------------------------------------------------------*/
+		mov    EXPORT_SYMBOL(nstart_ani),%eax
+		mov    0x840(%eax),%ax
+		movw   $0x41f,0x26(%edx)
+		mov    %ax,0x24(%edx)
+		add    $0x4,%esp
+		pop    %ebp
+		pop    %esi
+		pop    %ecx
+		pop    %ebx
+		ret
+
+
+/*----------------------------------------------------------------*/
+func_e0a68:
+/*----------------------------------------------------------------*/
+		mov    EXPORT_SYMBOL(nstart_ani),%eax
+		mov    0x880(%eax),%ax
+		movw   $0x43f,0x26(%edx)
+		mov    %ax,0x24(%edx)
+		add    $0x4,%esp
+		pop    %ebp
+		pop    %esi
+		pop    %ecx
+		pop    %ebx
+		ret
+
+
+/*----------------------------------------------------------------*/
+func_e0a86:
+/*----------------------------------------------------------------*/
+		mov    EXPORT_SYMBOL(nstart_ani),%eax
+		mov    0x882(%eax),%ax
+		movw   $0x440,0x26(%edx)
+		mov    %ax,0x24(%edx)
+		add    $0x4,%esp
+		pop    %ebp
+		pop    %esi
+		pop    %ecx
+		pop    %ebx
+		ret
+	jump_e0aa4:
+		mov    (%esp),%eax
+		mov    (%esp),%ebp
+		mov    %ax,0x2c(%edx)
+		cmp    $0x19,%ebp
+		ja     func_e0a2c
+		mov    %ebp,%eax
+		jmp    *%cs:vtable_e063c(,%eax,4)
+
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC(ASM_process_things_bang)	/* 0x0E0AC4 */
+/*----------------------------------------------------------------*/
+		push   %ebx
+		push   %ecx
+		push   %edx
+		push   %esi
+		push   %edi
+		push   %ebp
+		sub    $0x4,%esp
+		mov    %eax,%ebp
+		xor    %eax,%eax
+		xor    %edi,%edi
+		mov    EXPORT_SYMBOL(things_used),%ax
+		mov    EXPORT_SYMBOL(things_used_head),%di
+		mov    %eax,(%esp)
+		test   %edi,%edi
+		jle    jump_e0b8d
+	jump_e0aeb:
+		mov    (%esp),%edx
+		dec    %edx
+		mov    %edx,(%esp)
+		cmp    $0xffffffff,%edx
+		je     jump_e0b8d
+		imul   $0xa8,%edi,%esi
+		mov    EXPORT_SYMBOL(things),%eax
+		add    %eax,%esi
+		mov    0x4(%esi),%edi
+		mov    0xc(%esi),%ah
+		sar    $0x10,%edi
+		test   $0x2,%ah
+		je     jump_e0b7c
+		call   ac_LbRandomAnyShort
+		test   $0x3,%al
+		jne    jump_e0b7c
+		xor    %eax,%eax
+		mov    0x9(%esi),%al
+		cmp    $0x3,%eax
+		jne    jump_e0b3e
+		testb  $0x20,0xd(%esi)
+		jne    jump_e0b3e
+		xor    %eax,%eax
+		mov    0xa(%esi),%ax
+		cmp    $0xd,%eax
+		je     jump_e0b52
+	jump_e0b3e:
+		xor    %eax,%eax
+		mov    0x9(%esi),%al
+		cmp    $0xf,%eax
+		jne    jump_e0b7c
+		xor    %eax,%eax
+		mov    0x8(%esi),%al
+		cmp    $0x30,%eax
+		jne    jump_e0b7c
+	jump_e0b52:
+		mov    $0x37,%ecx
+		mov    0x18(%esi),%eax
+		mov    0x1c(%esi),%edx
+		mov    0x20(%esi),%ebx
+		call   ac_bang_new4
+		mov    %esi,%eax
+		call   ac_delete_node
+		xor    %eax,%eax
+		mov    0x16(%esi),%ax
+		dec    %ebp
+		call   ac_remove_thing
+		test   %ebp,%ebp
+		jle    jump_e0b86
+	jump_e0b7c:
+		test   %edi,%edi
+		jg     jump_e0aeb
+		jmp    jump_e0b8d
+	jump_e0b86:
+		mov    $0x1,%eax
+		jmp    jump_e0b8f
+	jump_e0b8d:
+		xor    %eax,%eax
+	jump_e0b8f:
+		add    $0x4,%esp
+		pop    %ebp
+		pop    %edi
+		pop    %esi
+		pop    %edx
+		pop    %ecx
+		pop    %ebx
+		ret
+
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC(ASM_process_things_mines_explode)	/* 0x0E0B9C */
+/*----------------------------------------------------------------*/
+		push   %ebx
+		push   %ecx
+		push   %edx
+		push   %esi
+		push   %edi
+		push   %ebp
+		sub    $0x8,%esp
+		mov    %eax,%edi
+		xor    %eax,%eax
+		mov    $0x258,%edx
+		mov    EXPORT_SYMBOL(ingame)+0x993,%ax # ingame.fld_unkCB7
+		sub    %eax,%edx
+		mov    %edx,(%esp)
+		cmp    $0x1e,%edx
+		jge    jump_e0bc5
+		movl   $0x1e,(%esp)
+	jump_e0bc5:
+		mov    EXPORT_SYMBOL(sthings_empty_head),%eax
+		sar    $0x10,%eax
+		movzwl EXPORT_SYMBOL(sthings_used),%ebp
+		test   %eax,%eax
+		jge    jump_e0c76
+	jump_e0bdc:
+		dec    %ebp
+		cmp    $0xffffffff,%ebp
+		je     jump_e0c76
+		imul   $0x3c,%eax,%eax
+		mov    EXPORT_SYMBOL(sthings),%esi
+		add    %eax,%esi
+		mov    0x4(%esi),%eax
+		sar    $0x10,%eax
+		mov    %eax,0x4(%esp)
+		xor    %eax,%eax
+		mov    0x9(%esi),%al
+		cmp    $0x19,%eax
+		je     jump_e0c5d
+		jmp    jump_e0c6a
+	jump_e0c07:
+		call   ac_LbRandomAnyShort
+		test   $0x1,%al
+		jne    jump_e0c6a
+	jump_e0c10:
+		xor    %eax,%eax
+		mov    (%esp),%edx
+		mov    0x30(%esi),%ax
+		cmp    %edx,%eax
+		jl     jump_e0c6a
+		mov    $0x37,%ecx
+		mov    0x18(%esi),%eax
+		mov    0x1c(%esi),%edx
+		mov    0x20(%esi),%ebx
+		call   ac_bang_new4
+		mov    %esi,%eax
+		call   ac_delete_snode
+		mov    0x14(%esi),%eax
+		sar    $0x10,%eax
+		call   ac_remove_sthing
+		mov    EXPORT_SYMBOL(ingame)+0x993,%dx # ingame.fld_unkCB7
+		dec    %edx
+		dec    %edi
+		mov    %dx,EXPORT_SYMBOL(ingame)+0x993 # ingame.fld_unkCB7
+		test   %edi,%edi
+		jg     jump_e0c6a
+		mov    $0x1,%eax
+		jmp    jump_e0c78
+	jump_e0c5d:
+		mov    0x8(%esi),%al
+		cmp    $0x1b,%al
+		jb     jump_e0c10
+		cmp    $0x1c,%al
+		jbe    jump_e0c07
+		jmp    jump_e0c10
+	jump_e0c6a:
+		mov    0x4(%esp),%eax
+		test   %eax,%eax
+		jl     jump_e0bdc
+	jump_e0c76:
+		xor    %eax,%eax
+	jump_e0c78:
+		add    $0x8,%esp
+		pop    %ebp
+		pop    %edi
+		pop    %esi
+		pop    %edx
+		pop    %ecx
+		pop    %ebx
+		ret
+
+
+/*----------------------------------------------------------------*/
+
+.data
+
+data_155d54:
+		.ascii  "\x00\x01\x02\x05\x06\x0e\x13\x04"
+		.ascii  "\x08\x00\x0d\x14\x12\x11\x10\x0f"
+		.ascii  "\x0b\x00\x03\x00\x00\x00\x0e\x00"
+		.ascii  "\x0a\x09\x15\x07\x0b\x11\x00\x00"

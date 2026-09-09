@@ -155,9 +155,14 @@ jobs:
               mingw-w64-i686-autotools
               mingw-w64-i686-libpng
               mingw-w64-i686-SDL2
-              mingw-w64-i686-openal
               mingw-w64-i686-libvorbis
               mingw-w64-i686-libogg
+
+      - name: Manual install of extra MSYS2 packages
+        run: |
+          # package no longer supported: mingw-w64-i686-openal
+          pacman -U --noconfirm https://repo.msys2.org/mingw/mingw32/mingw-w64-i686-libmysofa-1.3.4-1-any.pkg.tar.zst
+          pacman -U --noconfirm https://repo.msys2.org/mingw/mingw32/mingw-w64-i686-openal-1.25.2-1-any.pkg.tar.zst
 
       - name: Install python modules
         run: |
@@ -165,11 +170,11 @@ jobs:
 
       - name: Install WildMIDI
         run: |
-          wget https://github.com/Mindwerks/wildmidi/releases/download/wildmidi-0.4.5/wildmidi-0.4.5-win32.zip
-          unzip wildmidi-0.4.5-win32.zip
-          cp wildmidi-0.4.5-win32/*.h /mingw32/include/
-          cp wildmidi-0.4.5-win32/*.a /mingw32/lib/
-          cp wildmidi-0.4.5-win32/*.dll /mingw32/bin/
+          wget https://github.com/Mindwerks/wildmidi/releases/download/wildmidi-0.5.0/wildmidi-0.5.0-windows.zip
+          unzip wildmidi-0.5.0-windows.zip
+          cp wildmidi-0.5.0-windows/include/*.h /mingw32/include/
+          cp wildmidi-0.5.0-windows/x86/*.a /mingw32/lib/
+          cp wildmidi-0.5.0-windows/x86/*.dll /mingw32/bin/
 
       - name: Autoreconf
         run: autoreconf -ivf
@@ -251,9 +256,9 @@ jobs:
         working-directory: ${{ runner.workspace }}
         run: |
           mkdir -p "${DL_WORKSPACE}"
-          wget -O "${DL_WORKSPACE}\\Inetc.zip" --retry-connrefused --retry-on-http-error=403 --waitretry=20 --auth-no-challenge --referer="https://nsis.sourceforge.io/Inetc_plug-in" "https://nsis.sourceforge.io/mediawiki/images/c/c9/Inetc.zip"
-          wget -O "${DL_WORKSPACE}\\NSISunzU.zip" --retry-connrefused --retry-on-http-error=403 --waitretry=20 --auth-no-challenge --referer="https://nsis.sourceforge.io/Nsisunz_plug-in" "https://nsis.sourceforge.io/mediawiki/images/5/5a/NSISunzU.zip"
-          wget -O "${DL_WORKSPACE}\\Md5dll.zip" --retry-connrefused --retry-on-http-error=403 --waitretry=20 --auth-no-challenge --referer="https://nsis.sourceforge.io/MD5_plugin" "https://nsis.sourceforge.io/mediawiki/images/d/d7/Md5dll.zip"
+          wget -O "${DL_WORKSPACE}\\Inetc.zip" --retry-connrefused --retry-on-http-error=403,503,504  --waitretry=20 --auth-no-challenge --referer="https://nsis.sourceforge.io/Inetc_plug-in" "https://nsis.sourceforge.io/mediawiki/images/c/c9/Inetc.zip"
+          wget -O "${DL_WORKSPACE}\\NSISunzU.zip" --retry-connrefused --retry-on-http-error=403,503,504 --waitretry=20 --auth-no-challenge --referer="https://nsis.sourceforge.io/Nsisunz_plug-in" "https://nsis.sourceforge.io/mediawiki/images/5/5a/NSISunzU.zip"
+          wget -O "${DL_WORKSPACE}\\Md5dll.zip" --retry-connrefused --retry-on-http-error=403,503,504 --waitretry=20 --auth-no-challenge --referer="https://nsis.sourceforge.io/MD5_plugin" "https://nsis.sourceforge.io/mediawiki/images/d/d7/Md5dll.zip"
 
       - name: Download installer utils
         # Instead of the usual actions/download-artifact, we are downloading from Mega

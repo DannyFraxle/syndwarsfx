@@ -39,6 +39,7 @@ struct Thing;
 #pragma pack()
 /******************************************************************************/
 
+void bang_init(void);
 void new_bang(int x, int y, int z, int type, int owner, int c);
 void bang_new5(int x, int y, int z, int type, int owner);
 void bang_new4(int x, int y, int z, int type);

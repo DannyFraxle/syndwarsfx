@@ -36,6 +36,7 @@
 #include "engincam.h"
 #include "engincolour.h"
 #include "enginpeff.h"
+#include "enginprops.h"
 #include "engintxtrmap.h"
 #include "render_gpoly.h"
 
@@ -63,6 +64,9 @@
 #include "hwrender_glue.h"
 /******************************************************************************/
 extern long dword_1DC36C;
+
+extern char player_message_text[PLAYERS_LIMIT][128];
+extern ubyte player_message_timer[PLAYERS_LIMIT];
 
 /** Over which agent weapon the cursor is currently placed.
  *
@@ -412,6 +416,49 @@ void SCANNER_move_objective_info(int width, int height, int end_pos)
     }
 }
 
+void player_message_clear(PlayerIdx plyr)
+{
+    player_message_timer[plyr] = 0;
+    player_message_text[plyr][0] =  '\0';
+}
+
+void player_chat_clear(void)
+{
+    PlayerIdx plyr;
+
+    for (plyr = 0; plyr < PLAYERS_LIMIT; plyr++)
+    {
+        player_message_clear(plyr);
+    }
+}
+
+void player_message_timer_tick(PlayerIdx plyr)
+{
+    player_message_timer[plyr]--;
+    if (player_message_timer[plyr] == 0) {
+        player_message_text[plyr][0] = '\0';
+    }
+}
+
+TbBool player_message_add_allowed(PlayerIdx plyr)
+{
+    return player_message_timer[plyr] <= 140;
+}
+
+static void player_message_fmt_va(PlayerIdx plyr, const char *fmt, va_list arg)
+{
+    vsnprintf(player_message_text[plyr], sizeof(player_message_text[0]), fmt, arg);
+    player_message_timer[plyr] = 150;
+}
+
+void player_message_fmt(PlayerIdx plyr, const char *fmt, ...)
+{
+    va_list val;
+    va_start(val, fmt);
+    player_message_fmt_va(plyr, fmt, val);
+    va_end(val);
+}
+
 void draw_players_chat_talk(int x, int y)
 {
     char locstr[164];
@@ -429,26 +476,27 @@ void draw_players_chat_talk(int x, int y)
             continue;
 
         plname = unkn2_names[plyr];
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
         if (player_message_text[plyr][0] != '\0')
         {
             if (plname[0] != '\0')
-                sprintf(locstr, "%s: %s", plname, player_message_text[plyr]);
+                snprintf(locstr, sizeof(locstr)-1, "%s: %s", plname, player_message_text[plyr]);
             else
-                sprintf(locstr, "%s", player_message_text[plyr]);
+                snprintf(locstr, sizeof(locstr)-1, "%s", player_message_text[plyr]);
         }
         else
         {
-            sprintf(locstr, "%s said nothing.", plname);
+            snprintf(locstr, sizeof(locstr)-1, "%s said nothing.", plname);
         }
+        locstr[sizeof(locstr)-1] = '\0';
+#pragma GCC diagnostic pop
         LbStringToUpper(locstr);
 
         lbDisplay.DrawColour = net_player_colours[plyr];
-        AppTextDrawMissionChatMessage(base_x, &pos_y, plyr, locstr);
-
-        player_message_timer[plyr]--;
-        if (player_message_timer[plyr] == 0) {
-            player_message_text[plyr][0] = '\0';
-        }
+        AppTextDrawMissionChatMessage(base_x, &pos_y, plyr,
+          player_message_timer[plyr], locstr);
+        player_message_timer_tick(plyr);
     }
 }
 
@@ -529,8 +577,8 @@ TbBool check_scanner_input(void)
             p_pckt = &packets[local_player_no];
 
             lbDisplay.LeftButton = 0;
-            p_usrinp->ControlMode |= UInpCtrF_Unkn8000;
-            if ((p_locplayer->DoubleMode) || ((p_usrinp->ControlMode & ~UInpCtr_AllFlagsMask) == UInpCtr_Mouse))
+            user_input_control_flags_raise(local_player_no, mouser, UInpCtrF_LBtnDown);
+            if ((p_locplayer->DoubleMode) || (user_input_control_mode_get(local_player_no, mouser) == UInpCtr_Mouse))
             {
                 map_y = (alt_at_point(map_x, map_z) >> 8) + 20;
                 if ((gameturn & 0x7FFF) - p_usrinp->Turn >= 7)
@@ -567,7 +615,7 @@ TbBool check_scanner_input(void)
             p_usrinp = &p_locplayer->UserInput[mouser];
 
             lbDisplay.RightButton = 0;
-            p_usrinp->ControlMode |= UInpCtrF_Unkn4000;
+            user_input_control_flags_raise(local_player_no, mouser, UInpCtrF_RBtnDown);
             if (!p_locplayer->DoubleMode)
             {
                 map_y = (alt_at_point(map_x, map_z) >> 8) + 20;
@@ -1572,11 +1620,19 @@ void draw_agent_grouping_bars(short panel)
 
 void func_702c0(int a1, int a2, int a3, int a4, int a5, ubyte a6)
 {
+    // Pushed through a register holding them: a "g" operand may be placed
+    // relative to the stack pointer, which each push moves.
+    int stkargs[2];
+
+    stkargs[0] = (int)(intptr_t)a5;
+    stkargs[1] = (int)(intptr_t)a6;
+
     asm volatile (
-      "push %5\n"
-      "push %4\n"
+      "push 4(%4)\n"
+      "push 0(%4)\n"
       "call ASM_func_702c0\n"
-        : : "a" (a1), "d" (a2), "b" (a3), "c" (a4), "g" (a5), "g" (a6));
+        : : "a" (a1), "d" (a2), "b" (a3), "c" (a4), "S" (stkargs)
+        : "cc", "memory");
 }
 
 void draw_transparent_slant_bar(short x, short y, ushort w, ushort h)
@@ -1602,8 +1658,8 @@ void draw_transparent_slant_bar(short x, short y, ushort w, ushort h)
     point3.pp.X = (x - sh_x);
 
     // The shield bar is animated, even if it's not possible to see
-    waftx = waft_table[(gameturn >> 3) & 31];
-    wafty = waft_table[(gameturn + 16) & 31];
+    waftx = waft_table[(render_anim_turn >> 3) & 31];
+    wafty = waft_table[(render_anim_turn + 16) & 31];
     tmx = ((waftx + 30) >> 1);
     tmy = ((wafty + 30) >> 3) + 64;
     point1.pp.U = tmx << 16;
@@ -2377,7 +2433,7 @@ void draw_new_panel(void)
             draw_panel_thermal_button(panel);
             break;
         case PanT_Scanner:
-            SCANNER_set_center_point(engn_xc, engn_zc, (2*LbFPMath_PI - 1) - ((engn_anglexz >> 5) & LbFPMath_AngleMask));
+            SCANNER_set_center_point(engn_xc, engn_zc, (2*LbFPMath_PI - 1) - ((engn_cam_yaw >> 5) & LbFPMath_AngleMask));
             SCANNER_draw_new_transparent();
             break;
         case PanT_Objective:
@@ -2398,7 +2454,7 @@ void draw_new_panel(void)
             uint y;
             ushort ctlmode;
 
-            ctlmode = p_locplayer->UserInput[0].ControlMode & ~UInpCtr_AllFlagsMask;
+            ctlmode = user_input_control_mode_get(local_player_no, 0);
             if (ctlmode == UInpCtr_Mouse && !PacketRecord_IsPlayback()) {
                 y = alt_at_point(mouse_map_x, mouse_map_z);
                 func_702c0(mouse_map_x, PRCCOORD_TO_YCOORD(y), mouse_map_z, 64, 64, colour_lookup[ColLU_RED]);
@@ -2427,7 +2483,7 @@ TbBool process_panel_state_one_agent_weapon(ushort agent)
 
         if ((p_agent->Type == TT_PERSON) && (wtype != 0))
         {
-            p_locplayer->UserInput[mouser].ControlMode |= UInpCtrF_Unkn4000;
+            user_input_control_flags_raise(local_player_no, mouser, UInpCtrF_RBtnDown);
             my_build_packet(p_pckt, PAct_DROP_HELD_WEAPON_SECR, p_agent->ThingOffset, wtype, 0, 0);
             p_locplayer->PanelState[mouser] = PANEL_STATE_NORMAL;
             return true;
@@ -2445,7 +2501,7 @@ TbBool process_panel_state_one_agent_weapon(ushort agent)
             lbDisplay.RightButton = 0;
             if ((p_agent->Type == TT_PERSON) && (wtype != 0))
             {
-                p_locplayer->UserInput[mouser].ControlMode |= UInpCtrF_Unkn4000;
+                user_input_control_flags_raise(local_player_no, mouser, UInpCtrF_RBtnDown);
                 my_build_packet(p_pckt, PAct_DROP_HELD_WEAPON_SECR, p_agent->ThingOffset, wtype, 0, 0);
                 p_locplayer->PanelState[mouser] = PANEL_STATE_NORMAL;
                 return true;
@@ -2460,7 +2516,7 @@ TbBool process_panel_state_one_agent_weapon(ushort agent)
                 p_locplayer->PanelState[mouser] = PANEL_STATE_NORMAL;
                 lbDisplay.RightButton = 0;
                 lbDisplay.LeftButton = 0;
-                p_locplayer->UserInput[mouser].ControlMode &= ~(UInpCtrF_Unkn4000|UInpCtrF_Unkn8000);
+                user_input_control_flags_clear(local_player_no, mouser, UInpCtrF_RBtnDown | UInpCtrF_LBtnDown);
                 return true;
             }
         }
@@ -2488,7 +2544,7 @@ TbBool process_panel_state_grp_agents_weapon(ushort agent)
         p_agent = p_locplayer->MyAgent[agent];
         if ((p_agent->Type == TT_PERSON) && (wtype != 0))
         {
-            p_locplayer->UserInput[mouser].ControlMode |= UInpCtrF_Unkn8000;
+            user_input_control_flags_raise(local_player_no, mouser, UInpCtrF_LBtnDown);
             my_build_packet(p_pckt, PAct_DROP_HELD_WEAPON_SECR, p_agent->ThingOffset, wtype, 0, 0);
             p_locplayer->PanelState[mouser] = PANEL_STATE_NORMAL;
             return true;
@@ -2506,7 +2562,7 @@ TbBool process_panel_state_grp_agents_weapon(ushort agent)
             p_locplayer->PanelState[mouser] = PANEL_STATE_NORMAL;
             lbDisplay.RightButton = 0;
             lbDisplay.LeftButton = 0;
-            p_locplayer->UserInput[mouser].ControlMode &= ~(UInpCtrF_Unkn4000|UInpCtrF_Unkn8000);
+            user_input_control_flags_clear(local_player_no, mouser, UInpCtrF_RBtnDown | UInpCtrF_LBtnDown);
             return true;
         }
         p_locplayer->PanelState[mouser] = PANEL_STATE_NORMAL;
@@ -2589,7 +2645,7 @@ TbBool process_panel_state_grp_agents_mood(ushort main_panel, ushort agent)
     }
     else if (p_locplayer->PanelState[mouser] != PANEL_STATE_NORMAL)
     {
-        p_locplayer->UserInput[mouser].ControlMode &= ~(UInpCtrF_Unkn4000|UInpCtrF_Unkn8000);
+        user_input_control_flags_clear(local_player_no, mouser, UInpCtrF_RBtnDown | UInpCtrF_LBtnDown);
         p_locplayer->PanelState[mouser] = PANEL_STATE_NORMAL;
         did_inp |= GINPUT_DIRECT;
     }
@@ -2698,7 +2754,7 @@ ubyte check_panel_input(short panel)
             }
             dcthing = p_locplayer->DirectControl[0];
             build_packet(p_pckt, PAct_SELECT_AGENT, dcthing, p_agent->ThingOffset, 0, 0);
-            p_locplayer->UserInput[0].ControlMode |= UInpCtrF_Unkn8000;
+            user_input_control_flags_raise(local_player_no, 0, UInpCtrF_LBtnDown);
             did_inp |= GINPUT_PACKET;
             return did_inp;
         case PanT_AgentMood:
@@ -2707,7 +2763,7 @@ ubyte check_panel_input(short panel)
             if ((p_agent->Type != TT_PERSON) || (p_agent->State == PerSt_DEAD)) {
                 break;
             }
-            p_locplayer->UserInput[mouser].ControlMode |= UInpCtrF_Unkn8000;
+            user_input_control_flags_raise(local_player_no, mouser, UInpCtrF_LBtnDown);
             i = panel_mouse_move_mood_value(panel);
             if (panel_active_based_on_target(panel) &&
               (p_agent->U.UPerson.Mood != limit_mood(p_agent, i))) {
@@ -2729,7 +2785,7 @@ ubyte check_panel_input(short panel)
             if ((p_agent->Type != TT_PERSON) || !person_can_accept_control(p_agent->ThingOffset)) {
                 break;
             }
-            p_locplayer->UserInput[mouser].ControlMode |= UInpCtrF_Unkn8000;
+            user_input_control_flags_raise(local_player_no, mouser, UInpCtrF_LBtnDown);
             p_locplayer->PanelState[mouser] = PANEL_STATE_WEP_SEL_ONE + p_panel->ID;
             did_inp |= GINPUT_DIRECT;
             break;
@@ -2752,7 +2808,7 @@ ubyte check_panel_input(short panel)
                 break;
             }
             build_packet(p_pckt, PAct_SHIELD_TOGGLE, dcthing, 0, 0, 0);
-            p_locplayer->UserInput[mouser].ControlMode |= UInpCtrF_Unkn8000;
+            user_input_control_flags_raise(local_player_no, mouser, UInpCtrF_LBtnDown);
             did_inp |= GINPUT_PACKET;
             return did_inp;
         case PanT_Grouping:
@@ -2770,7 +2826,7 @@ ubyte check_panel_input(short panel)
             {
                 // Increase agent grouping
                 dcthing = p_locplayer->DirectControl[mouser];
-                p_locplayer->UserInput[mouser].ControlMode |= UInpCtrF_Unkn8000;
+                user_input_control_flags_raise(local_player_no, mouser, UInpCtrF_LBtnDown);
                 if (panel_active_based_on_target(panel))
                     my_build_packet(p_pckt, PAct_PROTECT_INC, dcthing, 0, 0, 0);
                 did_inp |= GINPUT_PACKET;
@@ -2801,7 +2857,7 @@ ubyte check_panel_input(short panel)
             if ((p_agent->Type != TT_PERSON) || (p_agent->State == PerSt_DEAD)) {
                 break;
             }
-            p_locplayer->UserInput[mouser].ControlMode |= UInpCtrF_Unkn4000;
+            user_input_control_flags_raise(local_player_no, mouser, UInpCtrF_RBtnDown);
             i = panel_mouse_move_mood_value(panel);
             if (panel_active_based_on_target(panel)) {
                 my_build_packet(p_pckt, PAct_GROUP_SET_MOOD, p_agent->ThingOffset, i, 0, 0);
@@ -2822,13 +2878,13 @@ ubyte check_panel_input(short panel)
             if ((p_agent->Type != TT_PERSON) || !person_can_accept_control(p_agent->ThingOffset)) {
                 break;
             }
-            p_locplayer->UserInput[mouser].ControlMode |= UInpCtrF_Unkn4000;
+            user_input_control_flags_raise(local_player_no, mouser, UInpCtrF_RBtnDown);
             p_locplayer->PanelState[mouser] = PANEL_STATE_WEP_SEL_GRP + p_panel->ID;
             did_inp |= GINPUT_DIRECT;
             break;
         case PanT_Grouping:
             // Switch grouping fully on or fully off
-            p_locplayer->UserInput[mouser].ControlMode |= UInpCtrF_Unkn4000;
+            user_input_control_flags_raise(local_player_no, mouser, UInpCtrF_RBtnDown);
             if (!panel_active_based_on_target(panel)) {
                 break;
             }

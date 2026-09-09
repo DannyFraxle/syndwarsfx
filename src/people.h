@@ -209,6 +209,13 @@ enum PersonSex {
  */
 #define PERSON_ENERGY_TO_SHIELD_MUL 4
 
+/** Max amount of frames a person animation can have.
+ *
+ * All parson animations must fit, not only walking/firing,
+ * but also special ones like disintegration.
+ */
+#define PERSON_ANIM_MAX_FRAMES 12
+
 enum ThingWeaponSelectFlags {
     WepSel_TOGGLE = 0,
     WepSel_HIDE,
@@ -260,7 +267,7 @@ extern ushort people_frames[SubTT_PERS_COUNT][22];
 extern ushort word_1531DA;
 extern ushort word_17FA58[400];
 
-extern ushort head_my_path; // = 1;
+extern ushort head_my_path;
 extern ushort path_count;
 extern struct MyPath my_paths[1600];
 
@@ -356,6 +363,14 @@ short person_get_dcontrol_player(ThingIdx person);
  */
 short person_slot_in_player_dcontrol(ThingIdx person, PlayerIdx plyr);
 
+/** Retrieve and clear Y coord in player agent user vector for given person.
+ */
+MapCoord player_agent_person_clear_user_vect_y(struct Thing *p_person);
+
+/** Get player agent user vector for given person.
+ */
+void player_agent_person_get_user_vect(struct Thing *p_person, struct MapCoords *p_usrv);
+
 /** Returns sex of a person, either PERSON_MALE or PERSON_FEMALE.
  */
 ubyte person_sex(struct Thing *p_person);
@@ -408,9 +423,17 @@ void person_set_energy_to_max_limit(struct Thing *p_person);
 void person_set_persuade_power__to_allow_all(struct Thing *p_person);
 
 
-/** Switches AnimMode of a person without removing any shifts to current frame.
+/** Switches AnimMode of a person without removing any shifts to current frame (subframe).
  */
 void switch_person_anim_mode(struct Thing *p_person, ubyte animode);
+
+/** Returns subframe of the paersons animation.
+ *
+ * Subframe is a shift between first frame and currently drawn frame of an anim.
+ * Using this function makes sure than temporary switches of animation will not
+ * lead to outranged value.
+ */
+ushort get_person_anim_subframe(struct Thing *p_person);
 
 /** Sets new AnimMode of a person, replacing the old frame number.
  */
@@ -471,6 +494,8 @@ int thing_hit_by_bullet(struct Thing *p_person, short hp,
 TbBool person_use_medikit(struct Thing *p_person, PlayerIdx plyr);
 
 void set_person_persuaded(struct Thing *p_person, struct Thing *p_attacker, ushort energy);
+void stop_being_persuaded(struct Thing *p_person);
+void unpersuade_my_peeps(struct Thing *p_owntng);
 
 StateChRes person_init_drop_item_where_standing(struct Thing *p_person, ThingIdx item);
 StateChRes person_init_plant_mine_where_standing(struct Thing *p_person, WeaponType wtype);

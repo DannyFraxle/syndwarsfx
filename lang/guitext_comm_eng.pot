@@ -2731,13 +2731,13 @@ msgctxt "Research screen area"
 msgid "Progress"
 msgstr ""
 
-#. Switch research options to weapons.
+#. Switch research options to weapons. Short word needed.
 #: guitext:451
 msgctxt "Research screen button"
 msgid "Weapons"
 msgstr ""
 
-#. Switch research options to mods.
+#. Switch research options to mods. Short word needed.
 #: guitext:452
 msgctxt "Research screen button"
 msgid "Mods"

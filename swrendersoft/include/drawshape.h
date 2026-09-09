@@ -34,6 +34,10 @@ extern "C" {
 void draw_line_transformed_col(int x1, int y1, int z1, int x2, int y2, int z2,
   TbPixel colour);
 
+/** Draws simple purple rect directly, without drawlists.
+ */
+void draw_purple_rect(int x, int y, int w, int h, ubyte active);
+
 /******************************************************************************/
 #ifdef __cplusplus
 }

@@ -57,6 +57,8 @@ syndwarsfx3d_SOURCES = \
 	dos.h \
 	drawtext_wrp.c \
 	drawtext_wrp.h \
+	embedanim.c \
+	embedanim.h \
 	engindrwlstm_wrp.c \
 	engindrwlstm_wrp.h \
 	engindrwlstx_tng.c \
@@ -116,6 +118,8 @@ syndwarsfx3d_SOURCES = \
 	game_sprts.c \
 	game_sprts.h \
 	game.h \
+	hud_draw.c \
+	hud_draw.h \
 	hud_panecfg.c \
 	hud_panecfg.h \
 	hud_panel.c \
@@ -143,6 +147,7 @@ syndwarsfx3d_SOURCES = \
 	mydraw.h \
 	netipx1.sx \
 	netser1.sx \
+	netdos.sx \
 	network.c \
 	network.h \
 	pathtrig.c \
@@ -179,6 +184,8 @@ syndwarsfx3d_SOURCES = \
 	scandraw.h \
 	sound.c \
 	sound.h \
+	sound_smp_s.sx \
+	sound_heap_s.sx \
 	specblit.c \
 	specblit.h \
 	swars.sx \
@@ -187,10 +194,12 @@ syndwarsfx3d_SOURCES = \
 	thing.h \
 	thing_expld.c \
 	thing_expld.h \
+	thing_expld_s.sx \
 	thing_search.c \
 	thing_search.h \
 	thing_fire.c \
 	thing_fire.h \
+	thing_fire_s.sx \
 	thing_debug.c \
 	thing_debug_s.sx \
 	thing_onface.h \

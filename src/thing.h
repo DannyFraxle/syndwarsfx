@@ -1116,6 +1116,9 @@ struct SimpleThing *create_stasis_pod(MapCoord x, MapCoord y, MapCoord z,
 struct SimpleThing *create_time_pod(MapCoord x, MapCoord y, MapCoord z,
   ushort timer);
 
+struct SimpleThing *create_electric_strand(MapCoord x, MapCoord y, MapCoord z,
+  MapCoord x2, MapCoord y2, MapCoord z2, int sound);
+
 int mine_hit_by_bullet(struct Thing *p_thing, short hp,
   int vx, int vy, int vz, struct Thing *p_attacker, ushort type);
 

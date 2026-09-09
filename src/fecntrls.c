@@ -68,24 +68,12 @@ ubyte controls_edited_gkey = 0;
 
 ubyte do_controls_defaults(ubyte click)
 {
-#if 0
-    ubyte ret;
-    asm volatile ("call ASM_do_controls_defaults\n"
-        : "=r" (ret) : "a" (click));
-    return ret;
-#endif
     set_default_user_settings();
     return 1;
 }
 
 ubyte do_controls_save(ubyte click)
 {
-#if 0
-    ubyte ret;
-    asm volatile ("call ASM_do_controls_save\n"
-        : "=r" (ret) : "a" (click));
-    return ret;
-#endif
     const char *msg_str;
     if (save_user_settings())
         msg_str = gui_strings[GSTR_CONTROLS_SAVED_FAIL];
@@ -97,12 +85,6 @@ ubyte do_controls_save(ubyte click)
 
 ubyte do_controls_calibrate(ubyte click)
 {
-#if 0
-    ubyte ret;
-    asm volatile ("call ASM_do_controls_calibrate\n"
-        : "=r" (ret) : "a" (click));
-    return ret;
-#endif
     net_unkn_pos_02 = 1;
     alert_box_text_fmt("%s", gui_strings[GSTR_JOY_CAL_TOP_LEFT]);
     return 1;
@@ -115,12 +97,6 @@ TbBool is_defining_control_key(void)
 
 ubyte show_controls_joystick_box(struct ScreenBox *p_box)
 {
-#if 0
-    ubyte ret;
-    asm volatile ("call ASM_show_controls_joystick_box\n"
-        : "=r" (ret) : "a" (p_box));
-    return ret;
-#endif
     char locstr[52];
     struct ScreenRect active_rect;
     PlayerInfo *p_locplayer;
@@ -166,11 +142,12 @@ ubyte show_controls_joystick_box(struct ScreenBox *p_box)
         ln_height = my_char_height('A');
     }
     wpos_y = 126;
+    tx_width = text_window_x2 - text_window_x1;
 
     lbDisplay.DrawFlags |= 0x8000;
     if (ctl_joystick_type == JTyp_EXT_DRIVER)
     {
-      if (joy_get_device_name(locstr) != -1)
+      if (JoyGetDeviceName(locstr) != -1)
       {
         text = loctext_to_gtext(locstr);
         tx_width = my_string_width(locstr);
@@ -197,28 +174,28 @@ ubyte show_controls_joystick_box(struct ScreenBox *p_box)
     {
         if (lbDisplay.LeftButton)
         {
-            sbyte v23;
-            ubyte v24;
+            sbyte setup_ret;
+            ubyte last_type;
 
             if (ctl_joystick_type != JTyp_NONE)
-                joy_refresh_devices(&joy);
+                JoyRefreshDevices(&joy);
             lbDisplay.LeftButton = 0;
 
-            v23 = -1;
-            v24 = ctl_joystick_type;
-            while (v23 != 1)
+            setup_ret = -1;
+            last_type = ctl_joystick_type;
+            while (setup_ret != 1)
             {
                 if (++ctl_joystick_type >= JTyp_TYPES_COUNT)
                     ctl_joystick_type = JTyp_ANALG_2BTN; // first one
-                if (v24 == ctl_joystick_type)
-                {
-                    v23 = 1;
+                if (last_type == ctl_joystick_type) {
+                    setup_ret = 1;
                     ctl_joystick_type = JTyp_NONE;
                 }
-                if (unkn01_maskarr[ctl_joystick_type])
-                    v23 = joy_setup_device(&joy, ctl_joystick_type);
-                if (!v24)
-                    v24 = 1;
+                if (joy_types_available[ctl_joystick_type]) {
+                    setup_ret = JoySetupDevice(&joy, ctl_joystick_type);
+                }
+                if (last_type == JTyp_NONE)
+                    last_type = JTyp_ANALG_2BTN;
             }
         }
     }
@@ -271,7 +248,7 @@ ubyte show_controls_joystick_box(struct ScreenBox *p_box)
     {
         ushort ctlmode;
 
-        ctlmode = p_locplayer->UserInput[dmuser].ControlMode;
+        ctlmode = user_input_control_mode_get(local_player_no, dmuser);
         if (ctlmode >= UInpCtr_Joystick0)
         {
             int n_found;

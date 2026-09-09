@@ -61,7 +61,6 @@ struct ShEnginePoint {
 
 #pragma pack()
 /******************************************************************************/
-extern s32 cam_tilt;
 
 extern s32 dword_176D0C;
 extern s32 dword_176D10;
@@ -71,8 +70,6 @@ extern s32 dword_176D1C;
 extern s32 dword_176D3C;
 extern s32 dword_176D40;
 extern s32 dword_176D44;
-extern s32 dword_176D4C;
-extern s32 cam_rotation_velocity;
 
 /******************************************************************************/
 s32 mul_shift16_sign_pad_lo(s32 ar1, s32 ar2);
@@ -105,7 +102,19 @@ int transform_shpoint_y(int dxc, int dyc, int dzc);
 
 void transform_screen_to_map_isometric(int *dxc, int *dzc, int scr_x, int scr_y);
 
-void process_engine_unk1(void);
+/** Reinit part of transform functionality setup based on vecs vars.
+ *
+ * After a call of `setup_vecs()` changes the vecs setup, this function
+ * needs to be called to relect the change in transform state.
+ */
+void transform_reinit_vec_window(void);
+
+/** Reinit part of transform functionality setup based on camera settings.
+ *
+ * After camera position, rotation or zoom is changed, this function
+ * needs to be called to relect the change in transform state.
+ */
+void transform_reinit_camera(void);
 /******************************************************************************/
 #ifdef __cplusplus
 }

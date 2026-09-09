@@ -41,9 +41,28 @@
 #include "delaunay.h"
 #include "swlog.h"
 /******************************************************************************/
-extern long ixE;
-extern long thin_wall_x1, thin_wall_y1;
-extern long thin_wall_x2, thin_wall_y2;
+s32 Ex[100];
+s32 Ey[100];
+s32 ixE = 0;
+s32 thin_wall_x1, thin_wall_y1;
+s32 thin_wall_x2, thin_wall_y2;
+s32 tree_dad[8000];
+s32 tree_val[8000];
+ubyte routeTags[8000];
+s32 tree_Ax8;
+s32 tree_Ay8;
+s32 tree_Bx8;
+s32 tree_By8;
+s32 tree_altA;
+s32 tree_altB;
+s32 tree_triA;
+s32 tree_triB;
+s32 tree_CentreDest;
+s32 tree_routelen;
+s32 tree_routecost;
+s32 tree_route[3000];
+s32 route_bak[3000];
+
 
 extern short link__MapColListEmptyHead;
 extern short link__MapColVectEmptyHead;
@@ -71,11 +90,19 @@ int unkn_path_func_001(struct Thing *p_thing, ubyte a2)
 
 void path_init8_unkn3(struct Path *path, int ax8, int ay8, int bx8, int by8, int a6)
 {
+    // Pushed through a register holding them: a "g" operand may be placed
+    // relative to the stack pointer, which each push moves.
+    int stkargs[2];
+
+    stkargs[0] = (int)(intptr_t)by8;
+    stkargs[1] = (int)(intptr_t)a6;
+
     asm volatile (
-      "push %5\n"
-      "push %4\n"
+      "push 4(%4)\n"
+      "push 0(%4)\n"
       "call ASM_path_init8_unkn3\n"
-        : : "a" (path), "d" (ax8), "b" (ay8), "c" (bx8), "g" (by8), "g" (a6));
+        : : "a" (path), "d" (ax8), "b" (ay8), "c" (bx8), "S" (stkargs)
+        : "cc", "memory");
 }
 
 //TODO temp copy of static func
@@ -283,24 +310,44 @@ void make_edge(int x1, int y1, int x2, int y2)
 int edge_find(int x1, int y1, int x2, int y2, int *ntri1, int *ncor1)
 {
     int ret;
+    // Pushed through a register holding them: a "g" operand may be placed
+    // relative to the stack pointer, which each push moves.
+    int stkargs[2];
+
+    stkargs[0] = (int)(intptr_t)ntri1;
+    stkargs[1] = (int)(intptr_t)ncor1;
+
     asm volatile (
-      "push %6\n"
-      "push %5\n"
+      "push 4(%5)\n"
+      "push 0(%5)\n"
       "call ASM_edge_find\n"
-        : "=r" (ret) : "a" (x1), "d" (y1), "b" (x2), "c" (y2), "g" (ntri1), "g" (ncor1));
+        : "=r" (ret)
+        : "a" (x1), "d" (y1), "b" (x2), "c" (y2), "S" (stkargs)
+        : "cc", "memory");
     return ret;
 }
 
 TbBool two4_line_intersection(int x1, int y1, int x2, int y2, int x3, int y3, int x4, int y4)
 {
     TbBool ret;
+    // Pushed through a register holding them: a "g" operand may be placed
+    // relative to the stack pointer, which each push moves.
+    int stkargs[4];
+
+    stkargs[0] = (int)(intptr_t)x3;
+    stkargs[1] = (int)(intptr_t)y3;
+    stkargs[2] = (int)(intptr_t)x4;
+    stkargs[3] = (int)(intptr_t)y4;
+
     asm volatile (
-      "push %8\n"
-      "push %7\n"
-      "push %6\n"
-      "push %5\n"
+      "push 12(%5)\n"
+      "push 8(%5)\n"
+      "push 4(%5)\n"
+      "push 0(%5)\n"
       "call ASM_two4_line_intersection\n"
-        : "=r" (ret) : "a" (x1), "d" (y1), "b" (x2), "c" (y2), "g" (x3), "g" (y3), "g" (x4), "g" (y4));
+        : "=r" (ret)
+        : "a" (x1), "d" (y1), "b" (x2), "c" (y2), "S" (stkargs)
+        : "cc", "memory");
     return ret;
 }
 
@@ -1021,34 +1068,25 @@ void reset_things_col_vect_range(void)
  */
 TbBool face_has_walk_item(short face, short walk_face)
 {
-    struct WalkHeader *p_walk_head;
-    ushort wh, wi;
+    ushort wlkhead;
 
     if (face < 0)
     {
         struct SingleObjectFace4 *p_face;
         p_face = &game_object_faces4[-face];
-        wh = p_face->WalkHeader;
+        wlkhead = p_face->WalkHeader;
     }
     else if (face > 0)
     {
         struct SingleObjectFace3 *p_face;
         p_face = &game_object_faces3[face];
-        wh = p_face->WalkHeader;
+        wlkhead = p_face->WalkHeader;
     } else
     {
         return false;
     }
 
-    p_walk_head = &game_walk_headers[wh];
-
-    for (wi = p_walk_head->StartItem;
-      wi < p_walk_head->StartItem + p_walk_head->Count; wi++)
-    {
-        if (game_walk_items[wi] == walk_face)
-            return true;
-    }
-    return false;
+    return walk_face_is_in_list(wlkhead, walk_face);
 }
 
 /** Adds given walk face to a list of walk items of another face.
@@ -1057,8 +1095,7 @@ TbBool face_has_walk_item(short face, short walk_face)
  */
 void add_face_walk_item(short face, short walk_face)
 {
-    struct WalkHeader *p_walk_head;
-    ushort wh, wi;
+    ushort wlkhead;
 
     if (face_has_walk_item(face, walk_face)) {
         return;
@@ -1068,26 +1105,20 @@ void add_face_walk_item(short face, short walk_face)
     {
         struct SingleObjectFace4 *p_face;
         p_face = &game_object_faces4[-face];
-        wh = p_face->WalkHeader;
+        wlkhead = p_face->WalkHeader;
     }
     else if (face > 0)
     {
         struct SingleObjectFace3 *p_face;
         p_face = &game_object_faces3[face];
-        wh = p_face->WalkHeader;
+        wlkhead = p_face->WalkHeader;
     } else
     {
         LOGERR("no walk head assigned to face %d", (int)face);
         return;
     }
 
-    p_walk_head = &game_walk_headers[wh];
-    assert(p_walk_head->StartItem + p_walk_head->Count == next_walk_item);
-    wi = next_walk_item;
-    next_walk_item++;
-
-    p_walk_head->Count++;
-    game_walk_items[wi] = walk_face;
+    add_walk_face_to_list(wlkhead, walk_face);
 }
 
 int face_to_object_position(short face, short *x, short *y, short *z)
@@ -1168,6 +1199,13 @@ int add_walk_items_for_face_object(short face, short obj)
             fcpt_x = fcobj_x + p_pt->X;
             fcpt_y = fcobj_y + p_pt->Y;
             fcpt_z = fcobj_z + p_pt->Z;
+        }
+        else
+        {
+            LOGERR("walk on face zero");
+            fcpt_x = fcobj_x;
+            fcpt_y = fcobj_y;
+            fcpt_z = fcobj_z;
         }
 
         for (cface = startface3; cface < endface3; cface++)
@@ -1296,35 +1334,28 @@ void add_walk_items_for_face_things_near(short x, short y, short z, short radius
  *
  * The WalkHeader is initialized to have 0 items starting at given item index.
  */
-TbBool prepare_face_for_having_walk_items(short face, ushort walk_item)
+TbBool prepare_face_for_having_walk_items(short face)
 {
-    struct WalkHeader *p_walk_head;
-    ushort new_wh;
+    ushort wlkhead;
+
+    wlkhead = create_walk_list();
 
     if (face > 0)
     {
         struct SingleObjectFace3 *p_face;
-
-        new_wh = next_walk_header;
-        next_walk_header++;
         p_face = &game_object_faces3[face];
-        p_face->WalkHeader = new_wh;
+        p_face->WalkHeader = wlkhead;
     }
     else if (face < 0)
     {
         struct SingleObjectFace4 *p_face;
-
-        new_wh = next_walk_header;
-        next_walk_header++;
         p_face = &game_object_faces4[-face];
-        p_face->WalkHeader = new_wh;
+        p_face->WalkHeader = wlkhead;
     } else
     {
+        destroy_walk_list(wlkhead);
         return false;
     }
-    p_walk_head = &game_walk_headers[new_wh];
-    p_walk_head->Count = 0;
-    p_walk_head->StartItem = walk_item;
     return true;
 }
 
@@ -1332,7 +1363,7 @@ void add_walk_items_for_face(short face)
 {
     short obj_x, obj_y, obj_z;
 
-    prepare_face_for_having_walk_items(face, next_walk_item);
+    prepare_face_for_having_walk_items(face);
     face_to_object_position(face, &obj_x, &obj_y, &obj_z);
     add_walk_items_for_face_things_near(obj_x, obj_y, obj_z, 31 << 8, face);
 }
@@ -1341,8 +1372,8 @@ void generate_walk_items(void)
 {
     short face;
 
-    next_walk_header = 1;
-    next_walk_item = 1;
+    reset_all_walk_lists();
+
     for (face = 1; face < next_object_face3; face++)
     {
         if ((game_object_faces3[face].GFlags & FGFlg_Unkn04) != 0)

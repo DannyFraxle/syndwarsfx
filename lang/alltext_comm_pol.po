@@ -898,7 +898,7 @@ msgstr "Inżynieria oprogram., Usługi finansowe"
 #: mapscreen.city1:6 mapscreen.city21:6 mapscreen.city34:6
 msgctxt "map screen location - toxicity"
 msgid "Chemical Waste, Human Effluent"
-msgstr "Odpady chemiczne, ścieki ludzkie"
+msgstr "Odpady chemiczne, Ścieki ludzkie"
 
 #: mapscreen.city2:1
 msgctxt "map screen location - name"
@@ -984,12 +984,12 @@ msgstr "Proto-mandaryński"
 #: mapscreen.city4:5
 msgctxt "map screen location - industry"
 msgid "Plastics Fabrication, Hardware Manufacture"
-msgstr "Produkcja tworzyw sztucznych, produkcja sprzętu"
+msgstr "Fabrykacja plastików, Produkcja osprzętu"
 
 #: mapscreen.city4:6
 msgctxt "map screen location - toxicity"
 msgid "Radioactive Waste, Human Effluent"
-msgstr "Odpady radioaktw., ścieki ludzkie"
+msgstr "Odpady radioaktw., Ścieki ludzkie"
 
 #: mapscreen.city5:1
 msgctxt "map screen location - name"
@@ -1012,12 +1012,12 @@ msgstr "Prosta miejska"
 #: mapscreen.city5:4 mapscreen.city6:4
 msgctxt "map screen location - language"
 msgid "C.C.E. (Common Central European)"
-msgstr "C.C.E. (Komunalny Centralno-Europejski)"
+msgstr "Komunalny Centralno-Europejski"
 
 #: mapscreen.city5:5
 msgctxt "map screen location - industry"
 msgid "Mineral Re-processing"
-msgstr "Przetwarzanie minerałów"
+msgstr "Odzyskiwanie minerałów"
 
 #: mapscreen.city6:1
 msgctxt "map screen location - name"
@@ -1032,7 +1032,7 @@ msgstr "7,65 mln"
 #: mapscreen.city6:5 mapscreen.city18:5 mapscreen.city22:5 mapscreen.city29:5
 msgctxt "map screen location - industry"
 msgid "Water Detoxification, Air Re-processing"
-msgstr "Detoksykacja wody, przetwarzanie powietrza"
+msgstr "Detoks wody, Uzdatnianie powietrza"
 
 #: mapscreen.city6:6 mapscreen.city9:6 mapscreen.city18:6 mapscreen.city29:6
 msgctxt "map screen location - toxicity"
@@ -1077,7 +1077,8 @@ msgstr "Pseudo-malajski"
 #: mapscreen.city8:5
 msgctxt "map screen location - industry"
 msgid "Water Detoxification, Hardware Manufacture"
-msgstr "Detoksykacja wody, Produkcja osprzętu"
+msgstr "Detoks wody, Produkcja osprzętu"
+
 
 #: mapscreen.city8:6
 msgctxt "map screen location - toxicity"
@@ -1339,7 +1340,7 @@ msgstr "Wytwarzanie odzieży, Destylacja"
 #: mapscreen.city19:6
 msgctxt "map screen location - toxicity"
 msgid "Radioactive Fallout, Human Effluent"
-msgstr "Odpady radioaktw., Ścieki ludzkie"
+msgstr "Opad radioaktw., Ścieki ludzkie"
 
 #: mapscreen.city20:1
 msgctxt "map screen location - name"
@@ -1650,7 +1651,7 @@ msgstr "Jednokoreański"
 #: mapscreen.city36:5
 msgctxt "map screen location - industry"
 msgid "Chemical Processing, Vehicle Manufacture"
-msgstr "Przetwórstwo chemiczne, produkcja pojazdów"
+msgstr "Przetwórstwo chemiczne, Produkcja pojazdów"
 
 #: mapscreen.city36:6
 msgctxt "map screen location - toxicity"
@@ -1675,12 +1676,12 @@ msgstr "Mandaryński strefowy"
 #: mapscreen.city37:5
 msgctxt "map screen location - industry"
 msgid "Animal Husbandry, Vegetative Re-processing"
-msgstr "Hodowla zwierząt, Przetwórstwo roślinne"
+msgstr "Hodowla zwierząt, Odtwórstwo wegetatywne"
 
 #: mapscreen.city37:6
 msgctxt "map screen location - toxicity"
 msgid "Animal Effluent, Chemical Waste"
-msgstr "Ścieki zwierzęce, Odpady chemiczne"
+msgstr "Odpady pozwierzęce, Odpady chemiczne"
 
 #: mapscreen.city38:1
 msgctxt "map screen location - name"
@@ -1715,7 +1716,7 @@ msgstr "Gwara Afrykanerska"
 #: mapscreen.city39:5
 msgctxt "map screen location - industry"
 msgid "Ore Processing"
-msgstr "Przetwarzanie minerałów"
+msgstr "Przetwarzanie rudy"
 
 #: mapscreen.city40:1
 msgctxt "map screen location - name"
@@ -1793,7 +1794,7 @@ msgstr "Manipulacja pogodą"
 #: mapscreen.city44:6
 msgctxt "map screen location - toxicity"
 msgid "High Radioactive, Light Industrial"
-msgstr "Odpady wysoce radioaktw., Przemysł lekki"
+msgstr "Prom. jonizujące, Przemysł lekki"
 
 #: mapscreen.city45:1
 msgctxt "map screen location - name"
@@ -1838,7 +1839,7 @@ msgstr "Powietrze"
 #: mapscreen.city46:6
 msgctxt "map screen location - toxicity"
 msgid "Low Radioactive"
-msgstr "Nisko radioaktw."
+msgstr "Nisko jonizujące"
 
 #: mapscreen.city47:1
 msgctxt "map screen location - name"

@@ -140,11 +140,20 @@ TbBool building_can_transform_open(ThingIdx bldng)
 struct Thing *create_building_thing(int x, int y, int z, ushort obj, ushort nobj, ushort a6)
 {
     struct Thing *ret;
+    // Pushed through a register holding them: a "g" operand may be placed
+    // relative to the stack pointer, which each push moves.
+    int stkargs[2];
+
+    stkargs[0] = (int)(intptr_t)nobj;
+    stkargs[1] = (int)(intptr_t)a6;
+
     asm volatile (
-      "push %6\n"
-      "push %5\n"
+      "push 4(%5)\n"
+      "push 0(%5)\n"
       "call ASM_create_building_thing\n"
-        : "=r" (ret) : "a" (x), "d" (y), "b" (z), "c" (obj), "g" (nobj), "g" (a6));
+        : "=r" (ret)
+        : "a" (x), "d" (y), "b" (z), "c" (obj), "S" (stkargs)
+        : "cc", "memory");
     return ret;
 }
 
@@ -554,11 +563,19 @@ void process_shuttle_loader(struct Thing *p_building)
 
 void bul_hit_vector(int x, int y, int z, short col, int hp, int type)
 {
+    // Pushed through a register holding them: a "g" operand may be placed
+    // relative to the stack pointer, which each push moves.
+    int stkargs[2];
+
+    stkargs[0] = (int)(intptr_t)hp;
+    stkargs[1] = (int)(intptr_t)type;
+
     asm volatile (
-      "push %5\n"
-      "push %4\n"
+      "push 4(%4)\n"
+      "push 0(%4)\n"
       "call ASM_bul_hit_vector\n"
-        : : "a" (x), "d" (y), "b" (z), "c" (col), "g" (hp), "g" (type));
+        : : "a" (x), "d" (y), "b" (z), "c" (col), "S" (stkargs)
+        : "cc", "memory");
 }
 
 void rotate_object(struct Thing *p_object)
@@ -570,11 +587,20 @@ void rotate_object(struct Thing *p_object)
 int mounted_los(int x1, int y1, int z1, int x2, int y2, int z2)
 {
     int ret;
+    // Pushed through a register holding them: a "g" operand may be placed
+    // relative to the stack pointer, which each push moves.
+    int stkargs[2];
+
+    stkargs[0] = (int)(intptr_t)y2;
+    stkargs[1] = (int)(intptr_t)z2;
+
     asm volatile (
-      "push %6\n"
-      "push %5\n"
+      "push 4(%5)\n"
+      "push 0(%5)\n"
       "call ASM_mounted_los\n"
-        : "=r" (ret) : "a" (x1), "d" (y1), "b" (z1), "c" (x2), "g" (y2), "g" (z2));
+        : "=r" (ret)
+        : "a" (x1), "d" (y1), "b" (z1), "c" (x2), "S" (stkargs)
+        : "cc", "memory");
     return ret;
 }
 

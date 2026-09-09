@@ -633,7 +633,7 @@ void build_polygon_circle_2d(int x1, int y1, int r1, int r2,
     int cur_x, cur_y;
     short angle, dt_angle, angle_detail;
 
-    scrad1 = (overall_scale * r1) >> 8;
+    scrad1 = (r1 * overall_scale) >> 8;
 
     if ((x1 + scrad1 < 0) || (x1 - scrad1 > vec_window_width))
         return;
@@ -904,7 +904,7 @@ void enlist_draw_wobble_line(int x1, int y1, int z1,
         else if (step == 1)
         {
             shift = ((zig_zag[(render_anim_turn + x1) & 0x1F] & 7) << 7) - 512;
-            prc_cur_x1 = prc_cur_x2 + ((overall_scale * shift) >> 8);
+            prc_cur_x1 = prc_cur_x2 + ((shift * overall_scale) >> 8);
             shift = ((zig_zag[(render_anim_turn + y1) & 0x1F] & 7) << 7) - 512;
             prc_cur_y1 = prc_cur_y2 + ((shift * overall_scale) >> 8);
             shift = ((LbRandomPosShort() & 7) << 7) - 512;
@@ -1055,8 +1055,8 @@ void enlist_draw_laser(int x1, int y1, int z1, int x2, int y2, int z2,
     scr_y = ep1.pp.Y << 8;
     scr_depth = ep1.Z3d << 8;
 
-    scr_x += (overall_scale * ofs_x) >> 1;
-    scr_y += (overall_scale * ofs_y) >> 1;
+    scr_x += (ofs_x * overall_scale) >> 1;
+    scr_y += (ofs_y * overall_scale) >> 1;
 
     ep2.Flags = 0;
     ep2.X3d = x2 - engn_xc;

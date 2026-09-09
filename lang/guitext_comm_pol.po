@@ -2537,7 +2537,7 @@ msgstr "Brak badań nad wszczepem"
 #: guitext:418
 msgctxt "Research screen button"
 msgid "Submit"
-msgstr "Rozpocznij"
+msgstr "Zacznij"
 
 #. Text on button to suspend research on currently researched item.
 #: guitext:419
@@ -2741,7 +2741,7 @@ msgstr "Bronie"
 #: guitext:452
 msgctxt "Research screen button"
 msgid "Mods"
-msgstr "Wszczepy"
+msgstr "Wszczp."
 
 #. Axis on research progress bar.
 #: guitext:453

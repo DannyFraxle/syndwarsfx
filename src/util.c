@@ -42,8 +42,6 @@ struct CharacterSubst {
     char NewChar;
 };
 
-extern struct CharacterSubst subst_table_lower_to_upper[66];
-
 #pragma pack()
 
 ubyte fontCharToUpper[] = {
@@ -69,29 +67,7 @@ ubyte fontCharToUpper[] = {
 
 ubyte fontchrtoupper(ubyte ch)
 {
-#if 0
-    // TODO this should be just a simple conversion array, not such convoluted code
-    if (ch <= 127)
-    {
-        ch = toupper(ch);
-    }
-    else
-    {
-        int i;
-
-        for (i = 0; subst_table_lower_to_upper[i].OrigChar; i++)
-        {
-            if (ch == subst_table_lower_to_upper[i].OrigChar)
-            {
-                ch = subst_table_lower_to_upper[i].NewChar;
-                break;
-            }
-        }
-    }
-    return ch;
-#else
     return fontCharToUpper[ch];
-#endif
 }
 
 

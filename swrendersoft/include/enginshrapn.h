@@ -27,6 +27,10 @@ extern "C" {
 /******************************************************************************/
 #pragma pack(1)
 
+#define SHRAPNEL_COUNT 512
+#define PHWOAR_COUNT 1024
+#define FLAME_COUNT 512
+
 struct Shrapnel {
     int x;
     int y;
@@ -81,10 +85,18 @@ struct FireFlame { // sizeof=20
 
 #pragma pack()
 /******************************************************************************/
-extern struct Shrapnel shrapnel[512];
-extern struct Phwoar phwoar[1024];
-extern struct FireFlame FIRE_flame[512];
+extern struct Shrapnel shrapnel[SHRAPNEL_COUNT];
+extern ushort shrapnel_free;
 
+extern struct Phwoar phwoar[PHWOAR_COUNT];
+extern ushort phwoar_free;
+extern u32 phwoar_num_used;
+extern u32 phwoar_num_free;
+
+extern struct FireFlame FIRE_flame[FLAME_COUNT];
+
+void shrapnel_init(void);
+void phwoar_init(void);
 /******************************************************************************/
 #ifdef __cplusplus
 }

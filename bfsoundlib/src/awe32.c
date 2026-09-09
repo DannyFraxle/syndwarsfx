@@ -99,7 +99,8 @@ void LoadAwe32Soundfont(const char *str)
         Awe32SoundfontLoaded = 0;
     }
 
-    strncpy(CurrentAwe32SoundfontPrefix, str, sizeof(CurrentAwe32SoundfontPrefix));
+    strncpy(CurrentAwe32SoundfontPrefix, str, sizeof(CurrentAwe32SoundfontPrefix) - 1);
+    CurrentAwe32SoundfontPrefix[sizeof(CurrentAwe32SoundfontPrefix)-1] = '\0';
     sprintf(locstr, "%s/%s.sbk", SoundDataPath, CurrentAwe32SoundfontPrefix);
     SNDLOGSYNC("Soundfont", "loading '%s'", locstr);
 

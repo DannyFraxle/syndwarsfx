@@ -157,10 +157,22 @@ void player_agents_clear_weapon_delays(PlayerIdx plyr);
 int place_default_player(PlayerIdx plyr, TbBool replace);
 void place_single_player(void);
 
-void player_set_user_vect(PlayerIdx plyr, short plagent,
-  short vx, short vy, short vz);
-void player_clear_user_vect(PlayerIdx plyr, short plagent);
-void player_clear_user_vect_y(PlayerIdx plyr, short plagent);
+/** Set coords in player agent user vector.
+ */
+void player_agent_set_user_vect(PlayerIdx plyr, short plagent,
+  MapCoord vx, MapCoord vy, MapCoord vz);
+
+/** Clear coords in player agent user vector.
+ */
+void player_agent_clear_user_vect(PlayerIdx plyr, short plagent);
+
+/** Retrieve and clear Y coord in player agent user vector.
+ */
+MapCoord player_agent_clear_user_vect_y(PlayerIdx plyr, short plagent);
+
+/** Get player agent user vector.
+ */
+void player_agent_get_user_vect(PlayerIdx plyr, short plagent, struct MapCoords *p_usrv);
 
 TbBool player_can_toggle_thermal(PlayerIdx plyr);
 void player_toggle_thermal(PlayerIdx plyr);

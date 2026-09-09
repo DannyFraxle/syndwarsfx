@@ -67,20 +67,6 @@ enum LoginControlStates {
     LognCt_Unkn10,
 };
 
-enum AnimSlot {
-  AniSl_FULLSCREEN = 0,
-  AniSl_BILLBOARD = 1,
-  AniSl_EQVIEW = 2,	/**< equipment (weapon or mod) presentation in buy/sell window */
-  AniSl_CYBORG_INOUT = 3,	/**< cyborg mod insertion or removal anim */
-  AniSl_UNKN4 = 4,
-  AniSl_UNKN5 = 5,
-  AniSl_UNKN6 = 6,
-  AniSl_UNKN7 = 7,
-  AniSl_CYBORG_BRTH = 8,
-  AniSl_NETSCAN = 9,
-  AniSl_SCRATCH = 10,	/**< scratch buffer for some transparent menu animations */
-};
-
 // For some reason, we have different values for change_screen
 //TODO consolidate with ScreenType, use the same values
 enum ChangeScreenType {
@@ -153,7 +139,6 @@ extern ubyte is_single_game;
 extern ubyte cmdln_colour_tables;
 extern ubyte cmdln_param_bcg;
 extern ubyte keyboard_mode_direct;
-extern ubyte unkn01_maskarr[28];
 extern long map_editor;
 
 extern ubyte login_control__State;
@@ -182,9 +167,6 @@ extern u32 engine_mem_alloc_size;
 extern long navi2_unkn_counter;
 extern long navi2_unkn_counter_max;
 
-extern ubyte anim_slots[];
-extern struct Animation animations[2];
-
 extern ubyte *scratch_buf1;
 
 extern ushort game_level_unique_id;
@@ -196,7 +178,6 @@ extern ushort word_1531E0;
 extern struct UnknBezEdit *bezier_pts;
 extern ushort next_bezier_pt;
 extern ubyte *spare_map_buffer;
-extern long target_old_frameno;
 extern ushort word_176E38;
 
 extern ubyte net_service_started;
@@ -216,8 +197,6 @@ extern ubyte byte_1C6DDC[5];
 extern ushort word_1C8446;
 extern ushort unkn3de_len;
 
-extern ushort weapon_text_index[32];
-extern ushort cybmod_text_index[16];
 extern ubyte background_type;
 extern ubyte old_screentype;
 extern ubyte screentype;
@@ -226,7 +205,6 @@ extern ubyte data_1c498d;
 extern ubyte mouse_sprite_anim_frame;
 extern char *outro_text_s;
 extern char *outro_text_z;
-extern long data_197150;
 extern long data_1dd91c;
 extern ubyte unkn_flags_01;
 extern long outro_credits_enabled;
@@ -234,19 +212,8 @@ extern long outro_unkn02;
 extern long outro_unkn03;
 extern long people_groups_count;
 extern long data_1ddb68;
-extern ubyte byte_1DDC40;
 
 extern ubyte debug_hud_collision;
-
-extern void *dword_177750;
-extern void *unkn_mech_arr7;
-
-extern long mech_unkn_dw_1DC880;
-extern long mech_unkn_dw_1DC884;
-extern long mech_unkn_dw_1DC888;
-extern long mech_unkn_dw_1DC88C;
-extern long mech_unkn_dw_1DC890;
-extern long mech_unkn_dw_1DC894;
 
 extern char *people_credits_desc[];
 extern char *people_credits_groups[];
@@ -295,8 +262,6 @@ extern long dword_1AA5C8;
 
 extern ushort next_mission;
 extern ushort replay_intro_timer;
-extern ubyte show_alert;
-extern sbyte mo_weapon;
 
 extern sbyte selected_agent;
 
@@ -314,7 +279,6 @@ extern char brief_netscan_cost_text[];
 extern char *misc_text[5];
 
 extern ubyte game_system_screen;
-extern ubyte byte_197160;
 
 extern ubyte execute_commands;
 
@@ -337,20 +301,6 @@ void init_agents(void);
 void srm_reset_research(void);
 void net_new_game_prepare(void);
 
-/** Decode and draw next frame of the animation.
- */
-int xdo_next_frame(ubyte anislot);
-
-/** Decode and draw previous frame of the animation.
- *
- * Note that printing a previous frame of the FLI file requires
- * decoding all frames from start - these files do not use
- * bi-directional FLIC format.
- */
-int xdo_prev_frame(ubyte anislot);
-
-void flic_unkn03(ubyte a1);
-
 void my_preprocess_text(char *text);
 
 TbBool player_try_spend_money(long cost);
@@ -368,15 +318,12 @@ void unkn_lights_processing(void);
 void bang_set_detail(int a1);
 int sub_73C64(char *a1, ubyte a2);
 void func_6fd1c(int a1, int a2, int a3, int a4, int a5, int a6, ubyte a7);
-void show_goto_point(uint flag);
 
 void ingame_palette_reload(void);
 void game_set_cam_track_thing_xz(ThingIdx thing);
 TbBool game_cam_tracked_thing_is_player_agent(void);
 
-ubyte process_send_person(ushort player, int i);
-
-ubyte *anim_type_get_output_buffer(ubyte anislot);
+ubyte process_send_person(PlayerIdx plyr, ubyte dmuser);
 
 short test_missions(ubyte flag);
 void init_level_3d(ubyte flag);

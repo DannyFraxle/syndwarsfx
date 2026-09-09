@@ -87,12 +87,6 @@ ubyte do_login_2(ubyte click)
 
 ubyte do_abort_2(ubyte click)
 {
-#if 0
-    ubyte ret;
-    asm volatile ("call ASM_do_abort_2\n"
-        : "=r" (ret) : "a" (click));
-    return ret;
-#endif
     redraw_screen_flag = 1;
     screentype = SCRT_MAINMENU;
     edit_flag = 0;

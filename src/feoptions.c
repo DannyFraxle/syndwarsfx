@@ -70,12 +70,6 @@ ubyte ac_flashy_draw_purple_label(struct ScreenButton *p_button);
 
 void show_audio_volume_box_func_02(short scr_x, short scr_y, short a3, short a4, TbPixel colour)
 {
-#if 0
-    asm volatile (
-      "push %4\n"
-      "call ASM_show_audio_volume_box_func_02\n"
-        : : "a" (scr_x), "d" (scr_y), "b" (a3), "c" (a4), "g" (colour));
-#endif
     short i;
     int cx, cy;
 
@@ -551,12 +545,6 @@ ubyte show_audio_volume_box(struct ScreenBox *p_box)
 
 ubyte show_audio_tracks_box(struct ScreenBox *p_box)
 {
-#if 0
-    ubyte ret;
-    asm volatile ("call ASM_show_audio_tracks_box\n"
-        : "=r" (ret) : "a" (p_box));
-    return ret;
-#endif
     int i;
     ubyte drawn1 = true;
     ubyte drawn2 = true;
@@ -712,12 +700,6 @@ short horiz_proslider_prepare_right_arrow_pts(short *pts_x, short *pts_y, short 
 
 ubyte change_panel_permutation(ubyte click)
 {
-#if 0
-    ubyte ret;
-    asm volatile ("call ASM_change_panel_permutation\n"
-        : "=r" (ret) : "a" (click));
-    return ret;
-#endif
     if (click)
     {
         game_option_dec(GOpt_PanelPermutation);
@@ -732,12 +714,6 @@ ubyte change_panel_permutation(ubyte click)
 
 ubyte change_trenchcoat_preference(ubyte click)
 {
-#if 0
-    ubyte ret;
-    asm volatile ("call ASM_change_trenchcoat_preference\n"
-        : "=r" (ret) : "a" (click));
-    return ret;
-#endif
     if (click)
     {
         game_option_dec(GOpt_TrenchcoatPreference);
@@ -1095,13 +1071,15 @@ void init_options_gfx_screen_boxes(void)
         val++;
     }
 
-    val = 0;
+    static const ubyte allowed_perspective_vals[] = {
+      ProjM_Isometric, ProjM_Perspective,
+    };
     for (i = 6; i < 8; i++)
     {
+        val = allowed_perspective_vals[i - 6];
         options_gfx_buttons[i].Radio = &game_perspective;
         options_gfx_buttons[i].RadioValue = val;
         options_gfx_buttons[i].Flags |= GBxFlg_RadioBtn;
-        val += 5;
     }
 
     val = 0;

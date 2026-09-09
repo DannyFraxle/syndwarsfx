@@ -190,6 +190,8 @@ const struct TbNamedEnum missions_conf_any_bool[] = {
 
 struct Campaign campaigns[CAMPAIGNS_MAX_COUNT];
 
+struct Mission mission_list[MISSIONS_MAX_COUNT];
+
 /** Size of campaign strings within the engine buffer.
  */
 ushort campaign_strings_len = 0;
@@ -529,7 +531,7 @@ void read_missions_bin_file(int num)
           mission_list[i].ReLevelNo = 0;
     }
     for (i = 1; i < next_mission; i++)
-        mission_list[i].Complete = 0;
+        mission_list[i].Complete = MResol_UNDECIDED;
 }
 
 void read_mission_netscan_objectives_bin(void)
@@ -629,7 +631,7 @@ void save_mission_single_conf(TbFileHandle fh, struct Mission *p_missi, char *bu
           (int)p_missi->ExtraRewardType, (int)p_missi->ExtraRewardParam);
         LbFileWrite(fh, buf, strlen(buf));
     }
-    if ((p_missi->SuccessLevel[0]|p_missi->SuccessLevel[1]|p_missi->SuccessLevel[2]) != 0) {
+    if ((p_missi->SuccessLevel[0]|p_missi->SuccessLevel[1]) != 0) {
         sprintf(buf, "SuccessLevel = %d %d\n",
           (int)p_missi->SuccessLevel[0], (int)p_missi->SuccessLevel[1]);
         LbFileWrite(fh, buf, strlen(buf));

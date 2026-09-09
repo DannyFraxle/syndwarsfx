@@ -811,12 +811,22 @@ ubyte mem_group_arrived_square2(struct Thing *p_person, ushort group, short x, s
   int x2, int z2, int count)
 {
     ubyte ret;
+    // Pushed through a register holding them: a "g" operand may be placed
+    // relative to the stack pointer, which each push moves.
+    int stkargs[3];
+
+    stkargs[0] = (int)(intptr_t)x2;
+    stkargs[1] = (int)(intptr_t)z2;
+    stkargs[2] = (int)(intptr_t)count;
+
     asm volatile (
-      "push %7\n"
-      "push %6\n"
-      "push %5\n"
+      "push 8(%5)\n"
+      "push 4(%5)\n"
+      "push 0(%5)\n"
       "call ASM_mem_group_arrived_square2\n"
-        : "=r" (ret) : "a" (p_person), "d" (group), "b" (x), "c" (z), "g" (x2), "g" (z2), "g" (count));
+        : "=r" (ret)
+        : "a" (p_person), "d" (group), "b" (x), "c" (z), "S" (stkargs)
+        : "cc", "memory");
     return ret;
 }
 
@@ -824,11 +834,20 @@ ubyte mem_group_arrived(ushort group, short x, short y, short z,
   int radius, int count)
 {
     ubyte ret;
+    // Pushed through a register holding them: a "g" operand may be placed
+    // relative to the stack pointer, which each push moves.
+    int stkargs[2];
+
+    stkargs[0] = (int)(intptr_t)radius;
+    stkargs[1] = (int)(intptr_t)count;
+
     asm volatile (
-      "push %6\n"
-      "push %5\n"
+      "push 4(%5)\n"
+      "push 0(%5)\n"
       "call ASM_mem_group_arrived\n"
-        : "=r" (ret) : "a" (group), "d" (x), "b" (y), "c" (z), "g" (radius), "g" (count));
+        : "=r" (ret)
+        : "a" (group), "d" (x), "b" (y), "c" (z), "S" (stkargs)
+        : "cc", "memory");
     return ret;
 }
 

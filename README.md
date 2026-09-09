@@ -377,11 +377,11 @@ The WildMIDI library is not available as MSYS2 pacman package, install manually:
 
 ```
 pacman -S unzip
-wget https://github.com/Mindwerks/wildmidi/releases/download/wildmidi-0.4.5/wildmidi-0.4.5-win32.zip
-unzip wildmidi-0.4.5-win32.zip
-cp wildmidi-0.4.5-win32/*.h /mingw32/include/
-cp wildmidi-0.4.5-win32/*.a /mingw32/lib/
-cp wildmidi-0.4.5-win32/*.dll /mingw32/bin/
+wget https://github.com/Mindwerks/wildmidi/releases/download/wildmidi-0.5.0/wildmidi-0.5.0-windows.zip
+unzip wildmidi-0.5.0-windows.zip
+cp wildmidi-0.5.0-windows/include/*.h /mingw32/include/
+cp wildmidi-0.5.0-windows/x86/*.a /mingw32/lib/
+cp wildmidi-0.5.0-windows/x86/*.dll /mingw32/bin/
 ```
 
 The Python interpeter needs to have an additional module installed:
@@ -408,7 +408,7 @@ folders with data for 64-bit building.
 Go to the `syndwarsfx` folder, and generate build scripts from templates using autotools:
 
 ```
-autoreconf -ivf --include=/mingw32/share/aclocal/
+PATH="/mingw32/bin:$PATH" autoreconf -ivf --include=/mingw32/share/aclocal/
 ```
 
 Next, proceed with the build steps; we will do that in a separate folder.

@@ -37,10 +37,11 @@ struct ScreenBoxBase;
 
 #pragma pack()
 /******************************************************************************/
-// TODO for this variable the first weapon is 0 instead of 1
-// to be fixed to define variables in the same way everywhere
-extern sbyte selected_weapon;
+/** Weapon selected in the equipment screen, 0 for none.
+ */
+extern ubyte selected_weapon;
 extern ubyte display_box_content;
+extern ubyte mo_weapon;
 
 ubyte show_equipment_screen(void);
 

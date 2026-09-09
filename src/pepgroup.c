@@ -24,6 +24,7 @@
 
 #include "command.h"
 #include "player.h"
+#include "swlog.h"
 #include "thing.h"
 #include "game.h"
 #include "game_options.h"
@@ -803,5 +804,50 @@ ushort make_group_into_players(ushort group, ushort plyr, ushort max_agent, shor
         players[plyr].MyAgent[plagent] = &things[0];
 
     return n;
+}
+
+void unkn_truce_groups_sub1(void)
+{
+    ubyte playable[40];
+    ubyte pla_grp_count[5];
+    ushort plyr;
+    ushort grp1, grp2;
+    ushort k, m;
+    ushort j;
+
+    LbMemorySet(playable, 0, sizeof(playable));
+    LbMemorySet(pla_grp_count, 0, sizeof(pla_grp_count));
+
+    for (plyr = 0; plyr < PLAYERS_LIMIT; plyr++)
+    {
+        if (((1 << plyr) & ingame.InNetGame_UNSURE) == 0)
+            continue;
+
+        j = byte_1C5C28[plyr];
+        k = pla_grp_count[j];
+        playable[8 * j + k] = level_def.PlayableGroups[plyr];
+        pla_grp_count[j]++;
+    }
+
+    for (j = 1; j < 5; j++)
+    {
+        for (k = 0; k < pla_grp_count[j]; k++)
+        {
+            for (m = 0; m < pla_grp_count[j]; m++)
+            {
+                if (m == k)
+                    continue;
+
+                grp1 = playable[8 * j + k];
+                grp2 = playable[8 * j + m];
+
+                war_flags[grp1].Truce |= (1 << grp2);
+                war_flags[grp1].KillOnSight &= ~(1 << grp2);
+                war_flags[grp1].KillIfArmed &= ~(1 << grp2);
+                war_flags[grp1].KillIfWeaponOut &= ~(1 << grp2);
+                LOGSYNC("group %d truced with group %d", grp1, grp2);
+            }
+        }
+    }
 }
 /******************************************************************************/

@@ -152,6 +152,8 @@ const char *state_change_result_names[] = {
     "goal unattainable",
 };
 
+ThingIdx same_type_head[256+32] = {0};
+
 /******************************************************************************/
 
 TbBool thing_type_is_simple(short ttype)
@@ -1190,7 +1192,6 @@ void process_things(void)
 #endif
     build_same_type_headers();
     ingame.fld_unkC4B = 0;
-    animate_textures();
     unkn_update_lights();
     unkn_full_update_lights();
 
@@ -1457,6 +1458,7 @@ short add_static(int x, int y, int z, ushort frame, int timer)
     p_sthing->Y = y;
     p_sthing->Parent = 0;
     p_sthing->StartFrame = frame - 1;
+    //TODO verify and/or unify to allow use of reset_sthing_frame(p_sthing);
     p_sthing->Frame = nstart_ani[p_sthing->StartFrame + 1];
     add_node_sthing(thing);
     p_sthing->Type = SmTT_STATIC;
@@ -1570,6 +1572,8 @@ short get_thing_same_type_head(short ttype, short subtype)
     case TT_MINE:
         if (subtype == 48)
             thing = same_type_head[6];
+        else
+            thing = 0;
         break;
     default:
         thing = 0;
@@ -1942,11 +1946,20 @@ struct SimpleThing *create_scale_effect(int x, int y, int z, ushort frame, short
 struct SimpleThing *create_sound_effect(int x, int y, int z, ushort sample, int vol, int loop)
 {
     struct SimpleThing *ret;
+    // Pushed through a register holding them: a "g" operand may be placed
+    // relative to the stack pointer, which each push moves.
+    int stkargs[2];
+
+    stkargs[0] = (int)(intptr_t)vol;
+    stkargs[1] = (int)(intptr_t)loop;
+
     asm volatile (
-      "push %6\n"
-      "push %5\n"
+      "push 4(%5)\n"
+      "push 0(%5)\n"
       "call ASM_create_sound_effect\n"
-        : "=r" (ret) : "a" (x), "d" (y), "b" (z), "c" (sample), "g" (vol), "g" (loop));
+        : "=r" (ret)
+        : "a" (x), "d" (y), "b" (z), "c" (sample), "S" (stkargs)
+        : "cc", "memory");
     return ret;
 }
 
@@ -1997,6 +2010,31 @@ struct SimpleThing *create_time_pod(MapCoord x, MapCoord y, MapCoord z,
     p_podtng->Timer1 = timer;
     add_node_sthing(thing);
     return p_podtng;
+}
+
+struct SimpleThing *create_electric_strand(MapCoord x, MapCoord y, MapCoord z,
+  MapCoord x2, MapCoord y2, MapCoord z2, int sound)
+{
+#if 1
+    struct SimpleThing *ret;
+    // Pushed through a register holding them: a "g" operand may be placed
+    // relative to the stack pointer, which each push moves.
+    int stkargs[3];
+
+    stkargs[0] = (int)(intptr_t)y2;
+    stkargs[1] = (int)(intptr_t)z2;
+    stkargs[2] = (int)(intptr_t)sound;
+
+    asm volatile (
+      "push 8(%5)\n"
+      "push 4(%5)\n"
+      "push 0(%5)\n"
+      "call ASM_create_electric_strand\n"
+        : "=r" (ret)
+        : "a" ((s32)x), "d" ((s32)y), "b" ((s32)z), "c" ((s32)x2), "S" (stkargs)
+        : "cc", "memory");
+    return ret;
+#endif
 }
 
 void mine_detonate(struct Thing *p_thing)

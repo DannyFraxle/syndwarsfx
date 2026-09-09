@@ -111,8 +111,8 @@ void draw_frame_on_map_coords(MapCoord cor_x, MapCoord cor_y, MapCoord cor_z,
     }
 
     transform_shpoint(&sp, cor_dt_x, 8 * cor_dt_y - 8 * engn_yc, cor_dt_z);
-    sp.X += ((overall_scale * scr_sh_x) >> 8);
-    sp.Y += ((overall_scale * scr_sh_y) >> 8);
+    sp.X += ((scr_sh_x * overall_scale) >> 8);
+    sp.Y += ((scr_sh_y * overall_scale) >> 8);
 
     /* FX3D: the agent-number frame is drawn by the hardware renderer as a
      * re-projected overlay quad (captured in number_player). Skip the software

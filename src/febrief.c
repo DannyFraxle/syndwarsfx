@@ -28,6 +28,7 @@
 
 #include "bigmap.h"
 #include "campaign.h"
+#include "embedanim.h"
 #include "femail.h"
 #include "femain.h"
 #include "game_data.h"
@@ -64,7 +65,6 @@ struct ScreenTextBox brief_netscan_box = {0};
 struct ScreenBox brief_graphical_box = {0};
 
 extern sbyte selected_netscan_objective;// = -1;
-extern char unkn39_text[];
 
 ubyte brief_state_city_selected = 0;
 ubyte brief_citymap_content = BriCtM_AUTO_SCANNER;
@@ -174,12 +174,6 @@ TbBool mouse_over_text_window_item(short tx_height, short margin, short start_sh
 
 ubyte show_brief_netscan_box(struct ScreenTextBox *p_box)
 {
-#if 0
-    ubyte ret;
-    asm volatile ("call ASM_show_brief_netscan_box\n"
-        : "=r" (ret) : "a" (p_box));
-    return ret;
-#endif
     int nlines;
     short start_shift;
     short nsobv;
@@ -244,23 +238,17 @@ ubyte show_brief_netscan_box(struct ScreenTextBox *p_box)
 
 void flic_netscan_open_anim(ubyte netno)
 {
-    struct Animation *p_anim;
-    PathInfo *pinfo;
-    int k;
     ubyte anislot;
 
     anislot = AniSl_NETSCAN;
-    k = anim_slots[anislot];
-    p_anim = &animations[k];
-    pinfo = &game_dirs[DirPlace_Equip];
-    anim_flic_set_fname(p_anim, "%s/net%02d.fli", pinfo->directory, netno);
-    flic_unkn03(anislot);
+    embanim_set_netscan_file(anislot, netno);
+    embanim_reinit(anislot);
 }
 
 void purple_unkn2_data_to_screen(void)
 {
-    ubyte *buf;
-    buf = anim_type_get_output_buffer(AniSl_NETSCAN);
+    TbPixel *buf;
+    buf = embanim_type_get_output_buffer(AniSl_NETSCAN);
     LbScreenSetGraphicsWindow(brief_graphical_box.X + 1, brief_graphical_box.Y + 1,
       brief_graphical_box.Width - 2, brief_graphical_box.Height - 2);
     LbScreenCopy(buf, lbDisplay.GraphicsWindowPtr, lbDisplay.GraphicsWindowHeight);
@@ -528,7 +516,7 @@ ubyte show_citymap_box(struct ScreenBox *p_box)
         anim_no = netscan_objectives[selected_netscan_objective].AnimNo;
         if (anim_no == 0)
             brief_citymap_content = BriCtM_AUTO_SCANNER;
-        if (xdo_next_frame(AniSl_NETSCAN))
+        if (embanim_do_next_frame(AniSl_NETSCAN))
             brief_citymap_content = BriCtM_AUTO_SCANNER;
         draw_flic_purple_list(ac_purple_unkn2_data_to_screen);
     }
@@ -645,10 +633,6 @@ void skip_flashy_draw_mission_screen_boxes(void)
 
 ubyte show_mission_screen(void)
 {
-#if 0
-    asm volatile ("call ASM_show_mission_screen\n"
-        :  :  : "eax" );
-#endif
     ubyte drawn = true;
 
     if (((game_projector_speed) && is_heading_flag01()) ||
@@ -707,19 +691,20 @@ void init_brief_screen_boxes(void)
 
     init_screen_text_box(&brief_netscan_box, 7, 281, 322, 145,
       6, small_med_font, 3);
-    init_screen_button(&brief_NETSCAN_button, 312u, 405u,
-      gui_strings[441], 6, med2_font, 1, 0x80);
-    init_screen_info_box(&brief_NETSCAN_COST_box, 12u, 405u, 213u,
-      gui_strings[442], unkn39_text, 6, med_font, small_med_font, 1);
+    init_screen_button(&brief_NETSCAN_button, 312, 405, gui_strings[441],
+      6, med2_font, 1, 0x80);
+    init_screen_info_box(&brief_NETSCAN_COST_box, 12, 405, 213, gui_strings[442], "",
+      6, med_font, small_med_font, 1);
     brief_NETSCAN_COST_box.Text2 = brief_netscan_cost_text;
     brief_NETSCAN_button.CallBackFn = brief_do_netscan_enhance;
     brief_netscan_box.DrawTextFn = show_brief_netscan_box;
 
-    init_screen_text_box(&brief_mission_text_box, 338u, 72u, 295u, 354, 6, small_font, 3);
-    init_screen_button(&unkn1_ACCEPT_button, 343u, 405u,
-      gui_strings[436], 6, med2_font, 1, 0x00);
-    init_screen_button(&unkn1_CANCEL_button, 616u, 405u,
-      gui_strings[437], 6, med2_font, 1, 0x80);
+    init_screen_text_box(&brief_mission_text_box, 338u, 72u, 295u, 354,
+      6, small_font, 3);
+    init_screen_button(&unkn1_ACCEPT_button, 343u, 405u, gui_strings[436],
+      6, med2_font, 1, 0x00);
+    init_screen_button(&unkn1_CANCEL_button, 616u, 405u, gui_strings[437],
+      6, med2_font, 1, 0x80);
     brief_mission_text_box.Buttons[0] = &unkn1_ACCEPT_button;
     brief_mission_text_box.Buttons[1] = &unkn1_CANCEL_button;
     brief_mission_text_box.Text = mission_briefing_text;

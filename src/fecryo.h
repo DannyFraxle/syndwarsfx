@@ -56,7 +56,22 @@ enum ModDrawStage {
 
 #pragma pack()
 /******************************************************************************/
-extern sbyte selected_mod;
+/** Cybernetic modification selected in the cryovat screen, 0 for none.
+ */
+extern ubyte selected_mod;
+
+/** Print full name of cybernetic mod type to a buffer.
+ */
+void snprint_cybmod_type_long_name(char *buf, u32 buflen, ushort mtype);
+
+/** Get global text pointer to a mod group name string.
+ */
+const char *fe_gtext_cybmod_group_type_name(ushort mtype);
+
+/** Get global text pointer to a mod level string.
+ * @see loctext_to_gtext()
+ */
+const char *fe_gtext_cybmod_level(ushort mtype);
 
 ubyte show_cryo_chamber_screen(void);
 void update_flic_mods(ubyte *mods);

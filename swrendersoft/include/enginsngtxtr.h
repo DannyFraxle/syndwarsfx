@@ -27,6 +27,13 @@ extern "C" {
 /******************************************************************************/
 #pragma pack(1)
 
+enum TextureFlags {
+  TextrF_Unkn4k = 0x4000,
+  TextrF_Unkn8k = 0x8000,
+};
+
+#define TextrF_AllMask (TextrF_Unkn4k | TextrF_Unkn8k)
+
 struct SingleFloorTexture { // sizeof=18
     ubyte TMapX1;
     ubyte TMapY1;

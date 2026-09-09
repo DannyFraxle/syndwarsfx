@@ -1083,12 +1083,22 @@ short find_nearest_person_min(int x, int y, int z,
   int n_dist, int *a_dist, int angle1, u32 group_bits)
 {
     short ret;
+    // Pushed through a register holding them: a "g" operand may be placed
+    // relative to the stack pointer, which each push moves.
+    int stkargs[3];
+
+    stkargs[0] = (int)(intptr_t)a_dist;
+    stkargs[1] = (int)(intptr_t)angle1;
+    stkargs[2] = (int)(intptr_t)group_bits;
+
     asm volatile (
-      "push %7\n"
-      "push %6\n"
-      "push %5\n"
+      "push 8(%5)\n"
+      "push 4(%5)\n"
+      "push 0(%5)\n"
       "call ASM_find_nearest_person_min\n"
-        : "=r" (ret) : "a" (x), "d" (y), "b" (z), "c" (n_dist), "g" (a_dist), "g" (angle1), "g" (group_bits));
+        : "=r" (ret)
+        : "a" (x), "d" (y), "b" (z), "c" (n_dist), "S" (stkargs)
+        : "cc", "memory");
     return ret;
 }
 

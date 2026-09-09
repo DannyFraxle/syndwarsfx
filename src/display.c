@@ -53,6 +53,9 @@ TbScreenMode screen_mode_menu = Lb_SCREEN_MODE_640_480_8;
 TbScreenMode screen_mode_fmvid_lo = Lb_SCREEN_MODE_320_200_8;
 TbScreenMode screen_mode_fmvid_hi = Lb_SCREEN_MODE_640_480_8;
 
+ushort text_window_x1, text_window_y1;
+ushort text_window_x2, text_window_y2;
+
 extern ushort data_1aa330;
 extern ushort data_1aa332;
 
@@ -309,11 +312,6 @@ TbResult cover_screen_rect_with_raw_file(short x, short y, ushort w, ushort h, c
 
 void my_set_text_window(ushort x1, ushort y1, ushort w, ushort h)
 {
-#if 0
-    asm volatile (
-      "call ASM_my_set_text_window\n"
-        : : "a" (x1), "d" (y1), "b" (w), "c" (h));
-#endif
     text_window_x1 = x1;
     text_window_y1 = y1;
     text_window_x2 = x1 + w - 1;
@@ -339,33 +337,18 @@ void ingame_palette_reload(void)
 
 void change_brightness(short amount)
 {
-#if 0
-    asm volatile ("call ASM_change_brightness\n"
-        : : "a" (val));
-#endif
     ingame_palette_reload();
     change_brightness_from_normal(amount);
 }
 
 void set_user_selected_brightness(void)
 {
-#if 0
-    asm volatile ("call ASM_set_user_selected_brightness\n"
-        :  :  : "eax" );
-    return;
-#endif
     momentary_brightness = user_sel_brightness;
     change_brightness(0);
 }
 
 void reset_user_selected_brightness(void)
 {
-#if 0
-    TbResult ret;
-    asm volatile ("call ASM_reset_user_selected_brightness\n"
-        : "=r" (ret) : );
-    return ret;
-#endif
     ingame_palette_reload();
     user_sel_brightness = 0;
     set_user_selected_brightness();

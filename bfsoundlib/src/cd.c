@@ -463,7 +463,8 @@ void InitMusicOGG(const char *nmusic_dir)
     const char *reason;
     EnsureAILStartup();
 
-    strncpy(music_dir, nmusic_dir, sizeof(music_dir));
+    strncpy(music_dir, nmusic_dir, sizeof(music_dir) - 1);
+    music_dir[sizeof(music_dir) - 1] = '\0';
 
     if (!ogg_vorbis_stream_init(&sound_music_stream)) {
         reason = "init fail";

@@ -34,6 +34,7 @@
 #include "campaign.h"
 #include "cybmod.h"
 #include "display.h"
+#include "embedanim.h"
 #include "feequip.h"
 #include "femain.h"
 #include "fenet.h"
@@ -58,15 +59,19 @@ struct ScreenTextBox cryo_agent_list_box = {0};
 struct ScreenTextBox cryo_cybmod_list_box = {0};
 struct ScreenButton cryo_offer_cancel_button = {0};
 
-extern char cybmod_name_text[];
+char cybmod_name_text[20] = "";
 
-extern ubyte current_frame;
+ubyte byte_1DDC40 = 0;
+
+/** Currently visible frame of cyborg breathing animation.
+ */
+ubyte current_frame = 0;
+
 extern short word_15511E; // = -1;
 extern ubyte byte_155174; // = 166;
 extern ubyte byte_155175[];
 extern ubyte byte_155180; // = 109;
 extern ubyte byte_155181[];
-extern ubyte byte_1551F4[5];
 extern ubyte cheat_research_cybmods;
 extern ubyte byte_1C4978;
 extern ubyte byte_1C4979;
@@ -87,6 +92,8 @@ ubyte ac_do_cryo_all_agents_set(ubyte click);
 void ac_weapon_flic_data_to_screen(void);
 ubyte do_equip_offer_buy(ubyte click);
 
+ubyte selected_mod = 0;
+
 struct ScreenRect equip_blokey_rect[] = {
     {23,  0,  93, 197},
     {46,  0,  47,  50},
@@ -97,6 +104,50 @@ struct ScreenRect equip_blokey_rect[] = {
 };
 
 /******************************************************************************/
+
+void snprint_cybmod_type_long_name(char *buf, u32 buflen, ushort mtype)
+{
+    ushort mdstr_id, lvstr_id;
+    ubyte mgroup;
+    ubyte modlv;
+
+    mgroup = cybmod_group_type(mtype);
+    modlv = cybmod_version(mtype);
+    mdstr_id = mod_group_type_strid[mgroup];
+    if (mgroup != MODGRP_EPIDERM)
+       lvstr_id = 76;
+    else
+       lvstr_id = 75;
+    snprintf(buf, buflen, "%s %s %d", gui_strings[mdstr_id], gui_strings[lvstr_id], modlv);
+}
+
+const char *fe_gtext_cybmod_group_type_name(ushort mtype)
+{
+    ubyte mgroup;
+    ushort mdstr_id;
+
+    mgroup = cybmod_group_type(mtype);
+    mdstr_id = mod_group_type_strid[mgroup];
+    return gui_strings[mdstr_id];
+}
+
+const char *fe_gtext_cybmod_level(ushort mtype)
+{
+    char locstr[48];
+    ubyte mgroup;
+    ubyte modlv;
+    ushort lvstr_id;
+
+    mgroup = cybmod_group_type(mtype);
+    modlv = cybmod_version(mtype);
+
+    if (mgroup != MODGRP_EPIDERM)
+        lvstr_id = 76;
+    else
+        lvstr_id = 75;
+    sprintf(locstr, "%s %d", gui_strings[lvstr_id], modlv);
+    return loctext_to_gtext(locstr);
+}
 
 /** Determines if buy or sell should be available in the cryo mod offer.
  *
@@ -117,70 +168,40 @@ void update_cybmod_cost_text(void)
     struct ModDef *mdef;
     int cost;
 
-    if (selected_mod == -1) // No mod selected
+    if (selected_mod == 0) // No mod selected
     {
         equip_cost_text[0] = '\0';
         return;
     }
 
-    mdef = &mod_defs[selected_mod + 1];
+    mdef = &mod_defs[selected_mod];
     cost = 10 * (int)mdef->Cost;
     sprintf(equip_cost_text, "%d", cost);
 }
 
 void update_cybmod_name_text(void)
 {
-    ushort mtype;
-    ushort mdstr_id, lvstr_id;
-    ubyte modgrp, modlv;
-
-    if (selected_mod == -1) // No mod selected
+    if (selected_mod == 0) // No mod selected
     {
         cybmod_name_text[0] = '\0';
         return;
     }
 
-    mtype = selected_mod + 1;
-
-    modgrp = cybmod_group_type(mtype);
-    modlv = cybmod_version(mtype);
-    mdstr_id = 70 + byte_1551F4[modgrp];
-    if (modgrp != MODGRP_EPIDERM)
-       lvstr_id = 76;
-    else
-       lvstr_id = 75;
-    sprintf(cybmod_name_text, "%s %s %d", gui_strings[mdstr_id], gui_strings[lvstr_id], modlv);
-}
-
-/** Get global text pointer to a mod level string.
- * @see loctext_to_gtext()
- */
-static const char *cryo_gtext_cybmod_list_item_level(ushort mtype)
-{
-    char locstr[48];
-    ubyte modlv;
-    ushort lvstr_id;
-
-    modlv = cybmod_version(mtype);
-
-    if (cybmod_group_type(mtype) != MODGRP_EPIDERM)
-        lvstr_id = 76;
-    else
-        lvstr_id = 75;
-    sprintf(locstr, "%s %d", gui_strings[lvstr_id], modlv);
-    return loctext_to_gtext(locstr);
+    snprint_cybmod_type_long_name(cybmod_name_text, sizeof(cybmod_name_text), selected_mod);
 }
 
 TbBool cybmod_has_display_anim(ubyte mod)
 {
-    return (1 << (mod - 1) < 0x1000);
+    if (mod < 1) // No mod selected
+        return false;
+    return ((1 << (mod - 1)) < 0x1000);
 }
 
 void cryo_display_box_redraw(struct ScreenTextBox *p_box)
 {
     ubyte real_dbcontent;
 
-    real_dbcontent = cybmod_has_display_anim(selected_mod + 1) ? display_box_content : DiBoxCt_TEXT;
+    real_dbcontent = cybmod_has_display_anim(selected_mod) ? display_box_content : DiBoxCt_TEXT;
     switch (real_dbcontent)
     {
     case DiBoxCt_TEXT:
@@ -200,7 +221,7 @@ void cryo_display_box_redraw(struct ScreenTextBox *p_box)
         // Remove scroll bars
         p_box->Flags &= ~GBxFlg_RadioBtn;
 
-        init_weapon_anim(selected_mod + 32);
+        init_weapon_anim(selected_mod + 31);
         // Negative value saves the background before starting animation
         p_box->TextFadePos = -2;
         break;
@@ -212,7 +233,7 @@ void cryo_update_for_selected_cybmod(void)
     update_cybmod_name_text();
     update_cybmod_cost_text();
 
-    if (selected_mod == -1) // No mod selected
+    if (selected_mod == 0) // No mod selected
     {
         cryo_cybmod_list_box.Flags |= GBxFlg_Unkn0080;
         // Re-add scroll bars
@@ -228,13 +249,7 @@ void cryo_update_for_selected_cybmod(void)
 
 ubyte do_cryo_offer_cancel(ubyte click)
 {
-#if 0
-    ubyte ret;
-    asm volatile ("call ASM_do_cryo_offer_cancel\n"
-        : "=r" (ret) : "a" (click));
-    return ret;
-#endif
-    selected_mod = -1;
+    selected_mod = 0;
     cryo_update_for_selected_cybmod();
     refresh_equip_list = 1;
     return 0;
@@ -301,7 +316,7 @@ ubyte do_equip_offer_buy_cybmod(ubyte click)
     struct ModDef *mdef;
     ubyte nbought;
 
-    mdef = &mod_defs[selected_mod + 1];
+    mdef = &mod_defs[selected_mod];
     nbought = 0;
 
     if (selected_agent != 4)
@@ -316,10 +331,10 @@ ubyte do_equip_offer_buy_cybmod(ubyte click)
         if (ingame.Credits - cost < 0)
             added = false;
         else
-            added = player_cryo_add_cybmod(nagent, selected_mod + 1);
+            added = player_cryo_add_cybmod(nagent, selected_mod);
 
         if (added) {
-            mod_draw_update_on_change(selected_mod + 1);
+            mod_draw_update_on_change(selected_mod);
         }
 
         if (added) {
@@ -341,10 +356,10 @@ ubyte do_equip_offer_buy_cybmod(ubyte click)
             if (ingame.Credits - cost < 0)
                 break;
 
-            added = player_cryo_add_cybmod(nagent, selected_mod + 1);
+            added = player_cryo_add_cybmod(nagent, selected_mod);
 
             if (added) {
-                mod_draw_update_on_change(selected_mod + 1);
+                mod_draw_update_on_change(selected_mod);
             }
 
             if (added) {
@@ -360,7 +375,7 @@ ubyte do_equip_offer_buy_cybmod(ubyte click)
         if ((login_control__State == LognCt_Unkn5) && ((net_game_play_flags & NGPF_Unkn08) != 0)) {
             net_schedule_player_cryo_equip_sync();
         }
-        selected_mod = -1;
+        selected_mod = 0;
         cryo_update_for_selected_cybmod();
         refresh_equip_list = 1;
     }
@@ -390,68 +405,6 @@ void sprint_cryo_cyborg_mods_static_fname(char *str, ubyte part, ubyte *p_mods_a
         break;
     default:
         str[0] = '\0';
-        break;
-    }
-}
-
-void cryo_cyborg_mods_anim_set_fname(ubyte anislot, ubyte part, ubyte stage)
-{
-    struct Animation *p_anim;
-    PathInfo *pinfo;
-    int k;
-
-    k = anim_slots[anislot];
-    p_anim = &animations[k];
-
-    pinfo = &game_dirs[DirPlace_QEquip];
-
-    switch (stage)
-    {
-    case ModDSt_BRT:
-        anim_flic_set_fname(p_anim, "%s/m%da%d.fli", pinfo->directory, flic_mods[0], flic_mods[2]);
-        break;
-    case ModDSt_OUT:
-        switch (part)
-        {
-        case ModDPt_CHEST:
-            anim_flic_set_fname(p_anim, "%s/m%dbo.fli", pinfo->directory, old_flic_mods[0]);
-            break;
-        case ModDPt_BRAIN:
-            anim_flic_set_fname(p_anim, "%s/m%dbbo.fli", pinfo->directory, old_flic_mods[0]);
-            break;
-        case ModDPt_ARMS:
-            anim_flic_set_fname(p_anim, "%s/m%da%do.fli", pinfo->directory, old_flic_mods[0], old_flic_mods[2]);
-            break;
-        case ModDPt_LEGS:
-            anim_flic_set_fname(p_anim, "%s/m%dl%do.fli", pinfo->directory, old_flic_mods[0], old_flic_mods[3]);
-            break;
-        default:
-            assert(!"unreachable");
-            break;
-        }
-        break;
-    case ModDSt_IN:
-        switch (part)
-        {
-          case ModDPt_CHEST:
-            anim_flic_set_fname(p_anim, "%s/m%dbi.fli", pinfo->directory, flic_mods[0]);
-            break;
-          case ModDPt_BRAIN:
-            anim_flic_set_fname(p_anim, "%s/m%dbbi.fli", pinfo->directory, flic_mods[0]);
-            break;
-          case ModDPt_ARMS:
-            anim_flic_set_fname(p_anim, "%s/m%da%di.fli", pinfo->directory, flic_mods[0], flic_mods[2]);
-            break;
-          case ModDPt_LEGS:
-            anim_flic_set_fname(p_anim, "%s/m%dl%di.fli", pinfo->directory, flic_mods[0], flic_mods[3]);
-            break;
-          default:
-            assert(!"unreachable");
-            break;
-        }
-        break;
-    case 3:
-        // No animation
         break;
     }
 }
@@ -573,7 +526,7 @@ void cryo_cyborg_part_buf_blokey_static_load(ubyte *p_mods_arr, ubyte part)
     long len;
     short h, scanln;
 
-    p_scratch = anim_type_get_output_buffer(AniSl_SCRATCH);
+    p_scratch = embanim_type_get_output_buffer(AniSl_SCRATCH);
     p_partbuf = cryo_cyborg_part_buf_ptr(part);
 
     scanln = raw_file_scanline(equip_blokey_rect[part].Width);
@@ -606,7 +559,7 @@ void cryo_cyborg_part_buf_blokey_fli_frame_copy(ubyte part, ubyte anislot)
     h = equip_blokey_rect[part].Height;
 
     // Blit the current part image onto framebuf
-    p_flicbuf = anim_type_get_output_buffer(anislot);
+    p_flicbuf = embanim_type_get_output_buffer(anislot);
     p_partbuf = cryo_cyborg_part_buf_ptr(part);
     partbuf_scanln = raw_file_scanline(w);
 
@@ -637,33 +590,6 @@ void cryo_cyborg_part_buf_blokey_static_load_all(ubyte *p_mods_arr)
             continue;
 
         cryo_cyborg_part_buf_blokey_static_load(p_mods_arr, part);
-    }
-}
-
-/** Clears output buffer of the animation at given slot.
- *
- * The animation must be opened, but its frame buffer
- * doesn't have to be set for this function to work.
- */
-void flic_clear_output_buffer(ubyte anislot)
-{
-    struct Animation *p_anim;
-    int k;
-
-    k = anim_slots[anislot];
-    p_anim = &animations[k];
-    if (anim_is_opened(p_anim))
-    {
-        ubyte *obuf;
-        short h;
-
-        obuf = anim_type_get_output_buffer(p_anim->Type);
-
-        for (h = p_anim->FLCFileHeader.Height; h > 0; h--)
-        {
-            LbMemorySet(obuf, '\0', p_anim->FLCFileHeader.Width);
-            obuf += p_anim->FLCFileHeader.Width;
-        }
     }
 }
 
@@ -749,9 +675,9 @@ void init_next_blokey_flic(void)
         }
         else if (!IsSamplePlaying(0, 134, 0))
         {
-            cryo_cyborg_mods_anim_set_fname(anislot, part, stage);
-            flic_unkn03(anislot);
-            flic_clear_output_buffer(anislot);
+            embanim_set_cyborg_part_file(anislot, part, stage);
+            embanim_reinit(anislot);
+            embanim_clear_output_buffer(anislot);
             play_sample_using_heap(0, 126, FULL_VOL, EQUL_PAN, NORM_PTCH, LOOP_NO, 1u);
             current_frame = 0;
             new_current_drawing_mod = ModDPt_BREATH;
@@ -760,8 +686,8 @@ void init_next_blokey_flic(void)
         break;
     case ModDSt_OUT:
         anislot = AniSl_CYBORG_INOUT;
-        cryo_cyborg_mods_anim_set_fname(anislot, part, stage);
-        flic_unkn03(anislot);
+        embanim_set_cyborg_part_file(anislot, part, stage);
+        embanim_reinit(anislot);
         old_flic_mods[part] = 0;
         new_current_drawing_mod = part;
         mod_draw_states[part] |= ModDSt_ModAnimOut;
@@ -771,9 +697,9 @@ void init_next_blokey_flic(void)
         break;
     case ModDSt_IN:
         anislot = AniSl_CYBORG_INOUT;
-        cryo_cyborg_mods_anim_set_fname(anislot, part, stage);
-        flic_unkn03(anislot);
-        flic_clear_output_buffer(anislot);
+        embanim_set_cyborg_part_file(anislot, part, stage);
+        embanim_reinit(anislot);
+        embanim_clear_output_buffer(anislot);
         new_current_drawing_mod = part;
         mod_draw_states[part] |= ModDSt_ModAnimIn;
         mod_draw_states[part] &= ~ModDSt_Unkn08;
@@ -974,16 +900,16 @@ ubyte cryo_blokey_mod_level(ubyte ordpart)
     case 4:
         mver = flic_mods[ModDPt_LEGS];
         break;
+    default:
+        mver = 0;
+        LOGWARN("Requested blokey level for wrong part=%d", (int)ordpart);
+        break;
     }
     return mver;
 }
 
 void update_flic_mods(ubyte *mods)
 {
-#if 0
-    asm volatile ("call ASM_update_flic_mods\n"
-        : : "a" (mods));
-#endif
     short plagent, i;
     ubyte lv;
 
@@ -1074,7 +1000,7 @@ void draw_blokey_body_mods(void)
         {
             if ((mod_draw_states[part] & ModDSt_ModAnimIn) == 0)
                 continue;
-            done = xdo_next_frame(AniSl_CYBORG_INOUT);
+            done = embanim_do_next_frame(AniSl_CYBORG_INOUT);
             cryo_cyborg_part_buf_blokey_fli_frame_copy(part, AniSl_CYBORG_INOUT);
             still_playing = 1;
             if (done)
@@ -1096,7 +1022,7 @@ void draw_blokey_body_mods(void)
         {
             if ((mod_draw_states[part] & ModDSt_ModAnimOut) == 0)
                 continue;
-            done = xdo_prev_frame(AniSl_CYBORG_INOUT);
+            done = embanim_do_prev_frame(AniSl_CYBORG_INOUT);
             cryo_cyborg_part_buf_blokey_fli_frame_copy(part, AniSl_CYBORG_INOUT);
             still_playing = 1;
             if (done)
@@ -1118,7 +1044,7 @@ void draw_blokey_body_mods(void)
 
     if (!still_playing && (current_drawing_mod == ModDPt_BREATH))
     {
-        done = xdo_next_frame(AniSl_CYBORG_BRTH);
+        done = embanim_do_next_frame(AniSl_CYBORG_BRTH);
         cryo_cyborg_part_buf_blokey_fli_frame_copy(current_drawing_mod, AniSl_CYBORG_BRTH);
         draw_flic_purple_list(blokey_part_buf_breath_data_to_screen);
         still_playing = !done;
@@ -1166,7 +1092,7 @@ ubyte draw_blokey_body_mods_names(struct ScreenBox *p_box)
         draw_text_purple_list2(cx, cy, text, 0);
         cy += hline + 3;
 
-        text = cryo_gtext_cybmod_list_item_level(cryo_ordpart_to_mod_type(ordpart, mver));
+        text = fe_gtext_cybmod_level(cryo_ordpart_to_mod_type(ordpart, mver));
         draw_text_purple_list2(cx, cy, text, 0);
         lbDisplay.DrawFlags = 0;
         if (ordpart == 3)
@@ -1285,12 +1211,6 @@ void switch_local_player_agents(ushort plagent1, ushort plagent2)
 
 ubyte show_cryo_agent_list(struct ScreenTextBox *p_box)
 {
-#if 0
-    ubyte ret;
-    asm volatile ("call ASM_show_cryo_agent_list\n"
-        : "=r" (ret) : "a" (p_box));
-    return ret;
-#endif
     int tx_width, ln_height;
     int lines_y1, lines_y2, shift_x;
     ushort plagent1;
@@ -1463,7 +1383,7 @@ void draw_display_box_content_mod(struct ScreenTextBox *p_box)
 {
     ubyte real_dbcontent;
 
-    real_dbcontent = cybmod_has_display_anim(selected_mod + 1) ? display_box_content : DiBoxCt_TEXT;
+    real_dbcontent = cybmod_has_display_anim(selected_mod) ? display_box_content : DiBoxCt_TEXT;
     switch (real_dbcontent)
     {
     case DiBoxCt_TEXT:
@@ -1478,7 +1398,7 @@ void draw_display_box_content_mod(struct ScreenTextBox *p_box)
             // Mark that we should start animation frames the next time
             p_box->TextFadePos++;
         else
-            xdo_next_frame(AniSl_EQVIEW);
+            embanim_do_next_frame(AniSl_EQVIEW);
         draw_flic_purple_list(ac_weapon_flic_data_to_screen);
         break;
     }
@@ -1498,18 +1418,6 @@ TbBool input_display_box_content_mod(struct ScreenTextBox *p_box)
         }
     }
     return false;
-}
-
-/** Get global text pointer to a mod group name string.
- */
-static const char *cryo_gtext_cybmod_list_item_name(ushort mtype)
-{
-    ubyte modgrp;
-    ushort mdstr_id;
-
-    modgrp = cybmod_group_type(mtype);
-    mdstr_id = 70 + byte_1551F4[modgrp];
-    return gui_strings[mdstr_id];
 }
 
 ubyte show_cryo_cybmod_list_box(struct ScreenTextBox *p_box)
@@ -1542,7 +1450,7 @@ ubyte show_cryo_cybmod_list_box(struct ScreenTextBox *p_box)
         lbFontPtr = small_med_font;
     }
 
-    if (selected_mod == -1) // No mod selected - show list of available ones
+    if (selected_mod == 0) // No mod selected - show list of available ones
     {
         ushort mtype;
         short text_h;
@@ -1568,23 +1476,23 @@ ubyte show_cryo_cybmod_list_box(struct ScreenTextBox *p_box)
                   {
                       if (lbDisplay.LeftButton) {
                           lbDisplay.LeftButton = 0;
-                          selected_mod = mtype - 1;
+                          selected_mod = mtype;
                           cryo_update_for_selected_cybmod();
                       }
                   }
-                  if (selected_mod == mtype - 1) {
+                  if (selected_mod == mtype) {
                       lbDisplay.DrawFlags = Lb_TEXT_ONE_COLOR;
                       lbDisplay.DrawColour = 87;
                   } else {
                       lbDisplay.DrawFlags = 0;
                   }
 
-                  text = cryo_gtext_cybmod_list_item_name(mtype);
+                  text = fe_gtext_cybmod_group_type_name(mtype);
                   lbDisplay.DrawFlags |= 0x8000;
                   draw_text_purple_list2(3, cy + 1, text, 0);
                   lbDisplay.DrawFlags &= ~(0x8000|Lb_TEXT_HALIGN_RIGHT);
 
-                  text = cryo_gtext_cybmod_list_item_level(mtype);
+                  text = fe_gtext_cybmod_level(mtype);
                   lbDisplay.DrawFlags |= Lb_TEXT_HALIGN_RIGHT;
                   draw_text_purple_list2(-1, cy + 1, text, 0);
                   lbDisplay.DrawFlags = 0;
@@ -1597,7 +1505,7 @@ ubyte show_cryo_cybmod_list_box(struct ScreenTextBox *p_box)
     {
         struct ModDef *mdef;
 
-        mdef = &mod_defs[selected_mod + 1];
+        mdef = &mod_defs[selected_mod];
 
         draw_discrete_rects_bar_lv(&power_box, mdef->PowerOutput, 8, byte_155175);
         draw_discrete_rects_bar_lv(&resil_box, mdef->Resilience, 8, byte_155181);
@@ -1613,7 +1521,7 @@ ubyte show_cryo_cybmod_list_box(struct ScreenTextBox *p_box)
         cryo_offer_cancel_button.DrawFn(&cryo_offer_cancel_button);
         equip_cost_box.DrawFn(&equip_cost_box);
 
-        if (selected_mod == -1)
+        if (selected_mod == 0)
         {
             equip_cost_box.Flags = (GBxFlg_NoBkCopy|GBxFlg_Unkn0001);
             equip_offer_buy_button.Flags |= GBxFlg_Unkn0001;
@@ -1685,7 +1593,7 @@ ubyte input_cryo_agent_panel_shape(struct ScreenShape *shape, sbyte nagent)
         }
         else
         {
-            if ((nagent >= cryo_agents.NumAgents) || (mo_weapon == -1))
+            if ((nagent >= cryo_agents.NumAgents) || (mo_weapon == 0))
             {
                 if ((shape->Flags & 0x0400) != 0)
                 {
@@ -1707,7 +1615,7 @@ ubyte input_cryo_agent_panel_shape(struct ScreenShape *shape, sbyte nagent)
             else
             {
                 // No drag and drop ability in mods screen
-                mo_weapon = -1;
+                mo_weapon = 0;
                 shape->Flags &= ~0x0400;
             }
             gbstate = GBxSta_HLIGHT2;
@@ -1778,7 +1686,7 @@ ubyte show_cryo_chamber_screen(void)
         }
     }
 
-    if (refresh_equip_list && selected_mod == -1)
+    if (refresh_equip_list && selected_mod == 0)
     {
         ushort mtype;
 
@@ -1826,6 +1734,10 @@ ubyte show_cryo_chamber_screen(void)
                     draw_equip_agent_name_shape(shape, gbstate);
                     name_drawn = 3;
                 }
+                else
+                {
+                    name_drawn = 3;
+                }
                 byte_1C4979 = (name_drawn == 3);
             }
             else
@@ -1839,10 +1751,14 @@ ubyte show_cryo_chamber_screen(void)
                 {
                     drawn = flashy_draw_agent_panel_shape(shape, gbstate);
                 }
-                else
+                else if (byte_1C4978 == 1)
                 {
                     spridx = 140 + nagent;
                     draw_agent_panel_shape(shape, spridx, gbstate);
+                    drawn = 3;
+                }
+                else
+                {
                     drawn = 3;
                 }
                 // Is the flashy draw finished for current button
@@ -1853,7 +1769,8 @@ ubyte show_cryo_chamber_screen(void)
         }
         if (byte_1C4978 == 0)
         {
-            byte_1C4978 = agnt[0] && agnt[1] && agnt[2] && agnt[3];
+            if (agnt[0] && agnt[1] && agnt[2] && agnt[3])
+                byte_1C4978 = 1;
         }
         drawn = boxes_drawn;
     }
@@ -1947,7 +1864,7 @@ void init_cryo_screen_boxes(void)
 
 void reset_cryo_screen_player_state(void)
 {
-    selected_mod = -1;
+    selected_mod = 0;
     selected_agent = 0;
 }
 

@@ -145,6 +145,8 @@ TbBool group_has_no_less_members_persuaded_by_person(ushort group, ThingIdx ownt
 void reset_default_player_agent(PlayerIdx plyr, short plagent, struct Thing *p_agent, short new_type);
 ushort make_group_into_players(ushort group, ushort plyr, ushort max_agent, short new_type);
 
+void unkn_truce_groups_sub1(void);
+
 /******************************************************************************/
 #ifdef __cplusplus
 }

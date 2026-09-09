@@ -36,9 +36,15 @@
 #include "mydraw.h"
 #include "swlog.h"
 /******************************************************************************/
+
+struct PurpleDrawItem *purple_draw_list = NULL;
+ushort purple_draw_index = 0;
+
 ushort hotspot_next = 1;
 
-extern ubyte purple_joy_move;
+ubyte purple_joy_move = 0;
+
+/******************************************************************************/
 
 ushort find_closest_hotspot_down(void)
 {
@@ -235,7 +241,7 @@ static void draw_purple_drawitems(void)
     struct PolyPoint point_a;
     struct PolyPoint point_c;
     struct PolyPoint point_b;
-    struct PurpleDrawItem *pditem;
+    ushort pditm;
 
     point_a.X = proj_origin.X;
     point_a.Y = proj_origin.Y;
@@ -243,22 +249,25 @@ static void draw_purple_drawitems(void)
     point_c.S = 0x200000;
     point_b.S = 0x8000;
 
-    for (pditem = purple_draw_list; pditem < &purple_draw_list[purple_draw_index]; pditem++)
+    for (pditm = 0; pditm < purple_draw_index; pditm++)
     {
+        struct PurpleDrawItem *p_pditem;
         short x, y;
         short w, h;
         short shift_w, shift_h;
 
-        lbDisplay.DrawFlags = pditem->Flags;
+        p_pditem = &purple_draw_list[pditm];
 
-        switch (pditem->Type)
+        lbDisplay.DrawFlags = p_pditem->Flags;
+
+        switch (p_pditem->Type)
         {
         case PuDT_BOX:
-            x = pditem->U.Box.X;
-            y = pditem->U.Box.Y;
-            w = pditem->U.Box.Width;
-            h = pditem->U.Box.Height;
-            LbDrawBox(x, y, w, h, pditem->U.Box.Colour);
+            x = p_pditem->U.Box.X;
+            y = p_pditem->U.Box.Y;
+            w = p_pditem->U.Box.Width;
+            h = p_pditem->U.Box.Height;
+            LbDrawBox(x, y, w, h, p_pditem->U.Box.Colour);
             if ((lbDisplay.DrawFlags & 0x8000) != 0)
             {
                 shift_w = (w >> 1);
@@ -267,64 +276,64 @@ static void draw_purple_drawitems(void)
             }
             break;
         case PuDT_TEXT:
-            lbDisplay.DrawColour = pditem->U.Text.Colour;
-            lbFontPtr = pditem->U.Text.Font;
-            my_set_text_window(pditem->U.Text.WindowX, pditem->U.Text.WindowY,
-              pditem->U.Text.Width, pditem->U.Text.Height);
-            my_draw_text(pditem->U.Text.X, pditem->U.Text.Y,
-              pditem->U.Text.Text, pditem->U.Text.Line);
+            lbDisplay.DrawColour = p_pditem->U.Text.Colour;
+            lbFontPtr = p_pditem->U.Text.Font;
+            my_set_text_window(p_pditem->U.Text.WindowX, p_pditem->U.Text.WindowY,
+              p_pditem->U.Text.Width, p_pditem->U.Text.Height);
+            my_draw_text(p_pditem->U.Text.X, p_pditem->U.Text.Y,
+              p_pditem->U.Text.Text, p_pditem->U.Text.Line);
             if ((lbDisplay.DrawFlags & 0x8000) != 0)
             {
-                w = my_string_width(pditem->U.Text.Text);
-                if ((w >= pditem->U.Text.Width)
+                w = my_string_width(p_pditem->U.Text.Text);
+                if ((w >= p_pditem->U.Text.Width)
                   || ((lbDisplay.DrawFlags & Lb_TEXT_HALIGN_CENTER)) != 0)
                 {
-                    x = pditem->U.Text.WindowX;
-                    shift_w = pditem->U.Text.Width >> 1;
+                    x = p_pditem->U.Text.WindowX;
+                    shift_w = p_pditem->U.Text.Width >> 1;
                 }
                 else
                 {
-                    x = pditem->U.Text.X + pditem->U.Text.WindowX;
+                    x = p_pditem->U.Text.X + p_pditem->U.Text.WindowX;
                     shift_w = w >> 1;
                 }
                 shift_h = my_char_height('A') >> 1;
-                y = pditem->U.Text.Y + pditem->U.Text.WindowY;
+                y = p_pditem->U.Text.Y + p_pditem->U.Text.WindowY;
                 screen_hotspot_add(x + shift_w, y + shift_h);
             }
             break;
         case PuDT_UNK03:
             break;
         case PuDT_COPYBOX:
-            x = pditem->U.Box.X;
-            y = pditem->U.Box.Y;
-            shift_w = pditem->U.Box.Width;
-            shift_h = pditem->U.Box.Height;
+            x = p_pditem->U.Box.X;
+            y = p_pditem->U.Box.Y;
+            shift_w = p_pditem->U.Box.Width;
+            shift_h = p_pditem->U.Box.Height;
             LbScreenCopyBox(lbDisplay.WScreen, back_buffer,
                 x, y, x, y, shift_w, shift_h);
             break;
         case PuDT_SPRITE:
-            x = pditem->U.Sprite.X;
-            y = pditem->U.Sprite.Y;
-            lbDisplay.DrawColour = pditem->U.Box.Colour;
+            x = p_pditem->U.Sprite.X;
+            y = p_pditem->U.Sprite.Y;
+            lbDisplay.DrawColour = p_pditem->U.Box.Colour;
             if ((lbDisplay.DrawFlags & Lb_TEXT_ONE_COLOR) != 0)
-                LbSpriteDrawOneColour(x, y, pditem->U.Sprite.Sprite, lbDisplay.DrawColour);
+                LbSpriteDrawOneColour(x, y, p_pditem->U.Sprite.Sprite, lbDisplay.DrawColour);
             else
-                LbSpriteDraw(x, y, pditem->U.Sprite.Sprite);
+                LbSpriteDraw(x, y, p_pditem->U.Sprite.Sprite);
             if ((lbDisplay.DrawFlags & 0x8000) != 0)
             {
-                w = pditem->U.Sprite.Sprite->SWidth;
-                h = pditem->U.Sprite.Sprite->SHeight;
+                w = p_pditem->U.Sprite.Sprite->SWidth;
+                h = p_pditem->U.Sprite.Sprite->SHeight;
                 shift_w = (w >> 1);
                 shift_h = (h >> 1);
                 screen_hotspot_add(x + shift_w, y + shift_h);
             }
             break;
         case PuDT_POTRIG:
-            vec_colour = pditem->U.Line.Colour;
-            point_c.X = pditem->U.Line.X1;
-            point_c.Y = pditem->U.Line.Y1;
-            point_b.X = pditem->U.Line.X2;
-            point_b.Y = pditem->U.Line.Y2;
+            vec_colour = p_pditem->U.Line.Colour;
+            point_c.X = p_pditem->U.Line.X1;
+            point_c.Y = p_pditem->U.Line.Y1;
+            point_b.X = p_pditem->U.Line.X2;
+            point_b.Y = p_pditem->U.Line.Y2;
             if ((point_c.Y - point_b.Y) * (point_b.X - point_a.X)
                 - (point_b.Y - point_a.Y) * (point_c.X - point_b.X) > 0)
                 trig(&point_a, &point_b, &point_c);
@@ -332,27 +341,27 @@ static void draw_purple_drawitems(void)
                 trig(&point_a, &point_c, &point_b);
             break;
         case PuDT_FLIC:
-            pditem->U.Flic.Function();
+            p_pditem->U.Flic.Function();
             break;
         case PuDT_NOISEBOX:
-            draw_noise_box(pditem->U.Box.X, pditem->U.Box.Y,
-              pditem->U.Box.Width, pditem->U.Box.Height);
+            draw_noise_box(p_pditem->U.Box.X, p_pditem->U.Box.Y,
+              p_pditem->U.Box.Width, p_pditem->U.Box.Height);
             break;
         case PuDT_LINE:
-            LbDrawLine(pditem->U.Line.X1, pditem->U.Line.Y1,
-                pditem->U.Line.X2, pditem->U.Line.Y2, pditem->U.Line.Colour);
+            LbDrawLine(p_pditem->U.Line.X1, p_pditem->U.Line.Y1,
+                p_pditem->U.Line.X2, p_pditem->U.Line.Y2, p_pditem->U.Line.Colour);
             break;
         case PuDT_HVLINE:
-            LbDrawHVLine(pditem->U.Line.X1, pditem->U.Line.Y1,
-                pditem->U.Line.X2, pditem->U.Line.Y2, pditem->U.Line.Colour);
+            LbDrawHVLine(p_pditem->U.Line.X1, p_pditem->U.Line.Y1,
+                p_pditem->U.Line.X2, p_pditem->U.Line.Y2, p_pditem->U.Line.Colour);
             break;
         case PuDT_TRIANGLE:
-            LbDrawTriangle(pditem->U.Triangle.X1, pditem->U.Triangle.Y1,
-                pditem->U.Triangle.X2, pditem->U.Triangle.Y2,
-                pditem->U.Triangle.X3, pditem->U.Triangle.Y3, pditem->U.Triangle.Colour);
+            LbDrawTriangle(p_pditem->U.Triangle.X1, p_pditem->U.Triangle.Y1,
+                p_pditem->U.Triangle.X2, p_pditem->U.Triangle.Y2,
+                p_pditem->U.Triangle.X3, p_pditem->U.Triangle.Y3, p_pditem->U.Triangle.Colour);
             break;
         case PuDT_HOTSPOT:
-            screen_hotspot_add(pditem->U.Hotspot.X, pditem->U.Hotspot.Y);
+            screen_hotspot_add(p_pditem->U.Hotspot.X, p_pditem->U.Hotspot.Y);
             break;
         }
     }

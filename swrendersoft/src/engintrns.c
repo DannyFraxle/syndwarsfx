@@ -24,8 +24,6 @@
 #define SCREEN_POINT_COORD_MIN (-MAX_SUPPORTED_SCREEN_WIDTH)
 #define SCREEN_POINT_COORD_MAX (2 * MAX_SUPPORTED_SCREEN_WIDTH)
 
-s32 cam_tilt = -172;
-
 s32 dword_176D0C;
 s32 dword_176D10;
 s32 dword_176D14;
@@ -34,8 +32,6 @@ s32 dword_176D1C;
 s32 dword_176D3C;
 s32 dword_176D40;
 s32 dword_176D44;
-s32 dword_176D4C;
-s32 cam_rotation_velocity = 0;
 /******************************************************************************/
 
 /**
@@ -56,12 +52,16 @@ s32 mul_shift16_sign_pad_lo(s32 ar1, s32 ar2)
     tmp |= ((ar1 * (s64)ar2) >> 32) & 0xFFFF;
     return bw_rotl32(tmp, 16);
 #else
-    s32 ret;
+    s32 ret, hi;
+    /* The asm overwrites both eax and edx, so both have to be outputs with the
+     * inputs tied to them; declaring them as inputs only lets the compiler
+     * assume they still hold ar1 and ar2 afterwards. Harmless at -O0, wrong
+     * at any higher optimisation level. */
     asm volatile (
       "imul   %%edx\n"
       "mov    %%dx,%%ax\n"
       "rol    $0x10,%%eax\n"
-        : "=r" (ret) : "a" (ar1), "d" (ar2));
+        : "=a" (ret), "=d" (hi) : "0" (ar1), "1" (ar2) : "cc");
     return ret;
 #endif
 }
@@ -92,10 +92,10 @@ void transform_point(struct EnginePoint *p_ep)
     fctr_c = (dword_176D1C * p_ep->Y3d - dword_176D18 * fctr_b) >> 16;
 
     p_ep->Z3d = (dword_176D1C * fctr_b + dword_176D18 * p_ep->Y3d) >> 16;
-    p_ep->X3d = overall_scale * fctr_a;
-    p_ep->Y3d = overall_scale * fctr_c;
+    p_ep->X3d = fctr_a * overall_scale;
+    p_ep->Y3d = fctr_c * overall_scale;
 
-    if ((game_perspective == 5) && (p_ep->Z3d > 0x4000 / 16))
+    if ((game_perspective == ProjM_Perspective) && (p_ep->Z3d > 0x4000 / 16))
         // With large depth (upper parts of the screen), the simplification of
         // using depth buffer for perspective would cause wrap-around effect.
         // To avoid that, switch to more complex algorithm before the values
@@ -103,7 +103,7 @@ void transform_point(struct EnginePoint *p_ep)
         p_ep->Z3d = 0x4000 * p_ep->Z3d / (p_ep->Z3d + 0x4000);
 
     scr_shx = p_ep->X3d >> 11;
-    if (game_perspective == 5)
+    if (game_perspective == ProjM_Perspective)
         scr_shx = scr_shx * (0x4000 - p_ep->Z3d) >> 14;
 
     p_ep->pp.X = dword_176D3C + scr_shx;
@@ -121,7 +121,7 @@ void transform_point(struct EnginePoint *p_ep)
     }
 
     scr_shy = p_ep->Y3d >> 11;
-    if (game_perspective == 5)
+    if (game_perspective == ProjM_Perspective)
         scr_shy = scr_shy * (0x4000 - p_ep->Z3d) >> 14;
 
     p_ep->pp.Y = dword_176D40 - scr_shy;
@@ -151,16 +151,16 @@ void transform_shpoint(struct ShEnginePoint *p_sp, int dxc, int dyc, int dzc)
     fctr_b = (dword_176D10 * dxc + dword_176D14 * dzc) >> 16;
     fctr_c = (dword_176D1C * dyc - dword_176D18 * fctr_b) >> 16;
     scr_d = (dword_176D18 * dyc + dword_176D1C * fctr_b) >> 16;
-    sca_x = overall_scale * fctr_a;
-    sca_y = overall_scale * fctr_c;
+    sca_x = fctr_a * overall_scale;
+    sca_y = fctr_c * overall_scale;
     flg = 0;
 
-    if ((game_perspective == 5) && (scr_d > 0x4000 / 16))
+    if ((game_perspective == ProjM_Perspective) && (scr_d > 0x4000 / 16))
         // Mitigate wrap-around effect by using non-simplified computations.
         scr_d = 0x4000 * scr_d / (scr_d + 0x4000);
 
     scr_shx = sca_x >> 11;
-    if (game_perspective == 5)
+    if (game_perspective == ProjM_Perspective)
         scr_shx = scr_shx * (0x4000 - scr_d) >> 14;
 
     scr_x = dword_176D3C + scr_shx;
@@ -178,7 +178,7 @@ void transform_shpoint(struct ShEnginePoint *p_sp, int dxc, int dyc, int dzc)
     }
 
     scr_shy = sca_y >> 11;
-    if (game_perspective == 5)
+    if (game_perspective == ProjM_Perspective)
         scr_shy = scr_shy * (0x4000 - scr_d) >> 14;
 
     scr_y = dword_176D40 - scr_shy;
@@ -214,8 +214,8 @@ void transform_shpoint_fpv(struct ShEnginePoint *p_sp, int dxc, int dyc, int dzc
     fctr_b = (dword_176D10 * dxc + dword_176D14 * dzc) >> 16;
     fctr_c = (dword_176D1C * dyc - dword_176D18 * fctr_b) >> 16;
     scr_d = (dword_176D18 * dyc + dword_176D1C * fctr_b) >> 16;
-    sca_x = overall_scale * fctr_a;
-    sca_y = overall_scale * fctr_c;
+    sca_x = fctr_a * overall_scale;
+    sca_y = fctr_c * overall_scale;
     flg = 0;
 
     if (scr_d >= -500)
@@ -277,14 +277,14 @@ int transform_shpoint_y(int dxc, int dyc, int dzc)
     fctr_b = (dword_176D10 * dxc + dword_176D14 * dzc) >> 16;
     fctr_c = (dword_176D1C * dyc - dword_176D18 * fctr_b) >> 16;
     scr_d = (dword_176D18 * dyc + dword_176D1C * fctr_b) >> 16;
-    sca_y = overall_scale * fctr_c;
+    sca_y = fctr_c * overall_scale;
 
-    if ((game_perspective == 5) && (scr_d > 0x4000 / 16))
+    if ((game_perspective == ProjM_Perspective) && (scr_d > 0x4000 / 16))
         // Mitigate wrap-around effect by using non-simplified computations.
         scr_d = 0x4000 * scr_d / (scr_d + 0x4000);
 
     scr_shy = sca_y >> 11;
-    if (game_perspective == 5)
+    if (game_perspective == ProjM_Perspective)
         scr_shy = scr_shy * (0x4000 - scr_d) >> 14;
 
     scr_y = dword_176D40 - scr_shy;
@@ -302,20 +302,22 @@ int transform_shpoint_y(int dxc, int dyc, int dzc)
     return scr_y;
 }
 
-void process_engine_unk1(void)
+void transform_reinit_vec_window(void)
+{
+    dword_176D3C = vec_window_width / 2;
+    dword_176D40 = vec_window_height / 2;
+    dword_176D44 = 4 * (vec_window_width / 2) / 3;
+}
+
+void transform_reinit_camera(void)
 {
     int angle;
 
-    dword_176D4C = 0;
-    dword_176D3C = vec_window_width / 2;
-    dword_176D40 = vec_window_height / 2;
-    engn_anglexz += cam_rotation_velocity;
-    dword_176D44 = 4 * (vec_window_width / 2) / 3;
-    angle = (engn_anglexz >> 5) & LbFPMath_AngleMask;
+    angle = (engn_cam_yaw >> 5) & LbFPMath_AngleMask;
     dword_176D0C = angle;
     dword_176D14 = lbSinTable[angle + LbFPMath_PI/2];
     dword_176D10 = lbSinTable[angle];
-    angle = cam_tilt & LbFPMath_AngleMask;
+    angle = engn_cam_tilt & LbFPMath_AngleMask;
     dword_176D18 = lbSinTable[angle];
     dword_176D1C = lbSinTable[angle + LbFPMath_PI/2];
 }

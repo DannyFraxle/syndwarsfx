@@ -1,0 +1,2711 @@
+
+#ifdef NEED_UNDERSCORE
+# define TRANSFORM_SYMBOLS
+# define EXPORT_SYMBOL(sym) _ ## sym
+#else
+# define EXPORT_SYMBOL(sym) sym
+#endif
+
+#ifndef TRANSFORM_SYMBOLS
+
+# define GLOBAL(sym) \
+  .global sym; \
+  sym ##:
+
+# define GLOBAL_FUNC(sym) \
+  GLOBAL (sym)
+
+#else
+
+# define GLOBAL(sym) \
+  .global EXPORT_SYMBOL (sym); \
+  EXPORT_SYMBOL (sym) ##: \
+  sym ##:
+
+# define GLOBAL_FUNC(sym) \
+  .global sym; \
+  GLOBAL (sym)
+
+#endif
+
+.text
+
+/* Radica network lib */
+.global EXPORT_SYMBOL(data_1596c4);
+.global EXPORT_SYMBOL(data_15aba2);
+.global EXPORT_SYMBOL(data_15aba5);
+.global EXPORT_SYMBOL(data_15abaf);
+.global EXPORT_SYMBOL(data_15abb6);
+.global EXPORT_SYMBOL(data_15abb3);
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC(ASM_net_unkn_func_12)	/* 0x0E57B0 */
+/*----------------------------------------------------------------*/
+		push   %ebx
+		push   %ecx
+		push   %edx
+		push   %esi
+		mov    %eax,%ecx
+		mov    $0x8,%ebx
+		xor    %edx,%edx
+		call   ac_memset
+		mov    EXPORT_SYMBOL(NetworkServicePtr)+0x6,%ax	/* NetworkServicePtr.I.Type */
+		mov    $0xffffffff,%esi
+		cmp    $0x1,%ax
+		je     jump_e57da
+	jump_e57d3:
+		mov    %esi,%eax
+		pop    %esi
+		pop    %edx
+		pop    %ecx
+		pop    %ebx
+		ret
+	jump_e57da:
+		mov    $0x1,%esi
+		mov    $EXPORT_SYMBOL(IPXPlayer)+0x2D,%edx
+		mov    %ecx,%eax
+		lea    0x8(%ecx),%ebx
+		cmpw   $0x0,0x1a(%edx)
+		je     jump_e57f3
+		movb   $0x1,(%eax)
+	jump_e57f3:
+		inc    %eax
+		add    $0x1c,%edx
+		cmp    %ebx,%eax
+		je     jump_e57d3
+		cmpw   $0x0,0x1a(%edx)
+		je     jump_e57f3
+		movb   $0x1,(%eax)
+		jmp    jump_e57f3
+
+
+/*----------------------------------------------------------------*/
+.section .rodata
+data_e5890:
+		.ascii  "con\x00"
+.text
+
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC (____GETDS)	/* 0xe5ae8 */
+/*----------------------------------------------------------------*/
+		data16 		mov    %cs:data_e5af1,%ds
+		ret
+.data
+data_e5af1:
+		.short  0x0
+data_e5af3:
+		.fill   0xd
+.text
+
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC (_segread)	/* 0xf3904 */
+/*----------------------------------------------------------------*/
+		push   %edx
+		mov    %eax,%edx
+		mov    %cs,%eax
+		mov    %ax,0x2(%edx)
+		mov    %ds,%eax
+		mov    %ax,0x6(%edx)
+		mov    %es,%eax
+		mov    %ax,(%edx)
+		mov    %ss,%eax
+		mov    %ax,0x4(%edx)
+		mov    %fs,%eax
+		mov    %ax,0x8(%edx)
+		mov    %gs,%eax
+		mov    %ax,0xa(%edx)
+		pop    %edx
+		ret
+
+
+/*----------------------------------------------------------------*/
+net_config_read_to_eol:
+		push   %ebx
+		push   %ecx
+		push   %esi
+		push   %edi
+		enter  $0xc,$0x0
+		mov    %eax,-0x8(%ebp)
+		mov    %edx,-0x4(%ebp)
+	jump_fa087:
+		mov    -0x8(%ebp),%eax
+		call   ac_fgetc
+		mov    %eax,-0xc(%ebp)
+		cmpl   $0xd,-0xc(%ebp)
+		je     jump_fa09e
+		cmpl   $0xa,-0xc(%ebp)
+		jne    jump_fa0a0
+	jump_fa09e:
+		jmp    jump_fa0b0
+	jump_fa0a0:
+		mov    -0xc(%ebp),%al
+		mov    -0x4(%ebp),%edx
+		mov    %al,(%edx)
+		mov    -0x4(%ebp),%edx
+		incl   -0x4(%ebp)
+		jmp    jump_fa087
+	jump_fa0b0:
+		mov    -0x4(%ebp),%eax
+		movb   $0x0,(%eax)
+		leave
+		pop    %edi
+		pop    %esi
+		pop    %ecx
+		pop    %ebx
+		ret
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC(ASM_Net_AllocDosMem)	/* 0x0FA839 serial port comm mem allocator */
+/*----------------------------------------------------------------*/
+		push   %ebx
+		push   %ecx
+		push   %esi
+		push   %edi
+		enter  $0x28,$0x0
+		mov    %eax,-0x8(%ebp)
+		mov    %edx,-0x4(%ebp)
+		movl   $0x100,-0x24(%ebp)
+		mov    -0x8(%ebp),%eax
+		add    $0xf,%eax
+		shr    $0x4,%eax
+		mov    %eax,-0x20(%ebp)
+		lea    -0x24(%ebp),%ebx
+		lea    -0x24(%ebp),%edx
+		mov    $0x31,%eax
+		call   ac_dos_int386
+		cmpl   $0x0,-0xc(%ebp)
+		je     jump_fa879
+		movl   $0x0,-0x28(%ebp)
+		jmp    jump_fa896
+	jump_fa879:
+		cmpl   $0x0,-0x4(%ebp)
+		je     jump_fa888
+		mov    -0x18(%ebp),%eax
+		mov    -0x4(%ebp),%edx
+		mov    %ax,(%edx)
+	jump_fa888:
+		mov    -0x24(%ebp),%eax
+		and    $0xffff,%eax
+		shl    $0x4,%eax
+		mov    %eax,-0x28(%ebp)
+	jump_fa896:
+		mov    -0x28(%ebp),%eax
+		leave
+		pop    %edi
+		pop    %esi
+		pop    %ecx
+		pop    %ebx
+		ret
+
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC(ASM_run_exchange_func)	/* 0x0FA89F */
+/*----------------------------------------------------------------*/
+		push   %ebx
+		push   %ecx
+		push   %edx
+		push   %esi
+		push   %edi
+		push   %ebp
+		mov    %esp,%ebp
+		sub    $0x4,%esp
+		call   ac_dos_clock
+		mov    %eax,run_exchange_func__end_time
+		mov    run_exchange_func__end_time,%eax
+		sub    run_exchange_func__start_time,%eax
+		cmp    $0xa,%eax
+		jbe    jump_fa8e5
+		mov    run_exchange_func__end_time,%eax
+		mov    %eax,run_exchange_func__start_time
+		cmpl   $0x0,EXPORT_SYMBOL(NetworkServicePtr)+0x14	/* NetworkServicePtr.F.SessionExchange */
+		je     jump_fa8e5
+		call   *EXPORT_SYMBOL(NetworkServicePtr)+0x14	/* NetworkServicePtr.F.SessionExchange */
+		mov    %eax,-0x4(%ebp)
+		jmp    jump_fa8ec
+	jump_fa8e5:
+		movl   $0x0,-0x4(%ebp)
+	jump_fa8ec:
+		mov    -0x4(%ebp),%eax
+		leave
+		pop    %edi
+		pop    %esi
+		pop    %edx
+		pop    %ecx
+		pop    %ebx
+		ret
+
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC(ASM_net_unkn_func_02)	/* 0x0FA945 */
+/*----------------------------------------------------------------*/
+		push   %ebx
+		push   %ecx
+		push   %esi
+		push   %edi
+		enter  $0x20,$0x0
+		mov    %eax,-0x8(%ebp)
+		mov    %edx,-0x4(%ebp)
+		call   ac_LbTimerClock
+		mov    %eax,-0x18(%ebp)
+		movl   $0x1,-0x14(%ebp)
+		movl   $0x0,-0x10(%ebp)
+		mov    EXPORT_SYMBOL(dword_1E85E3),%eax
+		mov    %eax,-0x1c(%ebp)
+	jump_fa971:
+		cmpl   $0x1,-0x14(%ebp)
+		jne    jump_fa9b8
+		mov    -0x1c(%ebp),%eax
+		call   ac_read_char
+		mov    %eax,-0xc(%ebp)
+		movswl -0xc(%ebp),%eax
+		test   %eax,%eax
+		jl     jump_fa9a2
+		movl   $0x0,-0x14(%ebp)
+		movl   $0x1,-0x10(%ebp)
+		mov    -0xc(%ebp),%al
+		mov    -0x8(%ebp),%edx
+		mov    %al,(%edx)
+		jmp    jump_fa9b6
+	jump_fa9a2:
+		call   ac_LbTimerClock
+		sub    -0x18(%ebp),%eax
+		cmp    -0x4(%ebp),%eax
+		jbe    jump_fa9b6
+		movl   $0x0,-0x14(%ebp)
+	jump_fa9b6:
+		jmp    jump_fa971
+	jump_fa9b8:
+		mov    -0x10(%ebp),%eax
+		mov    %eax,-0x20(%ebp)
+		mov    -0x20(%ebp),%eax
+		leave
+		pop    %edi
+		pop    %esi
+		pop    %ecx
+		pop    %ebx
+		ret
+
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC(ASM_net_unkn_callback2)	/* 0x0FA9C7 */
+/*----------------------------------------------------------------*/
+		push   %ecx
+		push   %esi
+		push   %edi
+		enter  $0x18,$0x0
+		mov    %eax,-0xc(%ebp)
+		mov    %edx,-0x8(%ebp)
+		mov    %ebx,-0x4(%ebp)
+		movl   $0x0,-0x14(%ebp)
+		movl   $0x1,-0x10(%ebp)
+	jump_fa9e5:
+		cmpl   $0x1,-0x10(%ebp)
+		jne    jump_faa1f
+		mov    -0x14(%ebp),%eax
+		cmp    -0x8(%ebp),%eax
+		jb     jump_fa9fc
+		movl   $0x0,-0x10(%ebp)
+		jmp    jump_faa1d
+	jump_fa9fc:
+		mov    -0x4(%ebp),%edx
+		mov    -0xc(%ebp),%eax
+		add    -0x14(%ebp),%eax
+		call   ASM_net_unkn_func_02
+		test   %eax,%eax
+		je     jump_faa16
+		mov    -0x14(%ebp),%eax
+		incl   -0x14(%ebp)
+		jmp    jump_faa1d
+	jump_faa16:
+		movl   $0x0,-0x10(%ebp)
+	jump_faa1d:
+		jmp    jump_fa9e5
+	jump_faa1f:
+		mov    -0x14(%ebp),%eax
+		mov    %eax,-0x18(%ebp)
+		mov    -0x18(%ebp),%eax
+		leave
+		pop    %edi
+		pop    %esi
+		pop    %ecx
+		ret
+
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC(ASM_handle_com_sub1)	/* 0x0FAADB */
+/*----------------------------------------------------------------*/
+		push   %ebx
+		push   %ecx
+		push   %edx
+		push   %esi
+		push   %edi
+		enter  $0x4,$0x0
+		mov    %eax,-0x4(%ebp)
+		mov    -0x4(%ebp),%eax
+		incw   0x109e(%eax)
+		mov    -0x4(%ebp),%eax
+		movzwl 0x109e(%eax),%eax
+		cmp    $0x7ff,%eax
+		jle    jump_fab0e
+		mov    -0x4(%ebp),%eax
+		movw   $0x0,0x109e(%eax)
+	jump_fab0e:
+		leave
+		pop    %edi
+		pop    %esi
+		pop    %edx
+		pop    %ecx
+		pop    %ebx
+		ret
+
+
+/*----------------------------------------------------------------*/
+net_unkn_sub_323:	/* 0x10C9A6 */
+/*----------------------------------------------------------------*/
+		push   %ecx
+		push   %esi
+		push   %edi
+		enter  $0xb4,$0x0
+		mov    %eax,-0xc(%ebp)
+		mov    %edx,-0x8(%ebp)
+		mov    %ebx,-0x4(%ebp)
+		movb   $0x0,-0x10(%ebp)
+		movl   $0x1,-0x14(%ebp)
+		cmpl   $0x0,-0x8(%ebp)
+		je     jump_10ccfd
+		mov    -0xc(%ebp),%eax
+		cmpl   $0x0,0x110(%eax)
+		je     jump_10ca26
+		mov    -0x4(%ebp),%eax
+		mov    -0xc(%ebp),%edx
+		cmp    0x8d(%edx),%eax
+		je     jump_10c9ee
+		movl   $0x0,-0x14(%ebp)
+		jmp    jump_10ca24
+	jump_10c9ee:
+		movl   $0x0,-0x24(%ebp)
+		jmp    jump_10c9fd
+	jump_10c9f7:
+		mov    -0x24(%ebp),%eax
+		incl   -0x24(%ebp)
+	jump_10c9fd:
+		mov    -0x24(%ebp),%eax
+		cmp    -0x4(%ebp),%eax
+		jae    jump_10ca24
+		mov    -0xc(%ebp),%eax
+		add    -0x24(%ebp),%eax
+		mov    -0x8(%ebp),%edx
+		add    -0x24(%ebp),%edx
+		mov    (%edx),%dl
+		cmp    0x91(%eax),%dl
+		je     jump_10ca22
+		movl   $0x0,-0x14(%ebp)
+	jump_10ca22:
+		jmp    jump_10c9f7
+	jump_10ca24:
+		jmp    jump_10ca2d
+	jump_10ca26:
+		movl   $0x0,-0x14(%ebp)
+	jump_10ca2d:
+		mov    -0xc(%ebp),%eax
+		cmpl   $0x0,0x1ab(%eax)
+		je     jump_10ca40
+		movl   $0x0,-0x14(%ebp)
+	jump_10ca40:
+		cmpl   $0x0,-0x14(%ebp)
+		je     jump_10caa6
+		movb   $0xad,-0x28(%ebp)
+		mov    -0xc(%ebp),%eax
+		mov    (%eax),%al
+		mov    %al,-0x26(%ebp)
+		mov    -0x28(%ebp),%al
+		xor    -0x26(%ebp),%al
+		and    $0x7f,%al
+		mov    %al,-0x27(%ebp)
+		mov    $0x3,%ebx
+		lea    -0x28(%ebp),%edx
+		mov    -0xc(%ebp),%eax
+		call   net_unkn_sub_335
+		movl   $0x0,-0x24(%ebp)
+		jmp    jump_10ca7c
+	jump_10ca76:
+		mov    -0x24(%ebp),%eax
+		incl   -0x24(%ebp)
+	jump_10ca7c:
+		cmpl   $0x3,-0x24(%ebp)
+		jae    jump_10ca94
+		mov    -0xc(%ebp),%edx
+		add    -0x24(%ebp),%edx
+		mov    -0x24(%ebp),%eax
+		mov    -0x28(%eax,%ebp,1),%al
+		mov    %al,0xa(%edx)
+		jmp    jump_10ca76
+	jump_10ca94:
+		mov    -0xc(%ebp),%eax
+		movl   $0x1,0x89(%eax)
+		jmp    jump_10ccfd
+	jump_10caa6:
+		mov    -0xc(%ebp),%eax
+		movl   $0x0,0x110(%eax)
+		movl   $0x0,-0x18(%ebp)
+		movl   $0x0,-0x20(%ebp)
+		jmp    jump_10cac9
+	jump_10cac3:
+		mov    -0x18(%ebp),%eax
+		incl   -0x18(%ebp)
+	jump_10cac9:
+		mov    -0x18(%ebp),%eax
+		cmp    -0x4(%ebp),%eax
+		jae    jump_10cbd9
+		mov    -0x8(%ebp),%eax
+		add    -0x18(%ebp),%eax
+		mov    (%eax),%al
+		mov    %al,-0x2c(%ebp)
+		jmp    jump_10cbaf
+
+
+/*----------------------------------------------------------------*/
+func_10cae5:
+/*----------------------------------------------------------------*/
+		mov    -0x20(%ebp),%eax
+		incl   -0x20(%ebp)
+		movb   $0xae,-0xac(%eax,%ebp,1)
+		mov    -0x20(%ebp),%eax
+		incl   -0x20(%ebp)
+		movb   $0x0,-0xac(%eax,%ebp,1)
+		jmp    jump_10cbd4
+
+
+/*----------------------------------------------------------------*/
+func_10cb06:
+/*----------------------------------------------------------------*/
+		mov    -0x20(%ebp),%eax
+		incl   -0x20(%ebp)
+		movb   $0xae,-0xac(%eax,%ebp,1)
+		mov    -0x20(%ebp),%eax
+		incl   -0x20(%ebp)
+		movb   $0x1,-0xac(%eax,%ebp,1)
+		jmp    jump_10cbd4
+
+
+/*----------------------------------------------------------------*/
+func_10cb27:
+/*----------------------------------------------------------------*/
+		mov    -0x20(%ebp),%eax
+		incl   -0x20(%ebp)
+		movb   $0xae,-0xac(%eax,%ebp,1)
+		mov    -0x20(%ebp),%eax
+		incl   -0x20(%ebp)
+		movb   $0x2,-0xac(%eax,%ebp,1)
+		jmp    jump_10cbd4
+
+
+/*----------------------------------------------------------------*/
+func_10cb48:
+/*----------------------------------------------------------------*/
+		mov    -0x20(%ebp),%eax
+		incl   -0x20(%ebp)
+		movb   $0xae,-0xac(%eax,%ebp,1)
+		mov    -0x20(%ebp),%eax
+		incl   -0x20(%ebp)
+		movb   $0x3,-0xac(%eax,%ebp,1)
+		jmp    jump_10cbd4
+
+
+/*----------------------------------------------------------------*/
+func_10cb66:
+/*----------------------------------------------------------------*/
+		mov    -0x20(%ebp),%eax
+		incl   -0x20(%ebp)
+		movb   $0xae,-0xac(%eax,%ebp,1)
+		mov    -0x20(%ebp),%eax
+		incl   -0x20(%ebp)
+		movb   $0x4,-0xac(%eax,%ebp,1)
+		jmp    jump_10cbd4
+	jump_10cb84:
+		mov    -0x8(%ebp),%eax
+		add    -0x18(%ebp),%eax
+		mov    -0x20(%ebp),%edx
+		incl   -0x20(%ebp)
+		mov    (%eax),%al
+		mov    %al,-0xac(%edx,%ebp,1)
+		jmp    jump_10cbd4
+
+vtable_10cb9b:
+		.long   func_10cae5
+		.long   func_10cb06
+		.long   func_10cb27
+		.long   func_10cb48
+		.long   func_10cb66
+
+	jump_10cbaf:
+		mov    -0x2c(%ebp),%al
+		sub    $0xaa,%al
+		mov    %al,-0xb0(%ebp)
+		cmpb   $0x4,-0xb0(%ebp)
+		ja     jump_10cb84
+		movzbl -0xb0(%ebp),%eax
+		shl    $0x2,%eax
+		jmp    *%cs:vtable_10cb9b(%eax)
+	jump_10cbd4:
+		jmp    jump_10cac3
+	jump_10cbd9:
+		mov    -0x20(%ebp),%eax
+		mov    %eax,-0x1c(%ebp)
+		xorb   $0xaa,-0x10(%ebp)
+		mov    -0x1c(%ebp),%al
+		xor    %al,-0x10(%ebp)
+		mov    -0xc(%ebp),%eax
+		mov    (%eax),%al
+		xor    %al,-0x10(%ebp)
+		movl   $0x0,-0x24(%ebp)
+		jmp    jump_10cc00
+	jump_10cbfa:
+		mov    -0x24(%ebp),%eax
+		incl   -0x24(%ebp)
+	jump_10cc00:
+		mov    -0x24(%ebp),%eax
+		cmp    -0x1c(%ebp),%eax
+		jae    jump_10cc17
+		mov    -0x24(%ebp),%eax
+		mov    -0xac(%eax,%ebp,1),%al
+		xor    %al,-0x10(%ebp)
+		jmp    jump_10cbfa
+	jump_10cc17:
+		movb   $0xaa,-0xb4(%ebp)
+		mov    -0x1c(%ebp),%al
+		mov    %al,-0xb3(%ebp)
+		mov    -0x10(%ebp),%al
+		and    $0x7f,%al
+		mov    %al,-0xb2(%ebp)
+		mov    -0xc(%ebp),%eax
+		mov    (%eax),%al
+		mov    %al,-0xb1(%ebp)
+		mov    $0x4,%ebx
+		lea    -0xb4(%ebp),%edx
+		mov    -0xc(%ebp),%eax
+		call   net_unkn_sub_335
+		mov    -0x1c(%ebp),%ebx
+		lea    -0xac(%ebp),%edx
+		mov    -0xc(%ebp),%eax
+		call   net_unkn_sub_335
+		movl   $0x0,-0x24(%ebp)
+		jmp    jump_10cc70
+	jump_10cc6a:
+		mov    -0x24(%ebp),%eax
+		incl   -0x24(%ebp)
+	jump_10cc70:
+		cmpl   $0x4,-0x24(%ebp)
+		jae    jump_10cc8b
+		mov    -0xc(%ebp),%edx
+		add    -0x24(%ebp),%edx
+		mov    -0x24(%ebp),%eax
+		mov    -0xb4(%eax,%ebp,1),%al
+		mov    %al,0xa(%edx)
+		jmp    jump_10cc6a
+	jump_10cc8b:
+		movl   $0x0,-0x24(%ebp)
+		jmp    jump_10cc9a
+	jump_10cc94:
+		mov    -0x24(%ebp),%eax
+		incl   -0x24(%ebp)
+	jump_10cc9a:
+		mov    -0x24(%ebp),%eax
+		cmp    -0x1c(%ebp),%eax
+		jae    jump_10ccb7
+		mov    -0xc(%ebp),%edx
+		add    -0x24(%ebp),%edx
+		mov    -0x24(%ebp),%eax
+		mov    -0xac(%eax,%ebp,1),%al
+		mov    %al,0xe(%edx)
+		jmp    jump_10cc94
+	jump_10ccb7:
+		mov    -0xc(%ebp),%eax
+		movl   $0x1,0x89(%eax)
+		mov    -0x4(%ebp),%eax
+		mov    -0xc(%ebp),%edx
+		mov    %eax,0x8d(%edx)
+		movl   $0x0,-0x24(%ebp)
+		jmp    jump_10ccdf
+	jump_10ccd9:
+		mov    -0x24(%ebp),%eax
+		incl   -0x24(%ebp)
+	jump_10ccdf:
+		mov    -0x24(%ebp),%eax
+		cmp    -0x4(%ebp),%eax
+		jae    jump_10ccfd
+		mov    -0x8(%ebp),%eax
+		add    -0x24(%ebp),%eax
+		mov    -0xc(%ebp),%edx
+		add    -0x24(%ebp),%edx
+		mov    (%eax),%al
+		mov    %al,0x91(%edx)
+		jmp    jump_10ccd9
+	jump_10ccfd:
+		leave
+		pop    %edi
+		pop    %esi
+		pop    %ecx
+		ret
+
+
+/*----------------------------------------------------------------*/
+net_unkn_sub_324:	/* 0x10CD02 */
+/*----------------------------------------------------------------*/
+		push   %esi
+		push   %edi
+		enter  $0x2c,$0x0
+		mov    %eax,-0x10(%ebp)
+		mov    %edx,-0xc(%ebp)
+		mov    %ebx,-0x8(%ebp)
+		mov    %ecx,-0x4(%ebp)
+		movb   $0x0,-0x1c(%ebp)
+		movl   $0x1,-0x20(%ebp)
+		movl   $0x0,-0x24(%ebp)
+		cmpl   $0x0,-0xc(%ebp)
+		jne    jump_10cd37
+		mov    -0x1c(%ebp),%al
+		mov    %al,-0x18(%ebp)
+		jmp    jump_10ce37
+	jump_10cd37:
+		cmpl   $0x0,-0x20(%ebp)
+		je     jump_10ce31
+		mov    -0x10(%ebp),%eax
+		cmpl   $0x0,0x1a7(%eax)
+		je     jump_10cd5b
+		mov    $EXPORT_SYMBOL(aGettingHeaderB),%eax
+		push   %eax
+		call   ac_printf
+		add    $0x4,%esp
+	jump_10cd5b:
+		mov    -0x4(%ebp),%ecx
+		mov    $0x1,%ebx
+		lea    -0x14(%ebp),%edx
+		mov    -0x10(%ebp),%eax
+		call   net_unkn_func_339
+		cmp    $0x1,%eax
+		jne    jump_10ce21
+		movl   $0x0,-0x20(%ebp)
+		movl   $0x1,-0x24(%ebp)
+		mov    -0x14(%ebp),%al
+		mov    %al,-0x28(%ebp)
+		jmp    jump_10ce03
+
+
+/*----------------------------------------------------------------*/
+func_10cd90:
+/*----------------------------------------------------------------*/
+		mov    -0x4(%ebp),%ecx
+		mov    -0x8(%ebp),%ebx
+		mov    -0xc(%ebp),%edx
+		mov    -0x10(%ebp),%eax
+		call   net_unkn_sub_327
+		mov    %al,-0x1c(%ebp)
+		jmp    jump_10ce1f
+
+
+/*----------------------------------------------------------------*/
+func_10cda9:
+/*----------------------------------------------------------------*/
+		mov    $0xab,%edx
+		mov    -0x10(%ebp),%eax
+		call   net_unkn_func_337
+		mov    %al,-0x1c(%ebp)
+		jmp    jump_10ce1f
+
+
+/*----------------------------------------------------------------*/
+func_10cdbb:
+/*----------------------------------------------------------------*/
+		mov    $0xac,%edx
+		mov    -0x10(%ebp),%eax
+		call   net_unkn_func_337
+		mov    %al,-0x1c(%ebp)
+		jmp    jump_10ce1f
+
+
+/*----------------------------------------------------------------*/
+func_10cdcd:
+/*----------------------------------------------------------------*/
+		mov    -0x4(%ebp),%ecx
+		mov    -0x8(%ebp),%ebx
+		mov    -0xc(%ebp),%edx
+		mov    -0x10(%ebp),%eax
+		call   net_unkn_sub_328
+		mov    %al,-0x1c(%ebp)
+		jmp    jump_10ce1f
+	jump_10cde3:
+		movl   $0x1,-0x20(%ebp)
+		movl   $0x0,-0x24(%ebp)
+		jmp    jump_10ce1f
+
+vtable_10cdf3:
+		.long   func_10cd90
+		.long   func_10cda9
+		.long   func_10cdbb
+		.long   func_10cdcd
+	jump_10ce03:
+		mov    -0x28(%ebp),%al
+		sub    $0xaa,%al
+		mov    %al,-0x2c(%ebp)
+		cmpb   $0x3,-0x2c(%ebp)
+		ja     jump_10cde3
+		movzbl -0x2c(%ebp),%eax
+		shl    $0x2,%eax
+		jmp    *%cs:vtable_10cdf3(%eax)
+	jump_10ce1f:
+		jmp    jump_10ce2c
+	jump_10ce21:
+		movl   $0x0,-0x20(%ebp)
+		movb   $0x1,-0x1c(%ebp)
+	jump_10ce2c:
+		jmp    jump_10cd37
+	jump_10ce31:
+		mov    -0x1c(%ebp),%al
+		mov    %al,-0x18(%ebp)
+	jump_10ce37:
+		mov    -0x18(%ebp),%al
+		leave
+		pop    %edi
+		pop    %esi
+		ret
+
+
+/*----------------------------------------------------------------*/
+net_unkn_sub_325:	/* 0x10CE3E */
+/*----------------------------------------------------------------*/
+		push   %ebx
+		push   %ecx
+		push   %esi
+		push   %edi
+		enter  $0x10,$0x0
+		mov    %eax,-0x8(%ebp)
+		mov    %dl,-0x4(%ebp)
+		movb   $0xab,-0xc(%ebp)
+		mov    -0x8(%ebp),%eax
+		mov    0x366(%eax),%al
+		add    %al,%al
+		mov    %al,-0x10(%ebp)
+		mov    -0x4(%ebp),%al
+		and    $0x7,%al
+		movzbl %al,%eax
+		add    -0x8(%ebp),%eax
+		mov    0x3bb(%eax),%al
+		xor    %al,-0x10(%ebp)
+		movzbl -0x10(%ebp),%eax
+		add    -0x8(%ebp),%eax
+		mov    -0x4(%ebp),%dl
+		and    $0x7,%dl
+		mov    0x3c3(%eax),%al
+		or     %dl,%al
+		mov    %al,-0xb(%ebp)
+		mov    $0x2,%ebx
+		lea    -0xc(%ebp),%edx
+		mov    -0x8(%ebp),%eax
+		call   net_unkn_sub_335
+		leave
+		pop    %edi
+		pop    %esi
+		pop    %ecx
+		pop    %ebx
+		ret
+
+
+/*----------------------------------------------------------------*/
+net_unkn_sub_326:	/* 0x10CEA0 */
+/*----------------------------------------------------------------*/
+		push   %ebx
+		push   %ecx
+		push   %esi
+		push   %edi
+		enter  $0x10,$0x0
+		mov    %eax,-0x8(%ebp)
+		mov    %dl,-0x4(%ebp)
+		movb   $0xac,-0xc(%ebp)
+		mov    -0x8(%ebp),%eax
+		mov    0x367(%eax),%al
+		add    %al,%al
+		mov    %al,-0x10(%ebp)
+		mov    -0x4(%ebp),%al
+		and    $0x7,%al
+		movzbl %al,%eax
+		add    -0x8(%ebp),%eax
+		mov    0x3bb(%eax),%al
+		xor    %al,-0x10(%ebp)
+		movzbl -0x10(%ebp),%eax
+		add    -0x8(%ebp),%eax
+		mov    -0x4(%ebp),%dl
+		and    $0x7,%dl
+		mov    0x3c3(%eax),%al
+		or     %dl,%al
+		mov    %al,-0xb(%ebp)
+		mov    $0x2,%ebx
+		lea    -0xc(%ebp),%edx
+		mov    -0x8(%ebp),%eax
+		call   net_unkn_sub_335
+		leave
+		pop    %edi
+		pop    %esi
+		pop    %ecx
+		pop    %ebx
+		ret
+
+
+/*----------------------------------------------------------------*/
+net_unkn_sub_327:	/* 0x10CF02 */
+/*----------------------------------------------------------------*/
+		push   %esi
+		push   %edi
+		enter  $0xc4,$0x0
+		mov    %eax,-0x10(%ebp)
+		mov    %edx,-0xc(%ebp)
+		mov    %ebx,-0x8(%ebp)
+		mov    %ecx,-0x4(%ebp)
+		movb   $0x0,-0x14(%ebp)
+		movb   $0x0,-0x1c(%ebp)
+		movl   $0x1,-0x34(%ebp)
+		movl   $0x0,-0x38(%ebp)
+		movb   $0xaa,-0x3c(%ebp)
+		mov    -0x4(%ebp),%ecx
+		mov    $0x3,%ebx
+		lea    -0x3b(%ebp),%edx
+		mov    -0x10(%ebp),%eax
+		call   net_unkn_func_339
+		cmp    $0x3,%eax
+		jne    jump_10d2a7
+		movzbl -0x3b(%ebp),%eax
+		cmp    $0xaa,%eax
+		jl     jump_10cf60
+		movzbl -0x3b(%ebp),%eax
+		cmp    $0xad,%eax
+		jle    jump_10cf62
+	jump_10cf60:
+		jmp    jump_10cf7a
+	jump_10cf62:
+		mov    $0x3,%edx
+		mov    -0x10(%ebp),%eax
+		call   net_unkn_func_340
+		mov    -0x14(%ebp),%al
+		mov    %al,-0x18(%ebp)
+		jmp    jump_10d2b1
+	jump_10cf7a:
+		movzbl -0x3a(%ebp),%eax
+		cmp    $0xaa,%eax
+		jl     jump_10cf90
+		movzbl -0x3a(%ebp),%eax
+		cmp    $0xad,%eax
+		jle    jump_10cf92
+	jump_10cf90:
+		jmp    jump_10cfaa
+	jump_10cf92:
+		mov    $0x2,%edx
+		mov    -0x10(%ebp),%eax
+		call   net_unkn_func_340
+		mov    -0x14(%ebp),%al
+		mov    %al,-0x18(%ebp)
+		jmp    jump_10d2b1
+	jump_10cfaa:
+		movzbl -0x39(%ebp),%eax
+		cmp    $0xaa,%eax
+		jl     jump_10cfc0
+		movzbl -0x39(%ebp),%eax
+		cmp    $0xad,%eax
+		jle    jump_10cfc2
+	jump_10cfc0:
+		jmp    jump_10cfda
+	jump_10cfc2:
+		mov    $0x1,%edx
+		mov    -0x10(%ebp),%eax
+		call   net_unkn_func_340
+		mov    -0x14(%ebp),%al
+		mov    %al,-0x18(%ebp)
+		jmp    jump_10d2b1
+	jump_10cfda:
+		movzbl -0x3b(%ebp),%eax
+		cmp    $0x80,%eax
+		jge    jump_10cff0
+		movzbl -0x3a(%ebp),%eax
+		cmp    $0x80,%eax
+		jl     jump_10cff2
+	jump_10cff0:
+		jmp    jump_10cffd
+	jump_10cff2:
+		movzbl -0x39(%ebp),%eax
+		cmp    $0x80,%eax
+		jl     jump_10d002
+	jump_10cffd:
+		jmp    jump_10d296
+	jump_10d002:
+		movzbl -0x3b(%ebp),%eax
+		mov    %eax,-0x24(%ebp)
+		mov    -0x4(%ebp),%ecx
+		mov    -0x24(%ebp),%ebx
+		lea    -0xbc(%ebp),%edx
+		mov    -0x10(%ebp),%eax
+		call   net_unkn_func_339
+		cmp    -0x24(%ebp),%eax
+		jne    jump_10d290
+		movl   $0x0,-0x28(%ebp)
+	jump_10d02d:
+		cmpl   $0x0,-0x34(%ebp)
+		je     jump_10d088
+		mov    -0x28(%ebp),%eax
+		cmp    -0x24(%ebp),%eax
+		jb     jump_10d044
+		movl   $0x0,-0x34(%ebp)
+		jmp    jump_10d086
+	jump_10d044:
+		mov    -0x28(%ebp),%eax
+		movzbl -0xbc(%eax,%ebp,1),%eax
+		cmp    $0xaa,%eax
+		jl     jump_10d068
+		mov    -0x28(%ebp),%eax
+		movzbl -0xbc(%eax,%ebp,1),%eax
+		cmp    $0xad,%eax
+		jle    jump_10d06a
+	jump_10d068:
+		jmp    jump_10d080
+	jump_10d06a:
+		movl   $0x1,-0x38(%ebp)
+		movl   $0x0,-0x34(%ebp)
+		mov    -0x28(%ebp),%eax
+		mov    %eax,-0x20(%ebp)
+		jmp    jump_10d086
+	jump_10d080:
+		mov    -0x28(%ebp),%eax
+		incl   -0x28(%ebp)
+	jump_10d086:
+		jmp    jump_10d02d
+	jump_10d088:
+		cmpl   $0x0,-0x38(%ebp)
+		je     jump_10d0a7
+		mov    -0x24(%ebp),%edx
+		sub    -0x20(%ebp),%edx
+		mov    -0x10(%ebp),%eax
+		call   net_unkn_func_340
+		mov    -0x14(%ebp),%al
+		mov    %al,-0x18(%ebp)
+		jmp    jump_10d2b1
+	jump_10d0a7:
+		mov    -0x3c(%ebp),%al
+		xor    %al,-0x1c(%ebp)
+		mov    -0x3b(%ebp),%al
+		xor    %al,-0x1c(%ebp)
+		mov    -0x39(%ebp),%al
+		xor    %al,-0x1c(%ebp)
+		movl   $0x0,-0x28(%ebp)
+		jmp    jump_10d0c8
+	jump_10d0c2:
+		mov    -0x28(%ebp),%eax
+		incl   -0x28(%ebp)
+	jump_10d0c8:
+		mov    -0x28(%ebp),%eax
+		cmp    -0x24(%ebp),%eax
+		jae    jump_10d0df
+		mov    -0x28(%ebp),%eax
+		mov    -0xbc(%eax,%ebp,1),%al
+		xor    %al,-0x1c(%ebp)
+		jmp    jump_10d0c2
+	jump_10d0df:
+		mov    -0x1c(%ebp),%al
+		and    $0x7f,%al
+		movzbl %al,%edx
+		movzbl -0x3a(%ebp),%eax
+		cmp    %eax,%edx
+		jne    jump_10d27f
+		mov    -0x10(%ebp),%eax
+		movzbl 0x1(%eax),%eax
+		inc    %eax
+		and    $0x7f,%eax
+		movzbl -0x39(%ebp),%edx
+		cmp    %eax,%edx
+		jne    jump_10d111
+		mov    -0x14(%ebp),%al
+		mov    %al,-0x18(%ebp)
+		jmp    jump_10d2b1
+	jump_10d111:
+		movzbl -0x39(%ebp),%edx
+		mov    -0x10(%ebp),%eax
+		call   net_unkn_sub_325
+		mov    -0x39(%ebp),%al
+		mov    -0x10(%ebp),%edx
+		cmp    0x1(%edx),%al
+		jne    jump_10d131
+		mov    -0x10(%ebp),%eax
+		cmpl   $0x0,0x6(%eax)
+		jne    jump_10d136
+	jump_10d131:
+		jmp    jump_10d27d
+	jump_10d136:
+		movl   $0x0,-0x30(%ebp)
+		movl   $0x0,-0x2c(%ebp)
+		jmp    jump_10d14c
+	jump_10d146:
+		mov    -0x30(%ebp),%eax
+		incl   -0x30(%ebp)
+	jump_10d14c:
+		mov    -0x30(%ebp),%eax
+		cmp    -0x24(%ebp),%eax
+		jae    jump_10d227
+		mov    -0x30(%ebp),%eax
+		movzbl -0xbc(%eax,%ebp,1),%eax
+		cmp    $0xae,%eax
+		jne    jump_10d20d
+		mov    -0x30(%ebp),%eax
+		incl   -0x30(%ebp)
+		mov    -0x30(%ebp),%eax
+		mov    -0xbc(%eax,%ebp,1),%al
+		mov    %al,-0xc0(%ebp)
+		jmp    jump_10d1e5
+
+
+/*----------------------------------------------------------------*/
+func_10d186:
+/*----------------------------------------------------------------*/
+		mov    -0x2c(%ebp),%eax
+		incl   -0x2c(%ebp)
+		add    -0xc(%ebp),%eax
+		movb   $0xaa,(%eax)
+		jmp    jump_10d20b
+
+
+/*----------------------------------------------------------------*/
+func_10d197:
+/*----------------------------------------------------------------*/
+		mov    -0x2c(%ebp),%eax
+		incl   -0x2c(%ebp)
+		add    -0xc(%ebp),%eax
+		movb   $0xab,(%eax)
+		jmp    jump_10d20b
+
+
+/*----------------------------------------------------------------*/
+func_10d1a5:
+/*----------------------------------------------------------------*/
+		mov    -0x2c(%ebp),%eax
+		incl   -0x2c(%ebp)
+		add    -0xc(%ebp),%eax
+		movb   $0xac,(%eax)
+		jmp    jump_10d20b
+
+
+/*----------------------------------------------------------------*/
+func_10d1b3:
+/*----------------------------------------------------------------*/
+		mov    -0x2c(%ebp),%eax
+		incl   -0x2c(%ebp)
+		add    -0xc(%ebp),%eax
+		movb   $0xad,(%eax)
+		jmp    jump_10d20b
+
+
+/*----------------------------------------------------------------*/
+func_10d1c1:
+/*----------------------------------------------------------------*/
+		mov    -0x2c(%ebp),%eax
+		incl   -0x2c(%ebp)
+		add    -0xc(%ebp),%eax
+		movb   $0xae,(%eax)
+		jmp    jump_10d20b
+	jump_10d1cf:
+		jmp    jump_10d20b
+
+vtable_10d1d1:
+		.long   func_10d186
+		.long   func_10d197
+		.long   func_10d1a5
+		.long   func_10d1b3
+		.long   func_10d1c1
+	jump_10d1e5:
+		mov    -0xc0(%ebp),%al
+		mov    %al,-0xc4(%ebp)
+		cmpb   $0x4,-0xc4(%ebp)
+		ja     jump_10d1cf
+		movzbl -0xc4(%ebp),%eax
+		shl    $0x2,%eax
+		jmp    *%cs:vtable_10d1d1(%eax)
+	jump_10d20b:
+		jmp    jump_10d222
+	jump_10d20d:
+		mov    -0x2c(%ebp),%edx
+		incl   -0x2c(%ebp)
+		add    -0xc(%ebp),%edx
+		mov    -0x30(%ebp),%eax
+		mov    -0xbc(%eax,%ebp,1),%al
+		mov    %al,(%edx)
+	jump_10d222:
+		jmp    jump_10d146
+	jump_10d227:
+		mov    -0x2c(%ebp),%eax
+		mov    -0x8(%ebp),%edx
+		mov    %eax,(%edx)
+		mov    -0x8(%ebp),%eax
+		mov    (%eax),%edx
+		mov    -0x10(%ebp),%eax
+		mov    %edx,0x114(%eax)
+		movl   $0x0,-0x28(%ebp)
+		jmp    jump_10d24c
+	jump_10d246:
+		mov    -0x28(%ebp),%eax
+		incl   -0x28(%ebp)
+	jump_10d24c:
+		mov    -0x28(%ebp),%eax
+		mov    -0x8(%ebp),%edx
+		cmp    (%edx),%eax
+		jae    jump_10d26c
+		mov    -0xc(%ebp),%eax
+		add    -0x28(%ebp),%eax
+		mov    -0x10(%ebp),%edx
+		add    -0x28(%ebp),%edx
+		mov    (%eax),%al
+		mov    %al,0x118(%edx)
+		jmp    jump_10d246
+	jump_10d26c:
+		mov    -0x10(%ebp),%eax
+		movl   $0x1,0x197(%eax)
+		movb   $0x2,-0x14(%ebp)
+	jump_10d27d:
+		jmp    jump_10d28e
+	jump_10d27f:
+		mov    -0x10(%ebp),%eax
+		movzbl 0x1(%eax),%edx
+		mov    -0x10(%ebp),%eax
+		call   net_unkn_sub_326
+	jump_10d28e:
+		jmp    jump_10d294
+	jump_10d290:
+		movb   $0x1,-0x14(%ebp)
+	jump_10d294:
+		jmp    jump_10d2a5
+	jump_10d296:
+		mov    -0x10(%ebp),%eax
+		movzbl 0x1(%eax),%edx
+		mov    -0x10(%ebp),%eax
+		call   net_unkn_sub_326
+	jump_10d2a5:
+		jmp    jump_10d2ab
+	jump_10d2a7:
+		movb   $0x1,-0x14(%ebp)
+	jump_10d2ab:
+		mov    -0x14(%ebp),%al
+		mov    %al,-0x18(%ebp)
+	jump_10d2b1:
+		mov    -0x18(%ebp),%al
+		leave
+		pop    %edi
+		pop    %esi
+		ret
+
+
+/*----------------------------------------------------------------*/
+net_unkn_sub_328:	/* 0x10D2B8 */
+/*----------------------------------------------------------------*/
+		push   %esi
+		push   %edi
+		enter  $0x24,$0x0
+		mov    %eax,-0x10(%ebp)
+		mov    %edx,-0xc(%ebp)
+		mov    %ebx,-0x8(%ebp)
+		mov    %ecx,-0x4(%ebp)
+		movb   $0x0,-0x1c(%ebp)
+		movb   $0x0,-0x18(%ebp)
+		movb   $0xad,-0x20(%ebp)
+		mov    -0x4(%ebp),%ecx
+		mov    $0x2,%ebx
+		lea    -0x1f(%ebp),%edx
+		mov    -0x10(%ebp),%eax
+		call   net_unkn_func_339
+		cmp    $0x2,%eax
+		jne    jump_10d436
+		movzbl -0x1f(%ebp),%eax
+		cmp    $0xaa,%eax
+		jl     jump_10d308
+		movzbl -0x1f(%ebp),%eax
+		cmp    $0xad,%eax
+		jle    jump_10d30a
+	jump_10d308:
+		jmp    jump_10d322
+	jump_10d30a:
+		mov    $0x2,%edx
+		mov    -0x10(%ebp),%eax
+		call   net_unkn_func_340
+		mov    -0x1c(%ebp),%al
+		mov    %al,-0x14(%ebp)
+		jmp    jump_10d440
+	jump_10d322:
+		movzbl -0x1e(%ebp),%eax
+		cmp    $0xaa,%eax
+		jl     jump_10d338
+		movzbl -0x1e(%ebp),%eax
+		cmp    $0xad,%eax
+		jle    jump_10d33a
+	jump_10d338:
+		jmp    jump_10d352
+	jump_10d33a:
+		mov    $0x1,%edx
+		mov    -0x10(%ebp),%eax
+		call   net_unkn_func_340
+		mov    -0x1c(%ebp),%al
+		mov    %al,-0x14(%ebp)
+		jmp    jump_10d440
+	jump_10d352:
+		movzbl -0x1f(%ebp),%eax
+		cmp    $0x80,%eax
+		jge    jump_10d368
+		movzbl -0x1e(%ebp),%eax
+		cmp    $0x80,%eax
+		jl     jump_10d36d
+	jump_10d368:
+		jmp    jump_10d425
+	jump_10d36d:
+		mov    -0x20(%ebp),%al
+		xor    %al,-0x18(%ebp)
+		mov    -0x1e(%ebp),%al
+		xor    %al,-0x18(%ebp)
+		mov    -0x18(%ebp),%al
+		and    $0x7f,%al
+		movzbl %al,%edx
+		movzbl -0x1f(%ebp),%eax
+		cmp    %eax,%edx
+		jne    jump_10d414
+		mov    -0x10(%ebp),%eax
+		movzbl 0x1(%eax),%eax
+		inc    %eax
+		and    $0x7f,%eax
+		movzbl -0x1e(%ebp),%edx
+		cmp    %eax,%edx
+		jne    jump_10d3ab
+		mov    -0x1c(%ebp),%al
+		mov    %al,-0x14(%ebp)
+		jmp    jump_10d440
+	jump_10d3ab:
+		movzbl -0x1e(%ebp),%edx
+		mov    -0x10(%ebp),%eax
+		call   net_unkn_sub_325
+		mov    -0x1e(%ebp),%al
+		mov    -0x10(%ebp),%edx
+		cmp    0x1(%edx),%al
+		jne    jump_10d3cb
+		mov    -0x10(%ebp),%eax
+		cmpl   $0x0,0x6(%eax)
+		jne    jump_10d3cd
+	jump_10d3cb:
+		jmp    jump_10d412
+	jump_10d3cd:
+		mov    -0x10(%ebp),%eax
+		mov    0x114(%eax),%edx
+		mov    -0x8(%ebp),%eax
+		mov    %edx,(%eax)
+		movl   $0x0,-0x24(%ebp)
+		jmp    jump_10d3ea
+	jump_10d3e4:
+		mov    -0x24(%ebp),%eax
+		incl   -0x24(%ebp)
+	jump_10d3ea:
+		mov    -0x24(%ebp),%eax
+		mov    -0x10(%ebp),%edx
+		cmp    0x114(%edx),%eax
+		jae    jump_10d40e
+		mov    -0x10(%ebp),%eax
+		add    -0x24(%ebp),%eax
+		mov    -0xc(%ebp),%edx
+		add    -0x24(%ebp),%edx
+		mov    0x118(%eax),%al
+		mov    %al,(%edx)
+		jmp    jump_10d3e4
+	jump_10d40e:
+		movb   $0x2,-0x1c(%ebp)
+	jump_10d412:
+		jmp    jump_10d423
+	jump_10d414:
+		mov    -0x10(%ebp),%eax
+		movzbl 0x1(%eax),%edx
+		mov    -0x10(%ebp),%eax
+		call   net_unkn_sub_326
+	jump_10d423:
+		jmp    jump_10d434
+	jump_10d425:
+		mov    -0x10(%ebp),%eax
+		movzbl 0x1(%eax),%edx
+		mov    -0x10(%ebp),%eax
+		call   net_unkn_sub_326
+	jump_10d434:
+		jmp    jump_10d43a
+	jump_10d436:
+		movb   $0x1,-0x1c(%ebp)
+	jump_10d43a:
+		mov    -0x1c(%ebp),%al
+		mov    %al,-0x14(%ebp)
+	jump_10d440:
+		mov    -0x14(%ebp),%al
+		leave
+		pop    %edi
+		pop    %esi
+		ret
+
+
+/*----------------------------------------------------------------*/
+net_unkn_sub_329:	/* 0x10D447 */
+/*----------------------------------------------------------------*/
+		push   %ebx
+		push   %ecx
+		push   %edx
+		push   %esi
+		push   %edi
+		enter  $0xc,$0x0
+		mov    %eax,-0x4(%ebp)
+		mov    -0x4(%ebp),%eax
+		cmpl   $0x0,0x89(%eax)
+		je     jump_10d506
+		mov    -0x4(%ebp),%eax
+		mov    0xa(%eax),%al
+		mov    %al,-0x8(%ebp)
+		jmp    jump_10d4e6
+	jump_10d471:
+		mov    -0x4(%ebp),%eax
+		movzbl 0xb(%eax),%eax
+		lea    0x4(%eax),%ebx
+		mov    -0x4(%ebp),%edx
+		add    $0xa,%edx
+		mov    -0x4(%ebp),%eax
+		call   net_unkn_sub_335
+		mov    -0x4(%ebp),%eax
+		cmpl   $0x0,0x1a7(%eax)
+		je     jump_10d4ab
+		mov    -0x4(%ebp),%eax
+		movzbl 0xd(%eax),%eax
+		push   %eax
+		mov    $EXPORT_SYMBOL(aResendingD),%eax
+		push   %eax
+		call   ac_printf
+		add    $0x8,%esp
+	jump_10d4ab:
+		jmp    jump_10d506
+	jump_10d4ad:
+		mov    $0x3,%ebx
+		mov    -0x4(%ebp),%edx
+		add    $0xa,%edx
+		mov    -0x4(%ebp),%eax
+		call   net_unkn_sub_335
+		mov    -0x4(%ebp),%eax
+		cmpl   $0x0,0x1a7(%eax)
+		je     jump_10d4e2
+		mov    -0x4(%ebp),%eax
+		movzbl 0xc(%eax),%eax
+		push   %eax
+		mov    $EXPORT_SYMBOL(aResendingDelta),%eax
+		push   %eax
+		call   ac_printf
+		add    $0x8,%esp
+	jump_10d4e2:
+		jmp    jump_10d506
+	jump_10d4e4:
+		jmp    jump_10d506
+	jump_10d4e6:
+		mov    -0x8(%ebp),%al
+		mov    %al,-0xc(%ebp)
+		cmpb   $0xaa,-0xc(%ebp)
+		jb     jump_10d504
+		cmpb   $0xaa,-0xc(%ebp)
+		jbe    jump_10d471
+		cmpb   $0xad,-0xc(%ebp)
+		je     jump_10d4ad
+		jmp    jump_10d4e4
+	jump_10d504:
+		jmp    jump_10d4e4
+	jump_10d506:
+		leave
+		pop    %edi
+		pop    %esi
+		pop    %edx
+		pop    %ecx
+		pop    %ebx
+		ret
+
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC(ASM_unkn_exchange_start)	/* 0x10D50D */
+/*----------------------------------------------------------------*/
+		push   %ecx
+		push   %esi
+		push   %edi
+		enter  $0xc,$0x0
+		mov    %eax,-0xc(%ebp)
+		mov    %edx,-0x8(%ebp)
+		mov    %ebx,-0x4(%ebp)
+		mov    -0xc(%ebp),%eax
+		cmpl   $0x0,0x1a7(%eax)
+		je     jump_10d53e
+		mov    -0xc(%ebp),%eax
+		movzbl (%eax),%eax
+		push   %eax
+		mov    $EXPORT_SYMBOL(aStartingExchan),%eax
+		push   %eax
+		call   ac_printf
+		add    $0x8,%esp
+	jump_10d53e:
+		mov    -0x4(%ebp),%ebx
+		mov    -0x8(%ebp),%edx
+		mov    -0xc(%ebp),%eax
+		call   net_unkn_sub_323
+		mov    -0xc(%ebp),%eax
+		movl   $0x1,0x2(%eax)
+		leave
+		pop    %edi
+		pop    %esi
+		pop    %ecx
+		ret
+
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC(ASM_unkn_exchange)	/* 0x10D55B */
+/*----------------------------------------------------------------*/
+		push   %ecx
+		push   %esi
+		push   %edi
+		enter  $0x28,$0x0
+		mov    %eax,-0xc(%ebp)
+		mov    %edx,-0x8(%ebp)
+		mov    %ebx,-0x4(%ebp)
+		movl   $0x1,-0x1c(%ebp)
+		movl   $0x0,-0x18(%ebp)
+		movl   $0x0,-0x10(%ebp)
+		mov    -0xc(%ebp),%eax
+		movl   $0x1,0x6(%eax)
+		mov    -0xc(%ebp),%eax
+		cmpl   $0x0,0x1a7(%eax)
+		je     jump_10d59e
+		mov    -0xc(%ebp),%eax
+		call   net_unkn_change_state
+	jump_10d59e:
+		cmpl   $0x0,-0x1c(%ebp)
+		je     jump_10d70a
+		mov    -0xc(%ebp),%eax
+		cmpl   $0x0,0x2(%eax)
+		je     jump_10d5ba
+		movl   $0x64,-0x14(%ebp)
+		jmp    jump_10d5c1
+	jump_10d5ba:
+		movl   $0x7530,-0x14(%ebp)
+	jump_10d5c1:
+		mov    -0x14(%ebp),%ecx
+		mov    -0x4(%ebp),%ebx
+		mov    -0x8(%ebp),%edx
+		mov    -0xc(%ebp),%eax
+		call   net_unkn_sub_324
+		mov    %al,-0x24(%ebp)
+		jmp    jump_10d680
+
+
+/*----------------------------------------------------------------*/
+func_10d5da:
+/*----------------------------------------------------------------*/
+		mov    -0xc(%ebp),%eax
+		movl   $0x0,0x6(%eax)
+		mov    -0xc(%ebp),%eax
+		cmpl   $0x0,0x1a7(%eax)
+		je     jump_10d5f8
+		mov    -0xc(%ebp),%eax
+		call   net_unkn_change_state
+	jump_10d5f8:
+		jmp    jump_10d69a
+
+
+/*----------------------------------------------------------------*/
+func_10d5fd:
+/*----------------------------------------------------------------*/
+		mov    -0xc(%ebp),%eax
+		movl   $0x0,0x2(%eax)
+		mov    -0xc(%ebp),%eax
+		cmpl   $0x0,0x1a7(%eax)
+		je     jump_10d61b
+		mov    -0xc(%ebp),%eax
+		call   net_unkn_change_state
+	jump_10d61b:
+		mov    -0xc(%ebp),%eax
+		movl   $0x1,0x110(%eax)
+		jmp    jump_10d69a
+
+
+/*----------------------------------------------------------------*/
+func_10d62d:
+/*----------------------------------------------------------------*/
+		mov    -0xc(%ebp),%eax
+		cmpl   $0x0,0x2(%eax)
+		je     jump_10d644
+		mov    -0xc(%ebp),%eax
+		call   net_unkn_sub_329
+		mov    -0x10(%ebp),%eax
+		incl   -0x10(%ebp)
+	jump_10d644:
+		jmp    jump_10d69a
+
+
+/*----------------------------------------------------------------*/
+func_10d646:
+/*----------------------------------------------------------------*/
+		mov    -0xc(%ebp),%eax
+		cmpl   $0x0,0x2(%eax)
+		je     jump_10d65f
+		mov    -0xc(%ebp),%eax
+		call   net_unkn_sub_329
+		mov    -0x10(%ebp),%eax
+		incl   -0x10(%ebp)
+		jmp    jump_10d666
+	jump_10d65f:
+		movl   $0x0,-0x1c(%ebp)
+	jump_10d666:
+		jmp    jump_10d69a
+
+
+/*----------------------------------------------------------------*/
+func_10d668:
+/*----------------------------------------------------------------*/
+		jmp    jump_10d69a
+	jump_10d66a:
+		jmp    jump_10d69a
+
+vtable_10d66c:
+		.long   func_10d668
+		.long   func_10d646
+		.long   func_10d5da
+		.long   func_10d5fd
+		.long   func_10d62d
+	jump_10d680:
+		mov    -0x24(%ebp),%al
+		mov    %al,-0x28(%ebp)
+		cmpb   $0x4,-0x28(%ebp)
+		ja     jump_10d66a
+		movzbl -0x28(%ebp),%eax
+		shl    $0x2,%eax
+		jmp    *%cs:vtable_10d66c(%eax)
+	jump_10d69a:
+		mov    -0xc(%ebp),%eax
+		cmpl   $0x0,0x1a3(%eax)
+		je     jump_10d6bb
+		mov    -0xc(%ebp),%eax
+		call   *0x1a3(%eax)
+		cmp    $0xfffffff9,%eax
+		jne    jump_10d6bb
+		movl   $0x0,-0x1c(%ebp)
+	jump_10d6bb:
+		cmpl   $0x190,-0x10(%ebp)
+		jb     jump_10d6cb
+		movl   $0x0,-0x1c(%ebp)
+	jump_10d6cb:
+		mov    -0xc(%ebp),%eax
+		cmpl   $0x0,0x2(%eax)
+		jne    jump_10d6dd
+		mov    -0xc(%ebp),%eax
+		cmpl   $0x0,0x6(%eax)
+		je     jump_10d6df
+	jump_10d6dd:
+		jmp    jump_10d705
+	jump_10d6df:
+		mov    -0xc(%ebp),%eax
+		incb   0x1(%eax)
+		mov    -0xc(%ebp),%eax
+		andb   $0x7f,0x1(%eax)
+		mov    -0xc(%ebp),%eax
+		incb   (%eax)
+		mov    -0xc(%ebp),%eax
+		andb   $0x7f,(%eax)
+		movl   $0x0,-0x1c(%ebp)
+		movl   $0x1,-0x18(%ebp)
+	jump_10d705:
+		jmp    jump_10d59e
+	jump_10d70a:
+		mov    -0xc(%ebp),%eax
+		cmpl   $0x0,0x1a7(%eax)
+		je     jump_10d748
+		mov    $EXPORT_SYMBOL(aCompletedExcha),%eax
+		push   %eax
+		call   ac_printf
+		add    $0x4,%esp
+		cmpl   $0x0,-0x18(%ebp)
+		je     jump_10d73a
+		mov    $EXPORT_SYMBOL(aTrue),%eax
+		push   %eax
+		call   ac_printf
+		add    $0x4,%esp
+		jmp    jump_10d748
+	jump_10d73a:
+		mov    $EXPORT_SYMBOL(aFalse),%eax
+		push   %eax
+		call   ac_printf
+		add    $0x4,%esp
+	jump_10d748:
+		mov    -0x18(%ebp),%eax
+		mov    %eax,-0x20(%ebp)
+		mov    -0x20(%ebp),%eax
+		leave
+		pop    %edi
+		pop    %esi
+		pop    %ecx
+		ret
+
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC(ASM_net_unkn_post_init_2)	/* 0x10D756 */
+/*----------------------------------------------------------------*/
+		push   %ebx
+		push   %ecx
+		push   %esi
+		push   %edi
+		enter  $0x8,$0x0
+		mov    %eax,-0x8(%ebp)
+		mov    %edx,-0x4(%ebp)
+		mov    -0x4(%ebp),%eax
+		mov    -0x8(%ebp),%edx
+		mov    %eax,0x19b(%edx)
+		leave
+		pop    %edi
+		pop    %esi
+		pop    %ecx
+		pop    %ebx
+		ret
+
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC(ASM_net_unkn_post_init_3)	/* 0x10D776 */
+/*----------------------------------------------------------------*/
+		push   %ebx
+		push   %ecx
+		push   %esi
+		push   %edi
+		enter  $0x8,$0x0
+		mov    %eax,-0x8(%ebp)
+		mov    %edx,-0x4(%ebp)
+		mov    -0x4(%ebp),%eax
+		mov    -0x8(%ebp),%edx
+		mov    %eax,0x19f(%edx)
+		leave
+		pop    %edi
+		pop    %esi
+		pop    %ecx
+		pop    %ebx
+		ret
+
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC(ASM_net_unkn_sub_332)	/* 0x10D796 */
+/*----------------------------------------------------------------*/
+		push   %ebx
+		push   %ecx
+		push   %esi
+		push   %edi
+		enter  $0x8,$0x0
+		mov    %eax,-0x8(%ebp)
+		mov    %edx,-0x4(%ebp)
+		mov    -0x4(%ebp),%eax
+		mov    -0x8(%ebp),%edx
+		mov    %eax,0x1a3(%edx)
+		leave
+		pop    %edi
+		pop    %esi
+		pop    %ecx
+		pop    %ebx
+		ret
+
+
+/*----------------------------------------------------------------*/
+net_unkn_sub_335:	/* 0x10D7F6 */
+/*----------------------------------------------------------------*/
+		push   %ecx
+		push   %esi
+		push   %edi
+		enter  $0x214,$0x0
+		mov    %eax,-0xc(%ebp)
+		mov    %edx,-0x8(%ebp)
+		mov    %ebx,-0x4(%ebp)
+		mov    -0xc(%ebp),%eax
+		cmpl   $0x0,0x19b(%eax)
+		je     jump_10d8f7
+		mov    -0xc(%ebp),%eax
+		cmpl   $0x0,0x1a7(%eax)
+		je     jump_10d86f
+		mov    $EXPORT_SYMBOL(aTxData),%eax
+		push   %eax
+		call   ac_printf
+		add    $0x4,%esp
+		movl   $0x0,-0x10(%ebp)
+		jmp    jump_10d83f
+	jump_10d839:
+		mov    -0x10(%ebp),%eax
+		incl   -0x10(%ebp)
+	jump_10d83f:
+		mov    -0x10(%ebp),%eax
+		cmp    -0x4(%ebp),%eax
+		jae    jump_10d861
+		mov    -0x8(%ebp),%eax
+		add    -0x10(%ebp),%eax
+		movzbl (%eax),%eax
+		push   %eax
+		mov    $EXPORT_SYMBOL(asc02x),%eax
+		push   %eax
+		call   ac_printf
+		add    $0x8,%esp
+		jmp    jump_10d839
+	jump_10d861:
+		mov    $data_1616c1,%eax
+		push   %eax
+		call   ac_printf
+		add    $0x4,%esp
+	jump_10d86f:
+		mov    -0xc(%ebp),%eax
+		cmpl   $0x0,0x2b7(%eax)
+		je     jump_10d8e8
+		movl   $0x0,-0x14(%ebp)
+		jmp    jump_10d88a
+	jump_10d884:
+		mov    -0x14(%ebp),%eax
+		incl   -0x14(%ebp)
+	jump_10d88a:
+		mov    -0x14(%ebp),%eax
+		cmp    -0x4(%ebp),%eax
+		jae    jump_10d8b9
+		mov    -0x8(%ebp),%eax
+		add    -0x14(%ebp),%eax
+		movzbl (%eax),%eax
+		push   %eax
+		mov    $asc02x_0,%eax
+		push   %eax
+		imul   $0x3,-0x14(%ebp),%eax
+		lea    -0x214(%ebp),%edx
+		add    %edx,%eax
+		push   %eax
+		call   ac_sprintf
+		add    $0xc,%esp
+		jmp    jump_10d884
+	jump_10d8b9:
+		imul   $0x3,-0x4(%ebp),%ebx
+		movb   $0xa,-0x214(%ebx,%ebp,1)
+		imul   $0x3,-0x4(%ebp),%ebx
+		movb   $0xd,-0x213(%ebx,%ebp,1)
+		imul   $0x3,-0x4(%ebp),%edx
+		inc    %edx
+		inc    %edx
+		lea    -0x214(%ebp),%eax
+		mov    -0xc(%ebp),%ebx
+		call   *0x19b(%ebx)
+		jmp    jump_10d8f7
+	jump_10d8e8:
+		mov    -0x4(%ebp),%edx
+		mov    -0x8(%ebp),%eax
+		mov    -0xc(%ebp),%ebx
+		call   *0x19b(%ebx)
+	jump_10d8f7:
+		leave
+		pop    %edi
+		pop    %esi
+		pop    %ecx
+		ret
+
+
+/*----------------------------------------------------------------*/
+net_unkn_func_339:	/* 0x10D8FC */
+/*----------------------------------------------------------------*/
+		push   %esi
+		push   %edi
+		enter  $0x38,$0x0
+		mov    %eax,-0x10(%ebp)
+		mov    %edx,-0xc(%ebp)
+		mov    %ebx,-0x8(%ebp)
+		mov    %ecx,-0x4(%ebp)
+		movl   $0x1,-0x20(%ebp)
+		movl   $0x0,-0x1c(%ebp)
+		movl   $0x0,-0x14(%ebp)
+		mov    -0x10(%ebp),%eax
+		cmpl   $0x0,0x19f(%eax)
+		je     jump_10dbca
+		mov    -0x10(%ebp),%eax
+		mov    0x2af(%eax),%edx
+		mov    -0x10(%ebp),%eax
+		cmp    0x2b3(%eax),%edx
+		je     jump_10d9ae
+	jump_10d947:
+		cmpl   $0x0,-0x20(%ebp)
+		je     jump_10d9ae
+		mov    -0x1c(%ebp),%eax
+		cmp    -0x8(%ebp),%eax
+		jb     jump_10d95e
+		movl   $0x0,-0x20(%ebp)
+		jmp    jump_10d9ac
+	jump_10d95e:
+		mov    -0x10(%ebp),%eax
+		mov    0x2b3(%eax),%edx
+		mov    -0x10(%ebp),%eax
+		incl   0x2b3(%eax)
+		add    -0x10(%ebp),%edx
+		mov    -0x1c(%ebp),%eax
+		incl   -0x1c(%ebp)
+		add    -0xc(%ebp),%eax
+		mov    0x1af(%edx),%dl
+		mov    %dl,(%eax)
+		mov    -0x10(%ebp),%eax
+		andl   $0xff,0x2b3(%eax)
+		mov    -0x10(%ebp),%eax
+		mov    0x2af(%eax),%edx
+		mov    -0x10(%ebp),%eax
+		cmp    0x2b3(%eax),%edx
+		jne    jump_10d9ac
+		movl   $0x0,-0x20(%ebp)
+	jump_10d9ac:
+		jmp    jump_10d947
+	jump_10d9ae:
+		mov    -0x1c(%ebp),%eax
+		cmp    -0x8(%ebp),%eax
+		jae    jump_10db71
+		mov    -0x10(%ebp),%eax
+		cmpl   $0x0,0x2b7(%eax)
+		je     jump_10daf0
+		movl   $0x1,-0x2c(%ebp)
+		movl   $0x1,-0x30(%ebp)
+		mov    EXPORT_SYMBOL(data_1596c4),%ax
+		mov    %eax,-0x34(%ebp)
+	jump_10d9e1:
+		cmpl   $0x0,-0x30(%ebp)
+		je     jump_10dadd
+	jump_10d9eb:
+		mov    $0xea60,%ebx
+		mov    $0x1,%edx
+		lea    -0x28(%ebp),%eax
+		mov    -0x10(%ebp),%ecx
+		call   *0x19f(%ecx)
+		cmp    $0x1,%eax
+		jne    jump_10d9eb
+		movl   $0xff,-0x38(%ebp)
+		movzbl -0x28(%ebp),%eax
+		cmp    $0x30,%eax
+		jl     jump_10da1f
+		movzbl -0x28(%ebp),%eax
+		cmp    $0x39,%eax
+		jle    jump_10da21
+	jump_10da1f:
+		jmp    jump_10da2d
+	jump_10da21:
+		movzbl -0x28(%ebp),%eax
+		sub    $0x30,%eax
+		mov    %eax,-0x38(%ebp)
+		jmp    jump_10da4b
+	jump_10da2d:
+		movzbl -0x28(%ebp),%eax
+		cmp    $0x61,%eax
+		jl     jump_10da3f
+		movzbl -0x28(%ebp),%eax
+		cmp    $0x66,%eax
+		jle    jump_10da41
+	jump_10da3f:
+		jmp    jump_10da4b
+	jump_10da41:
+		movzbl -0x28(%ebp),%eax
+		sub    $0x57,%eax
+		mov    %eax,-0x38(%ebp)
+	jump_10da4b:
+		movzbl -0x28(%ebp),%eax
+		cmp    $0xd,%eax
+		jne    jump_10da5b
+		movl   $0x0,-0x30(%ebp)
+	jump_10da5b:
+		cmpl   $0xff,-0x38(%ebp)
+		je     jump_10dac9
+		mov    $0x1,%edx
+		lea    -0x28(%ebp),%eax
+		mov    -0x10(%ebp),%ebx
+		call   *0x19b(%ebx)
+		cmpl   $0x0,-0x2c(%ebp)
+		je     jump_10da99
+		mov    -0x38(%ebp),%al
+		shl    $0x4,%al
+		and    $0xf0,%al
+		mov    %al,%dl
+		mov    -0x1c(%ebp),%eax
+		add    -0x14(%ebp),%eax
+		add    -0xc(%ebp),%eax
+		mov    %dl,(%eax)
+		movl   $0x0,-0x2c(%ebp)
+		jmp    jump_10dac9
+	jump_10da99:
+		mov    -0x1c(%ebp),%edx
+		add    -0x14(%ebp),%edx
+		add    -0xc(%ebp),%edx
+		mov    -0x38(%ebp),%al
+		or     %al,(%edx)
+		mov    -0x14(%ebp),%eax
+		incl   -0x14(%ebp)
+		movl   $0x1,-0x2c(%ebp)
+		movb   $0x20,-0x28(%ebp)
+		mov    $0x1,%edx
+		lea    -0x28(%ebp),%eax
+		mov    -0x10(%ebp),%ebx
+		call   *0x19b(%ebx)
+	jump_10dac9:
+		mov    -0x14(%ebp),%eax
+		cmp    -0x8(%ebp),%eax
+		jb     jump_10dad8
+		movl   $0x0,-0x30(%ebp)
+	jump_10dad8:
+		jmp    jump_10d9e1
+	jump_10dadd:
+		mov    $0x2,%edx
+		lea    -0x34(%ebp),%eax
+		mov    -0x10(%ebp),%ebx
+		call   *0x19b(%ebx)
+		jmp    jump_10db0b
+	jump_10daf0:
+		mov    -0x4(%ebp),%ebx
+		mov    -0x8(%ebp),%edx
+		sub    -0x1c(%ebp),%edx
+		mov    -0xc(%ebp),%eax
+		add    -0x1c(%ebp),%eax
+		mov    -0x10(%ebp),%ecx
+		call   *0x19f(%ecx)
+		mov    %eax,-0x14(%ebp)
+	jump_10db0b:
+		movl   $0x0,-0x18(%ebp)
+		jmp    jump_10db1a
+	jump_10db14:
+		mov    -0x18(%ebp),%eax
+		incl   -0x18(%ebp)
+	jump_10db1a:
+		mov    -0x18(%ebp),%eax
+		cmp    -0x14(%ebp),%eax
+		jae    jump_10db59
+		mov    -0x1c(%ebp),%edx
+		add    -0x18(%ebp),%edx
+		add    -0xc(%ebp),%edx
+		mov    -0x10(%ebp),%eax
+		mov    0x2af(%eax),%ebx
+		mov    -0x10(%ebp),%eax
+		incl   0x2af(%eax)
+		mov    -0x10(%ebp),%eax
+		add    %ebx,%eax
+		mov    (%edx),%dl
+		mov    %dl,0x1af(%eax)
+		mov    -0x10(%ebp),%eax
+		andl   $0xff,0x2af(%eax)
+		jmp    jump_10db14
+	jump_10db59:
+		mov    -0x10(%ebp),%eax
+		mov    0x2af(%eax),%edx
+		mov    -0x10(%ebp),%eax
+		mov    %edx,0x2b3(%eax)
+		mov    -0x14(%ebp),%eax
+		add    %eax,-0x1c(%ebp)
+	jump_10db71:
+		mov    -0x10(%ebp),%eax
+		cmpl   $0x0,0x1a7(%eax)
+		je     jump_10dbca
+		mov    $ascRxData,%eax
+		push   %eax
+		call   ac_printf
+		add    $0x4,%esp
+		movl   $0x0,-0x18(%ebp)
+		jmp    jump_10db9a
+	jump_10db94:
+		mov    -0x18(%ebp),%eax
+		incl   -0x18(%ebp)
+	jump_10db9a:
+		mov    -0x18(%ebp),%eax
+		cmp    -0x1c(%ebp),%eax
+		jae    jump_10dbbc
+		mov    -0xc(%ebp),%eax
+		add    -0x18(%ebp),%eax
+		movzbl (%eax),%eax
+		push   %eax
+		mov    $asc02x_1,%eax
+		push   %eax
+		call   ac_printf
+		add    $0x8,%esp
+		jmp    jump_10db94
+	jump_10dbbc:
+		mov    $data_1616d9,%eax
+		push   %eax
+		call   ac_printf
+		add    $0x4,%esp
+	jump_10dbca:
+		mov    -0x1c(%ebp),%eax
+		mov    %eax,-0x24(%ebp)
+		mov    -0x24(%ebp),%eax
+		leave
+		pop    %edi
+		pop    %esi
+		ret
+
+
+/*----------------------------------------------------------------*/
+net_unkn_func_340:	/* 0x10DBD7 */
+/*----------------------------------------------------------------*/
+		push   %ebx
+		push   %ecx
+		push   %esi
+		push   %edi
+		enter  $0x8,$0x0
+		mov    %eax,-0x8(%ebp)
+		mov    %edx,-0x4(%ebp)
+		mov    -0x4(%ebp),%eax
+		mov    -0x8(%ebp),%edx
+		sub    %eax,0x2b3(%edx)
+		mov    -0x8(%ebp),%eax
+		andl   $0xff,0x2b3(%eax)
+		leave
+		pop    %edi
+		pop    %esi
+		pop    %ecx
+		pop    %ebx
+		ret
+
+
+/*----------------------------------------------------------------*/
+net_unkn_change_state:	/* 0x10DC04 */
+/*----------------------------------------------------------------*/
+		push   %ebx
+		push   %ecx
+		push   %edx
+		push   %esi
+		push   %edi
+		enter  $0x4,$0x0
+		mov    %eax,-0x4(%ebp)
+		mov    $aStateChangeWai,%eax
+		push   %eax
+		call   ac_printf
+		add    $0x4,%esp
+		mov    -0x4(%ebp),%eax
+		cmpl   $0x0,0x2(%eax)
+		je     jump_10dc37
+		mov    $ascTrue_0,%eax
+		push   %eax
+		call   ac_printf
+		add    $0x4,%esp
+		jmp    jump_10dc45
+	jump_10dc37:
+		mov    $ascFalse_0,%eax
+		push   %eax
+		call   ac_printf
+		add    $0x4,%esp
+	jump_10dc45:
+		mov    $aWaiting_for_da,%eax
+		push   %eax
+		call   ac_printf
+		add    $0x4,%esp
+		mov    -0x4(%ebp),%eax
+		cmpl   $0x0,0x6(%eax)
+		je     jump_10dc6c
+		mov    $ascTrue_1,%eax
+		push   %eax
+		call   ac_printf
+		add    $0x4,%esp
+		jmp    jump_10dc7a
+	jump_10dc6c:
+		mov    $ascFalse_1,%eax
+		push   %eax
+		call   ac_printf
+		add    $0x4,%esp
+	jump_10dc7a:
+		leave
+		pop    %edi
+		pop    %esi
+		pop    %edx
+		pop    %ecx
+		pop    %ebx
+		ret
+
+
+/*----------------------------------------------------------------*/
+net_unkn_func_337:	/* 0x10DCA1 */
+/*----------------------------------------------------------------*/
+		push   %ebx
+		push   %ecx
+		push   %esi
+		push   %edi
+		enter  $0x28,$0x0
+		mov    %eax,-0x8(%ebp)
+		mov    %dl,-0x4(%ebp)
+		movb   $0x0,-0x1c(%ebp)
+		mov    $0x64,%ecx
+		mov    $0x1,%ebx
+		lea    -0x18(%ebp),%edx
+		mov    -0x8(%ebp),%eax
+		call   net_unkn_func_339
+		cmp    $0x1,%eax
+		jne    jump_10dde7
+		movzbl -0x18(%ebp),%eax
+		cmp    $0xaa,%eax
+		jl     jump_10dce7
+		movzbl -0x18(%ebp),%eax
+		cmp    $0xad,%eax
+		jle    jump_10dce9
+	jump_10dce7:
+		jmp    jump_10dcfb
+	jump_10dce9:
+		mov    $0x1,%edx
+		mov    -0x8(%ebp),%eax
+		call   net_unkn_func_340
+		jmp    jump_10dde7
+	jump_10dcfb:
+		movzbl -0x18(%ebp),%eax
+		cmp    $0x80,%eax
+		jge    jump_10dde7
+		movzbl -0x4(%ebp),%eax
+		add    -0x8(%ebp),%eax
+		mov    0x2bb(%eax),%al
+		add    %al,%al
+		mov    %al,-0x10(%ebp)
+		mov    -0x18(%ebp),%al
+		and    $0x7,%al
+		movzbl %al,%eax
+		add    -0x8(%ebp),%eax
+		mov    0x3bb(%eax),%al
+		xor    %al,-0x10(%ebp)
+		movzbl -0x18(%ebp),%eax
+		sar    $0x3,%eax
+		and    $0x1f,%eax
+		add    -0x8(%ebp),%eax
+		mov    0x3e3(%eax),%al
+		mov    %al,-0x14(%ebp)
+		mov    -0x10(%ebp),%al
+		xor    -0x14(%ebp),%al
+		mov    %al,-0xc(%ebp)
+		movzbl -0xc(%ebp),%eax
+		test   %eax,%eax
+		je     jump_10dd9f
+		testb  $0x10,-0xc(%ebp)
+		je     jump_10dd7e
+		mov    -0x8(%ebp),%eax
+		cmpl   $0x0,0x1a7(%eax)
+		je     jump_10dd7c
+		movzbl -0xc(%ebp),%eax
+		push   %eax
+		mov    $aSingleErrorDet,%eax
+		push   %eax
+		call   ac_printf
+		add    $0x8,%esp
+	jump_10dd7c:
+		jmp    jump_10dd9d
+	jump_10dd7e:
+		mov    -0x8(%ebp),%eax
+		cmpl   $0x0,0x1a7(%eax)
+		je     jump_10dd9d
+		movzbl -0xc(%ebp),%eax
+		push   %eax
+		mov    $aDoubleErrorDet,%eax
+		push   %eax
+		call   ac_printf
+		add    $0x8,%esp
+	jump_10dd9d:
+		jmp    jump_10dde7
+	jump_10dd9f:
+		mov    -0x8(%ebp),%eax
+		mov    (%eax),%al
+		and    $0x7,%al
+		movzbl %al,%edx
+		mov    -0x18(%ebp),%al
+		and    $0x7,%al
+		movzbl %al,%eax
+		cmp    %edx,%eax
+		jne    jump_10dde7
+		mov    -0x4(%ebp),%al
+		mov    %al,-0x24(%ebp)
+		jmp    jump_10ddcb
+	jump_10ddbd:
+		movb   $0x3,-0x1c(%ebp)
+		jmp    jump_10dde7
+	jump_10ddc3:
+		movb   $0x4,-0x1c(%ebp)
+		jmp    jump_10dde7
+	jump_10ddc9:
+		jmp    jump_10dde7
+	jump_10ddcb:
+		mov    -0x24(%ebp),%al
+		mov    %al,-0x28(%ebp)
+		cmpb   $0xab,-0x28(%ebp)
+		jb     jump_10dde5
+		cmpb   $0xab,-0x28(%ebp)
+		jbe    jump_10ddbd
+		cmpb   $0xac,-0x28(%ebp)
+		je     jump_10ddc3
+		jmp    jump_10ddc9
+	jump_10dde5:
+		jmp    jump_10ddc9
+	jump_10dde7:
+		mov    -0x1c(%ebp),%al
+		mov    %al,-0x20(%ebp)
+		mov    -0x20(%ebp),%al
+		leave
+		pop    %edi
+		pop    %esi
+		pop    %ecx
+		pop    %ebx
+		ret
+
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC(ASM_net_unkn_func_338)	/* 0x10DDF6 */
+/*----------------------------------------------------------------*/
+		push   %ebx
+		push   %ecx
+		push   %edx
+		push   %esi
+		push   %edi
+		enter  $0x8,$0x0
+		mov    %eax,-0x4(%ebp)
+		movl   $0x0,-0x8(%ebp)
+		jmp    jump_10de11
+	jump_10de0b:
+		mov    -0x8(%ebp),%eax
+		incl   -0x8(%ebp)
+	jump_10de11:
+		cmpl   $0x100,-0x8(%ebp)
+		jae    jump_10de28
+		movzbl -0x8(%ebp),%edx
+		mov    -0x4(%ebp),%eax
+		call   net_unkn_sub_325
+		jmp    jump_10de0b
+	jump_10de28:
+		leave
+		pop    %edi
+		pop    %esi
+		pop    %edx
+		pop    %ecx
+		pop    %ebx
+		ret
+
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC(ASM_func_11f3f3)	/* 0x11f3f3 */
+/*----------------------------------------------------------------*/
+		movw   $0xffff,data_15ac11
+		movl   $0xa,data_15ac13
+	jump_11f406:
+		cli
+		mov    $0xb0,%al
+		out    %al,$0x43
+		mov    $0xff,%al
+		out    %al,$0x42
+		out    %al,$0x42
+		mov    $0x2710,%edi
+		mov    EXPORT_SYMBOL(data_15aba2),%bx
+		in     $0x61,%al
+		or     $0x1,%al
+		out    %al,$0x61
+	jump_11f423:
+		dec    %edi
+		je     jump_11f43a
+		mov    $0x20,%al
+		bt     $0x6,%ax
+		jb     jump_11f43a
+		bt     $0x5,%ax
+		mov    %bx,%dx
+		in     (%dx),%al
+		jb     jump_11f423
+	jump_11f43a:
+		in     $0x61,%al
+		or     $0xf3,%al
+		out    %al,$0x61
+		mov    $0x80,%al
+		out    %al,$0x43
+		in     $0x42,%al
+		mov    %al,%dl
+		in     $0x42,%al
+		mov    %al,%dh
+		sti
+		mov    $0xffff,%ax
+		sub    %dx,%ax
+		cmp    %ax,data_15ac11
+		jb     jump_11f463
+		mov    %ax,data_15ac11
+	jump_11f463:
+		decl   data_15ac13
+		cmpl   $0x0,data_15ac13
+		je     jump_11f474
+		jmp    jump_11f406
+	jump_11f474:
+		mov    data_15ac11,%bx
+		movzwl %bx,%eax
+		mov    $0x20bd,%ebx
+		mul    %ebx
+		mov    $0x2710,%ebx
+		div    %ebx
+		mov    %eax,%ebx
+		mov    $0x2710,%eax
+		mov    $0xa,%ecx
+		mul    %ecx
+		div    %ebx
+		ret
+
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC(ASM_func_11f4b8)
+/*----------------------------------------------------------------*/
+		movw   $0xffff,data_15ac11
+		movl   $0xa,data_15ac13
+	jump_11f4cb:
+		cli
+		mov    $0xb0,%al
+		out    %al,$0x43
+		mov    $0xff,%al
+		out    %al,$0x42
+		out    %al,$0x42
+		mov    $0x2710,%edi
+		in     $0x61,%al
+		or     $0x1,%al
+		out    %al,$0x61
+	jump_11f4e1:
+		dec    %edi
+		jne    jump_11f4e1
+		in     $0x61,%al
+		or     $0xf3,%al
+		out    %al,$0x61
+		mov    $0x80,%al
+		out    %al,$0x43
+		in     $0x42,%al
+		mov    %al,%dl
+		in     $0x42,%al
+		mov    %al,%dh
+		sti
+		mov    $0xffff,%ax
+		sub    %dx,%ax
+		cmp    %ax,data_15ac11
+		jb     jump_11f50d
+		mov    %ax,data_15ac11
+	jump_11f50d:
+		decl   data_15ac13
+		cmpl   $0x0,data_15ac13
+		je     jump_11f51e
+		jmp    jump_11f4cb
+	jump_11f51e:
+		mov    data_15ac11,%bx
+		movzwl %bx,%eax
+		mov    $0x20bd,%ebx
+		mul    %ebx
+		mov    $0x2710,%ebx
+		div    %ebx
+		mov    %eax,%ebx
+		mov    $0x2710,%eax
+		mov    $0xa,%ecx
+		mul    %ecx
+		div    %ebx
+		ret
+
+
+/*----------------------------------------------------------------*/
+func_11f547:
+/*----------------------------------------------------------------*/
+		push   %ds
+		call   ____GETDS
+		incw   data_15ac1b
+		push   %dx
+		mov    $0x20,%dx
+		mov    $0x67,%al
+		out    %al,(%dx)
+		pop    %dx
+		pop    %ds
+		iret
+
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC(ASM_func_11f561)	/* 0x11f561 */
+/*----------------------------------------------------------------*/
+		push   %ds
+		movl   $0x0,EXPORT_SYMBOL(data_15aba5)
+		mov    $0x20,%dx
+		mov    $0x67,%al
+		out    %al,(%dx)
+		mov    EXPORT_SYMBOL(data_15abaf),%edi
+		shl    %edi
+	jump_11f57b:
+		dec    %edi
+		jne    jump_11f57b
+		inc    %dx
+		in     (%dx),%al
+		bt     $0x7,%ax
+		and    $0x7f,%al
+		mov    $0x21,%dx
+		mov    EXPORT_SYMBOL(data_15abaf),%edi
+		shl    %edi
+	jump_11f594:
+		dec    %edi
+		jne    jump_11f594
+		out    %al,(%dx)
+		mov    EXPORT_SYMBOL(data_15abaf),%edi
+		shl    %edi
+	jump_11f5a0:
+		dec    %edi
+		jne    jump_11f5a0
+		mov    $0x67,%al
+		dec    %dx
+		out    %al,(%dx)
+		mov    EXPORT_SYMBOL(data_15abaf),%edi
+		shl    %edi
+	jump_11f5b0:
+		dec    %edi
+		jne    jump_11f5b0
+		cli
+		mov    $0xf,%al
+		mov    $0x35,%ah
+		int    $0x21
+		push   %ebx
+		push   %es
+		push   %ds
+		push   %cs
+		pop    %ds
+		mov    $func_11f547,%edx
+		mov    $0x250f,%ax
+		int    $0x21
+		pop    %ds
+		mov    EXPORT_SYMBOL(data_15aba2),%dx
+		inc    %dx
+		inc    %dx
+		mov    EXPORT_SYMBOL(data_15abb3),%al
+		or     $0x10,%al
+		out    %al,(%dx)
+		mov    %al,EXPORT_SYMBOL(data_15abb3)
+		dec    %dx
+		dec    %dx
+		mov    EXPORT_SYMBOL(data_15abaf),%edi
+	jump_11f5ed:
+		dec    %edi
+		jne    jump_11f5ed
+		push   %dx
+		mov    $0x20,%dx
+		mov    $0x67,%al
+		out    %al,(%dx)
+		pop    %dx
+		movw   $0x0,data_15ac1b
+		sti
+		inc    %dx
+		inc    %dx
+		mov    EXPORT_SYMBOL(data_15abb3),%al
+		and    $0xfb,%al
+		out    %al,(%dx)
+		mov    %al,EXPORT_SYMBOL(data_15abb3)
+		dec    %dx
+		dec    %dx
+		mov    EXPORT_SYMBOL(data_15abaf),%edi
+		shl    $0xa,%edi
+	jump_11f623:
+		dec    %edi
+		jne    jump_11f623
+		cmpw   $0x1,data_15ac1b
+		je     jump_11f640
+		cmpw   $0x0,data_15ac1b
+		je     jump_11f6ca
+		jmp    jump_11f670
+	jump_11f640:
+		inc    %dx
+		inc    %dx
+		mov    EXPORT_SYMBOL(data_15abb3),%al
+		or     $0x4,%al
+		out    %al,(%dx)
+		mov    %al,EXPORT_SYMBOL(data_15abb3)
+		dec    %dx
+		dec    %dx
+		mov    EXPORT_SYMBOL(data_15abaf),%edi
+		shl    $0xa,%edi
+	jump_11f65e:
+		dec    %edi
+		jne    jump_11f65e
+		cmpw   $0x1,data_15ac1b
+		cli
+		je     jump_11f72c
+	jump_11f670:
+		cli
+		inc    %dx
+		inc    %dx
+		mov    EXPORT_SYMBOL(data_15abb3),%al
+		or     $0x4,%al
+		out    %al,(%dx)
+		mov    %al,EXPORT_SYMBOL(data_15abb3)
+		dec    %dx
+		dec    %dx
+		movl   $0x4,EXPORT_SYMBOL(data_15abb6)
+		mov    $0x21,%dx
+		in     (%dx),%al
+		or     $0x80,%al
+		out    %al,(%dx)
+		mov    EXPORT_SYMBOL(data_15aba2),%dx
+		inc    %dx
+		inc    %dx
+		mov    EXPORT_SYMBOL(data_15abb3),%al
+		and    $0xef,%al
+		out    %al,(%dx)
+		mov    %al,EXPORT_SYMBOL(data_15abb3)
+		dec    %dx
+		dec    %dx
+		mov    EXPORT_SYMBOL(data_15abaf),%edi
+	jump_11f6ba:
+		dec    %edi
+		jne    jump_11f6ba
+		push   %dx
+		mov    $0x20,%dx
+		mov    $0x67,%al
+		out    %al,(%dx)
+		pop    %dx
+		jmp    jump_11f740
+	jump_11f6ca:
+		cli
+		inc    %dx
+		inc    %dx
+		mov    EXPORT_SYMBOL(data_15abb3),%al
+		or     $0x4,%al
+		out    %al,(%dx)
+		mov    %al,EXPORT_SYMBOL(data_15abb3)
+		dec    %dx
+		dec    %dx
+		mov    $0x21,%dx
+		in     (%dx),%al
+		or     $0x80,%al
+		out    %al,(%dx)
+		mov    EXPORT_SYMBOL(data_15aba2),%dx
+		inc    %dx
+		inc    %dx
+		mov    EXPORT_SYMBOL(data_15abb3),%al
+		and    $0xef,%al
+		out    %al,(%dx)
+		mov    %al,EXPORT_SYMBOL(data_15abb3)
+		dec    %dx
+		dec    %dx
+		mov    EXPORT_SYMBOL(data_15abaf),%edi
+	jump_11f70a:
+		dec    %edi
+		jne    jump_11f70a
+		push   %dx
+		mov    $0x20,%dx
+		mov    $0x67,%al
+		out    %al,(%dx)
+		pop    %dx
+		pop    %ds
+		pop    %edx
+		mov    $0xf,%al
+		mov    $0x25,%ah
+		int    $0x21
+		pop    %ds
+		movl   $0x4,EXPORT_SYMBOL(data_15abb6)
+		ret
+	jump_11f72c:
+		movl   $0x7,EXPORT_SYMBOL(data_15aba5)
+		movl   $0x0,EXPORT_SYMBOL(data_15abb6)
+	jump_11f740:
+		pop    %ds
+		pop    %edx
+		mov    $0xf,%al
+		mov    $0x25,%ah
+		pop    %ds
+		ret
+
+
+/*----------------------------------------------------------------*/
+GLOBAL_FUNC(ASM__chain_intr_)	/* 0x11F748 */
+/*----------------------------------------------------------------*/
+		mov    %eax,%ecx
+		mov    %edx,%eax
+		mov    %ebp,%esp
+		xchg   %ecx,0x28(%ebp)
+		xchg   %eax,0x2c(%ebp)
+		pop    %gs
+		pop    %fs
+		pop    %es
+		pop    %ds
+		pop    %edi
+		pop    %esi
+		pop    %ebp
+		pop    %ebx
+		pop    %ebx
+		pop    %edx
+		lret
+
+
+/*----------------------------------------------------------------*/
+
+.data
+
+GLOBAL (aGettingHeaderB)	/* 0x161630 */
+		.string "Getting header byte\n"
+GLOBAL (aResendingD)	/* 0x161645 */
+		.string "Resending %d\n"
+GLOBAL (aResendingDelta)	/* 0x161653 */
+		.string "Resending delta %d\n"
+GLOBAL (aStartingExchan)	/* 0x161667 */
+		.string "\nStarting exchange # %d\n"
+GLOBAL (aCompletedExcha)	/* 0x161680 */
+		.string "Completed exchange - Return Code = "
+GLOBAL (aTrue)	/* 0x1616A4 */
+		.string "TRUE\n"
+GLOBAL (aFalse)	/* 0x1616AA */
+		.string "FALSE\n"
+GLOBAL (aTxData)	/* 0x1616B1 */
+		.string "TX DATA: "
+GLOBAL (asc02x)	/* 0x1616BB */
+		.string "%02X "
+data_1616c1:
+		.ascii  "\x0a\x00"
+GLOBAL (asc02x_0)	/* 0x1616C3 */
+		.string "%02X "
+ascRxData:	/* 0x1616C9 */
+		.string "RX DATA: "
+GLOBAL (asc02x_1)	/* 0x1616D3 */
+		.string "%02X "
+data_1616d9:
+		.ascii  "\x0a\x00"
+aStateChangeWai:	/* 0x1616DB */
+		.string "State Change: WAITING_FOR_ACK = "
+ascTrue_0:	/* 0x1616FC */
+		.string "TRUE"
+ascFalse_0:	/* 0x161701 */
+		.string "FALSE"
+aWaiting_for_da:	/* 0x161707 */
+		.string "  WAITING_FOR_DATA = "
+ascTrue_1:	/* 0x16171D */
+		.string "TRUE\n"
+ascFalse_1:	/* 0x161723 */
+		.string "FALSE\n"
+aSingleErrorDet:	/* 0x16172A */
+		.string "Single error detected, syndrome = %02X\n"
+aDoubleErrorDet:	/* 0x161752 */
+		.string "Double error detected, syndrome = %02X\n"
+		.align  4
+
+
+
+GLOBAL (NetTimeoutTicks)	/* 0x1561C4 */
+		.ascii  "\xff\xff\xff\xff"
+
+GLOBAL (__cbyte)	/* 0x159118 */
+		.fill   0x8
+
+data_159608:
+		.short  0x0
+
+data_15ac11:
+		.ascii  "\xff\xff"
+data_15ac13:
+		.ascii  "\x0a\x00\x00\x00"
+data_15ac17:
+		.long	0x0
+data_15ac1b:
+		.short  0x0
+		.align  4
+
+
+run_exchange_func__start_time:	/* 0x1E8128 */
+		.long	0x0
+run_exchange_func__end_time:	/* 0x1E812C */
+		.fill   0x10
+GLOBAL (g_count)	/* 0x1E81DC */
+		.long	0x0
+GLOBAL (netunkst_1E81E0)	/* 0x1E81E0 */
+		.fill   0x403
+GLOBAL (dword_1E85E3)	/* 0x1e85e3 */
+		.fill   0x5
+
+
+GLOBAL (_wc_errno)
+		.long	0x0
+GLOBAL (_doserrno)	/* 0x1EA484 */
+		.long	0x0
+
+_loop_count:
+		.long	0x0
+

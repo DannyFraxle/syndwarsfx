@@ -21,7 +21,9 @@
 #include "privrdlog.h"
 /******************************************************************************/
 
+struct SingleFloorTexture *prim4_textures = NULL;
 ushort prim4_textures_count = 1;
+struct SingleTexture *prim_face_textures = NULL;
 ushort prim_face_textures_count = 1;
 
 /******************************************************************************/

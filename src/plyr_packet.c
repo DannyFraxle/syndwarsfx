@@ -35,6 +35,7 @@
 #include "game.h"
 #include "guitext.h"
 #include "hud_panel.h"
+#include "hud_target.h"
 #include "keyboard.h"
 #include "network.h"
 #include "packet.h"
@@ -64,8 +65,7 @@ void net_player_leave(PlayerIdx plyr)
     else
     {
         net_players_num--;
-        sprintf(player_message_text[plyr], "%s %s", unkn2_names[plyr], gui_strings[GSTR_NET_LEFT_GAME]);
-        player_message_timer[plyr] = 150;
+        player_message_fmt(plyr, "%s %s", unkn2_names[plyr], gui_strings[GSTR_NET_LEFT_GAME]);
         LbNetworkSessionStop();
         ingame.InNetGame_UNSURE &= ~(1 << plyr);
     }
@@ -200,11 +200,7 @@ void player_agent_weapon_switch(PlayerIdx plyr, ThingIdx person, short shift)
     if ((plyr == local_player_no) && (p_person->U.UPerson.CurrentWeapon != 0))
     {
         ushort smp;
-        // Weapon name speech
-        if (background_type == 1)
-            smp = weapon_sound_z[p_person->U.UPerson.CurrentWeapon];
-        else
-            smp = weapon_sound[p_person->U.UPerson.CurrentWeapon];
+        smp = weapon_sound_name_speech_index(p_person->U.UPerson.CurrentWeapon);
         play_disk_sample(local_player_no, smp, FULL_VOL, EQUL_PAN, NORM_PTCH, LOOP_NO, 3);
     }
 }
@@ -633,20 +629,13 @@ void player_agent_select_specific_weapon(PlayerIdx plyr, struct Thing *p_person,
     set_person_anim_mode(p_person, gun_out_anim(p_person, 0));
     p_person->Speed = calc_person_speed(p_person);
     p_person->U.UPerson.TempWeapon = p_person->U.UPerson.CurrentWeapon;
+
     if ((plyr == local_player_no) && (p_person->U.UPerson.CurrentWeapon != 0))
     {
         ushort smp;
-        if (background_type == 1)
-            smp = weapon_sound_z[p_person->U.UPerson.CurrentWeapon];
-        else
-            smp = weapon_sound[p_person->U.UPerson.CurrentWeapon];
+        smp = weapon_sound_name_speech_index(p_person->U.UPerson.CurrentWeapon);
         play_disk_sample(local_player_no, smp, FULL_VOL, EQUL_PAN, NORM_PTCH, LOOP_NO, 3);
     }
-}
-
-void player_set_control_mode(PlayerIdx plyr, ushort ctrmode)
-{
-    players[plyr].UserInput[0].ControlMode = ctrmode;
 }
 
 void process_packet(PlayerIdx plyr, struct Packet *p_pckt, ushort i)
@@ -1036,7 +1025,7 @@ void process_packet(PlayerIdx plyr, struct Packet *p_pckt, ushort i)
             result = PARes_EINVAL;
             break;
         }
-        player_set_control_mode(plyr, p_pckt->Data);
+        user_input_control_mode_set(plyr, 0, p_pckt->Data);
         result = PARes_DONE;
         break;
     case PAct_AGENT_GOTO_FACE_PT_ABS:

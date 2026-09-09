@@ -32,6 +32,7 @@
 extern ubyte text_colours[15];
 
 ushort my_font_flags = MyFF_NONE;
+ubyte byte_197160 = 0;
 
 ubyte my_char_to_upper(ubyte c)
 {
@@ -148,12 +149,6 @@ ubyte my_char_padding_bottom(uchar c)
 
 ubyte my_char_height(uchar c)
 {
-#if 0
-    int ret;
-    asm volatile ("call ASM_font_height\n"
-        : "=r" (ret) : "a" (c));
-    return ret;
-#endif
     return LbSprFontCharHeight(lbFontPtr, c)
       - my_char_padding_top(c)
       - my_char_padding_bottom(c);
@@ -193,12 +188,6 @@ u32 my_string_width(const char *text)
 
 ushort my_count_lines(const char *text)
 {
-#if 0
-    ushort ret;
-    asm volatile ("call ASM_my_count_lines\n"
-        : "=r" (ret) : "a" (text));
-    return ret;
-#endif
     int pos, line_beg_pos, last_brkpoint_pos;
     int txline_len, last_brkpoint_lnlen;
     ushort nlines;
@@ -410,12 +399,6 @@ static void my_skip_chunk(short x, short y, short tot_width,
 
 ushort my_draw_text(short x, short y, const char *text, ushort startline)
 {
-#if 0
-    ushort ret;
-    asm volatile ("call ASM_my_draw_text\n"
-        : "=r" (ret) : "a" (x), "d" (y), "b" (text), "c" (startline));
-    return ret;
-#endif
     int beg_x, scr_x;
     ubyte uch;
     int ck_end;

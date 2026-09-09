@@ -18,6 +18,9 @@
 /******************************************************************************/
 #include "bmbang.h"
 
+#include "enginshrapn.h"
+
+#include "bigmap.h"
 #include "thing.h"
 #include "swlog.h"
 #include "game_speed.h"
@@ -25,16 +28,36 @@
 #include "engincam.h"
 /******************************************************************************/
 
-extern ubyte byte_1C4769;
-extern struct MapCreater map_craters[128];
+#define MAP_CRATERS_COUNT 128
+
+extern ubyte map_crater_next;
+extern struct MapCreater map_craters[MAP_CRATERS_COUNT];
+
+void bang_init(void)
+{
+#if 0
+    asm volatile ("call ASM_bang_init\n"
+        :  :  : "eax" );
+#endif
+    shrapnel_init();
+    phwoar_init();
+}
 
 void new_bang(int x, int y, int z, int type, int owner, int c)
 {
+    // Pushed through a register holding them: a "g" operand may be placed
+    // relative to the stack pointer, which each push moves.
+    int stkargs[2];
+
+    stkargs[0] = (int)(intptr_t)owner;
+    stkargs[1] = (int)(intptr_t)c;
+
     asm volatile (
-      "push %5\n"
-      "push %4\n"
+      "push 4(%4)\n"
+      "push 0(%4)\n"
       "call ASM_new_bang\n"
-        : : "a" (x), "d" (y), "b" (z), "c" (type), "g" (owner), "g" (c));
+        : : "a" (x), "d" (y), "b" (z), "c" (type), "S" (stkargs)
+        : "cc", "memory");
 }
 
 void bang_new5(int x, int y, int z, int type, int owner)
@@ -47,19 +70,21 @@ void bang_new4(int x, int y, int z, int type)
     new_bang(x, y, z, type, 0, 0);
 }
 
-void create_crater(short x, short y, short depth)
+void create_crater(short tile_x, short tile_y, short depth)
 {
     int cratr_no;
 
-    LOGSYNC("crater at (%d,%d) depth %d\n", x, y, depth);
-    if (x > 0x80 || y > 0x80)
+    LOGSYNC("crater at (%d,%d) depth %d\n", tile_x, tile_y, depth);
+    if (tile_x < 0 || tile_x >= MAP_TILE_WIDTH)
         return;
-    cratr_no = byte_1C4769;
-    byte_1C4769++;
-    if (byte_1C4769 > 127)
-        byte_1C4769 = 0;
-    map_craters[cratr_no].MapX = x;
-    map_craters[cratr_no].MapY = y;
+    if (tile_y < 0 || tile_y >= MAP_TILE_HEIGHT)
+        return;
+    cratr_no = map_crater_next;
+    map_crater_next++;
+    if (map_crater_next >= MAP_CRATERS_COUNT)
+        map_crater_next = 0;
+    map_craters[cratr_no].MapX = tile_x;
+    map_craters[cratr_no].MapY = tile_y;
     map_craters[cratr_no].Depth = depth;
     map_craters[cratr_no].Iterations = 0;
 }
@@ -121,6 +146,10 @@ static TbBool bullettime_thing_is_near_view(struct Thing *p_target)
 
 void do_shockwave(int x, int y, int z, int radius, int intensity, struct Thing *p_owner)
 {
+    // Pushed through a register holding them: a "g" operand may be placed
+    // relative to the stack pointer, which each push moves.
+    int stkargs[2];
+
     // Big shockwaves (rockets, mines, building demolitions) pass intensity far
     // above the small fixed value plain bullet-impact ground hits use; gate on
     // that (and on proximity to the camera view) so bullet-time triggers on
@@ -128,11 +157,16 @@ void do_shockwave(int x, int y, int z, int radius, int intensity, struct Thing *
     // map that the player isn't even looking at.
     if (bullettime_explosion_is_near_view(x, y, z))
         bullettime_trigger(intensity);
+
+    stkargs[0] = (int)(intptr_t)intensity;
+    stkargs[1] = (int)(intptr_t)p_owner;
+
     asm volatile (
-      "push %5\n"
-      "push %4\n"
+      "push 4(%4)\n"
+      "push 0(%4)\n"
       "call ASM_do_shockwave\n"
-        : : "a" (x), "d" (y), "b" (z), "c" (radius), "g" (intensity), "g" (p_owner));
+        : : "a" (x), "d" (y), "b" (z), "c" (radius), "S" (stkargs)
+        : "cc", "memory");
 }
 
 
@@ -152,36 +186,62 @@ void do_shockwave_building(int dist, int intensity, struct Thing *p_thing, struc
 void do_shockwave_vehicle(int dx, int dz, int dist, int intensity,
   struct Thing *p_vevicle, struct Thing *p_owner)
 {
+    // Pushed through a register holding them: a "g" operand may be placed
+    // relative to the stack pointer, which each push moves.
+    int stkargs[2];
+
     if (bullettime_thing_is_near_view(p_vevicle))
         bullettime_trigger(intensity);
+
+    stkargs[0] = (int)(intptr_t)p_vevicle;
+    stkargs[1] = (int)(intptr_t)p_owner;
+
     asm volatile (
-      "push %5\n"
-      "push %4\n"
+      "push 4(%4)\n"
+      "push 0(%4)\n"
       "call ASM_do_shockwave_vehicle\n"
-        : : "a" (dx), "d" (dz), "b" (dist), "c" (intensity), "g" (p_vevicle), "g" (p_owner));
+        : : "a" (dx), "d" (dz), "b" (dist), "c" (intensity), "S" (stkargs)
+        : "cc", "memory");
 }
 
 void do_shockwave_person(int dx, int dz, int dist, int intensity,
   struct Thing *p_person, struct Thing *p_owner)
 {
+    // Pushed through a register holding them: a "g" operand may be placed
+    // relative to the stack pointer, which each push moves.
+    int stkargs[2];
+
     // The primary trigger site for building-collapse bullet-time: explode_thing_building
     // calls this once per nearby person affected by the blast.
     if (bullettime_thing_is_near_view(p_person))
         bullettime_trigger(intensity);
+
+    stkargs[0] = (int)(intptr_t)p_person;
+    stkargs[1] = (int)(intptr_t)p_owner;
+
     asm volatile (
-      "push %5\n"
-      "push %4\n"
+      "push 4(%4)\n"
+      "push 0(%4)\n"
       "call ASM_do_shockwave_person\n"
-        : : "a" (dx), "d" (dz), "b" (dist), "c" (intensity), "g" (p_person), "g" (p_owner));
+        : : "a" (dx), "d" (dz), "b" (dist), "c" (intensity), "S" (stkargs)
+        : "cc", "memory");
 }
 
 void do_shockwave_scale_effect(int dx, int dz, int dist, int intensity,
   struct SimpleThing *p_sthing, struct Thing *p_owner)
 {
+    // Pushed through a register holding them: a "g" operand may be placed
+    // relative to the stack pointer, which each push moves.
+    int stkargs[2];
+
+    stkargs[0] = (int)(intptr_t)p_sthing;
+    stkargs[1] = (int)(intptr_t)p_owner;
+
     asm volatile (
-      "push %5\n"
-      "push %4\n"
+      "push 4(%4)\n"
+      "push 0(%4)\n"
       "call ASM_do_shockwave_scale_effect\n"
-        : : "a" (dx), "d" (dz), "b" (dist), "c" (intensity), "g" (p_sthing), "g" (p_owner));
+        : : "a" (dx), "d" (dz), "b" (dist), "c" (intensity), "S" (stkargs)
+        : "cc", "memory");
 }
 /******************************************************************************/

@@ -29,6 +29,8 @@ extern "C" {
 /******************************************************************************/
 #pragma pack(1)
 
+#define NET_PLAYERS_COUNT 8
+
 typedef void *NSERV_HANDLE;
 typedef void *NSESS_HANDLE;
 typedef short NPLYR_HANDLE;
@@ -204,7 +206,7 @@ struct TbIPXOnePlayer {
 };
 
 struct TbIPXPlayerData3 {
-    struct TbIPXOnePlayer player[8]; // offset=45
+    struct TbIPXOnePlayer player[NET_PLAYERS_COUNT]; // offset=45
 };
 
 struct TbIPXPlayerData { // sizeof=226
@@ -269,7 +271,7 @@ struct TbNetworkPlayer { // sizeof=22
 
 struct TbNetworkSessionList { // sizeof=218
     struct TbNetworkSession Session; // offset=0
-    struct TbNetworkPlayer Player[8]; // offset=28
+    struct TbNetworkPlayer Player[NET_PLAYERS_COUNT]; // offset=28
     short NumberOfPlayers; // offset=216
 };
 

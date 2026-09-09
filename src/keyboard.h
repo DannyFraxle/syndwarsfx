@@ -135,9 +135,14 @@ extern ushort kbkeys[GKey_KEYS_COUNT];
 /** Array of joystick button bindings; uses GKey_* enum members as index.
  */
 extern JoyButtonSet jskeys[GKey_KEYS_COUNT];
+
 /** Type of joystick selected with controls.
  */
 extern ubyte ctl_joystick_type;
+
+/** Array for joystick types availability.
+ */
+extern ubyte joy_types_available[];
 
 void init_buffered_keys(void);
 void reset_buffered_keys(void);
@@ -231,6 +236,8 @@ void sprint_gamekey_combination_joy(char *ostr, GameKey gkey);
 void sprint_gamekey_combination_kbd(char *ostr, GameKey gkey);
 
 void set_default_game_keys(void);
+
+TbResult joy_ext_driver_irq_init(int irqno);
 
 #endif
 /******************************************************************************/

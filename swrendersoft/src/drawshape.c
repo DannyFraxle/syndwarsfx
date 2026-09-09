@@ -19,6 +19,7 @@
 /******************************************************************************/
 #include "drawshape.h"
 
+#include "bfbox.h"
 #include "bfline.h"
 #include "bfscreen.h"
 
@@ -50,6 +51,23 @@ void draw_line_transformed_col(int x1, int y1, int z1, int x2, int y2, int z2, T
       && (ep2.pp.Y > 0) && (ep2.pp.Y < lbDisplay.GraphicsScreenHeight)) {
         LbDrawLine(ep1.pp.X, ep1.pp.Y, ep2.pp.X, ep2.pp.Y, colour);
     }
+}
+
+void draw_purple_rect(int x, int y, int w, int h, ubyte active)
+{
+    TbPixel col1, col2;
+
+    lbDisplay.DrawFlags &= ~Lb_SPRITE_OUTLINE;
+    if (active) {
+        col1 = 0x0E;
+        col2 = 0x0C;
+    } else {
+        col1 = 0x10;
+        col2 = 0x0E;
+    }
+    LbDrawBox(x, y, w, h, col1);
+    LbDrawLine(x, y, x + w - 2, y, col2);
+    LbDrawLine(x, y, x, y + h - 2, col2);
 }
 
 /******************************************************************************/

@@ -39,6 +39,8 @@ struct TbSprite;
 /******************************************************************************/
 extern ushort my_font_flags;
 
+extern ubyte byte_197160;
+
 u32 my_str_len(const char *t);
 int font_word_length(const char *text);
 

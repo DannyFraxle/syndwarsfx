@@ -29,10 +29,19 @@
 #include "privrdlog.h"
 /******************************************************************************/
 
+struct SinglePoint *prim_object_points = NULL;
 ushort next_prim_object_point = 1;
+
+struct SingleObjectFace3 *prim_object_faces3 = NULL;
 ushort next_prim_object_face3 = 1;
+
+struct SingleObjectFace4 *prim_object_faces4 = NULL;
 ushort next_prim_object_face4 = 1;
+
+struct SingleObject *prim_objects = NULL;
 ushort next_prim_object = 1;
+
+ushort prim_unknprop01 = 0;
 
 extern ushort word_19CB58[66];
 

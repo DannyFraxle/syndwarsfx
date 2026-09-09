@@ -101,8 +101,8 @@ extern uint16_t         things_used;
 extern const char *thing_type_name(unsigned char tngtype, unsigned char subtype);
 
 extern int32_t engn_xc, engn_yc, engn_zc;
-extern int32_t engn_anglexz;
-extern int32_t cam_tilt;
+extern int32_t engn_cam_yaw;
+extern int32_t engn_cam_tilt;
 
 static int br_mclick_x = -1, br_mclick_y = -1;
 
@@ -525,9 +525,9 @@ void hwr_thingbrowse_render(void)
             br_prev_dbg = dbg;
         }
 
-        if (keys[SDL_SCANCODE_PAGEUP] && !br_prev_pgup)   cam_tilt += 64;
-        if (keys[SDL_SCANCODE_PAGEDOWN] && !br_prev_pgdn) cam_tilt -= 64;
-        if (keys[SDL_SCANCODE_HOME] && !br_prev_home)     cam_tilt = -172;
+        if (keys[SDL_SCANCODE_PAGEUP] && !br_prev_pgup)   engn_cam_tilt += 64;
+        if (keys[SDL_SCANCODE_PAGEDOWN] && !br_prev_pgdn) engn_cam_tilt -= 64;
+        if (keys[SDL_SCANCODE_HOME] && !br_prev_home)     engn_cam_tilt = -172;
 
         br_prev_lt = lt; br_prev_rt = rt; br_prev_sav = sav;
         br_prev_pgup = keys[SDL_SCANCODE_PAGEUP];

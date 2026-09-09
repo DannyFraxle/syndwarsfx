@@ -34,6 +34,7 @@
 #include "frame_sprani.h"
 #include "render_gpoly.h"
 /******************************************************************************/
+
 //TODO load the shadow data from a config file
 /** Per-object-model shadow data.
  */
@@ -74,26 +75,20 @@ struct ShadowTexture shadowtexture[] = {
   {  0,   0,   0,   0,   0,   0},
 };
 
-const ushort word_154F4C[] = {
-  1, 33, 113, 241, 273, 161, 193, 721, 753, 321, 401, 433, 33,
-};
+#define MUCOL_SHADOW_UV_ARRAY_SIZE MUCOL_SHADOW_ANIMS_COUNT * MUCOL_SHADOW_ANGLES_COUNT * MUCOL_SHADOW_FRAMES_COUNT
 
+ubyte mucol_shadow_p3_Ua[MUCOL_SHADOW_UV_ARRAY_SIZE];
+ubyte mucol_shadow_p1_Vb[MUCOL_SHADOW_UV_ARRAY_SIZE];
+ubyte mucol_shadow_p4_Ua[MUCOL_SHADOW_UV_ARRAY_SIZE];
+ubyte mucol_shadow_p3_Vb[MUCOL_SHADOW_UV_ARRAY_SIZE];
 
-ubyte sprshadow_EE90[24];
-ubyte sprshadow_EEA8[600];
-ubyte sprshadow_F100[24];
-ubyte sprshadow_F118[600];
-ubyte sprshadow_F370[24];
-ubyte sprshadow_F388[600];
-ubyte sprshadow_F5E0[24];
-ubyte sprshadow_F5F8[600];
-sbyte sprshadow_F850[512];
+sbyte mucol_shadow_F850[512];
 
 ushort shadow_tmap_page = 0;
 
 /******************************************************************************/
 
-void draw_person_shadow(short scr_x, short scr_y, ushort frm,
+void draw_multicolor_sprite_shadow(short scr_x, short scr_y, ushort sbfrm,
   ushort shpak, ubyte shangl, ubyte angl, short strng)
 {
     int ssh_y, ssh_x;
@@ -111,23 +106,27 @@ void draw_person_shadow(short scr_x, short scr_y, ushort frm,
     assert(vec_tmap[shadow_tmap_page] != NULL);
     vec_map = vec_tmap[shadow_tmap_page];
 
-    frgrp =  8 * shpak + (((shangl >> 5) - angl + 8) & 7);
-    ep3.pp.U = sprshadow_EE90[6 * frgrp + frm] << 16;
-    ep3.pp.V = sprshadow_F5E0[6 * frgrp + frm] << 16;
-    ep4.pp.U = sprshadow_F370[6 * frgrp + frm] << 16;
+    assert(shpak < MUCOL_SHADOW_ANIMS_COUNT);
+    assert(angl < MUCOL_SHADOW_ANGLES_COUNT);
+    assert(sbfrm < MUCOL_SHADOW_FRAMES_COUNT);
+
+    frgrp =  MUCOL_SHADOW_ANGLES_COUNT * shpak + (((shangl >> 5) - angl + 8) & 7);
+    ep3.pp.U = mucol_shadow_p3_Ua[6 * frgrp + sbfrm] << 16;
+    ep3.pp.V = mucol_shadow_p3_Vb[6 * frgrp + sbfrm] << 16;
+    ep4.pp.U = mucol_shadow_p4_Ua[6 * frgrp + sbfrm] << 16;
     ep4.pp.V = ep3.pp.V;
     ep1.pp.U = ep4.pp.U;
-    ep1.pp.V = sprshadow_F100[6 * frgrp + frm] << 16;
+    ep1.pp.V = mucol_shadow_p1_Vb[6 * frgrp + sbfrm] << 16;
     ep2.pp.U = ep3.pp.U;
     ep2.pp.V = ep1.pp.V;
 
-    k = shangl - (engn_anglexz >> 8);
-    ssh_x = sprshadow_F850[2 * k + 1];
-    ssh_y = -sprshadow_F850[2 * k + 0];
+    k = shangl - (engn_cam_yaw >> 8);
+    ssh_x = mucol_shadow_F850[2 * k + 1];
+    ssh_y = -mucol_shadow_F850[2 * k + 0];
     sh_y = (6 * ssh_y + 64) >> 7;
     sh_x = (6 * ssh_x + 64) >> 7; // We will reverse the sign later
-    sh_x = (overall_scale * sh_x) >> 8;
-    sh_y = (overall_scale * sh_y) >> 8;
+    sh_x = (sh_x * overall_scale) >> 8;
+    sh_y = (sh_y * overall_scale) >> 8;
 
     if (strng > 128)
         strng = 128;
@@ -151,14 +150,14 @@ void draw_person_shadow(short scr_x, short scr_y, ushort frm,
     ep2.pp.X = 4 * sc_a + scr_x - sh_x;
     ep2.pp.Y = 4 * sc_b + scr_y - sh_y;
 
-    dword_176D4C++;
     if (vec_mode == 2)
         vec_mode = 27;
     draw_trigpoly(&ep1.pp, &ep4.pp, &ep3.pp);
-    dword_176D4C++;
+    stat_drawexec_faces++;
     if (vec_mode == 2)
         vec_mode = 27;
     draw_trigpoly(&ep2.pp, &ep1.pp, &ep3.pp);
+    stat_drawexec_faces++;
 }
 
 void draw_sort_sprite_person_shadow(ushort sspr)
@@ -173,7 +172,7 @@ void draw_sort_sprite_person_shadow(ushort sspr)
     shpak = p_sspr->Z;
     shangl = p_sspr->Brightness;
     strng = p_sspr->Scale;
-    draw_person_shadow(p_sspr->X, p_sspr->Y, p_sspr->Frame,
+    draw_multicolor_sprite_shadow(p_sspr->X, p_sspr->Y, p_sspr->Frame,
       shpak, shangl, p_sspr->Angle, strng);
 }
 
@@ -271,6 +270,10 @@ void copy_from_screen_ani(ubyte *buf)
     }
 }
 
+/** Get bounds of a frame, around its standing position.
+ *
+ * Returned screen coordinate shifts can be negative, when required.
+ */
 void get_frame_bounds_05(ushort frm, short *x1, short *x2, short *y1, short *y2)
 {
     struct Element *p_el;
@@ -316,91 +319,98 @@ void get_frame_bounds_05(ushort frm, short *x1, short *x2, short *y1, short *y2)
     }
 }
 
-void draw_shadows_for_multicolor_sprites(void)
+void draw_shadows_for_multicolor_sprites(const ushort *anims, ushort anims_len)
 {
     int shpak;
-    short v23mw;
-    short v23hw;
-    int v25a;
+    short fr_max_height;
+    TbScreenCoord cur_scr_x, cur_scr_y;
+
+    assert(anims_len <= MUCOL_SHADOW_ANIMS_COUNT);
 
     overall_scale = 256;
 
-    v23hw = 0;
-    v25a = 0;
-    v23mw = 0;
-    for (shpak = 12; shpak >= 0; shpak--)
+    cur_scr_x = 0;
+    cur_scr_y = 0;
+    fr_max_height = 0;
+    for (shpak = anims_len - 1; shpak >= 0; shpak--)
     {
         int base_idx;
-        ushort spr;
+        ushort angl;
 
-        base_idx = shpak * 8 * 6;
-        for (spr = 0; spr < 4; spr++)
+        base_idx = shpak * MUCOL_SHADOW_ANGLES_COUNT;
+        for (angl = 0; angl < MUCOL_SHADOW_ANGLES_COUNT/2; angl++)
         {
-            ushort fr;
-            ushort kk;
+            ushort frm;
+            ushort sbfrm;
 
-            fr = nstart_ani[spr + word_154F4C[shpak]];
-            for (kk = 0; kk < 6; kk += 2)
+            frm = nstart_ani[anims[shpak] + angl];
+            for (sbfrm = 0; sbfrm < MUCOL_SHADOW_FRAMES_COUNT; sbfrm += 2)
             {
                 int idx;
-                short a2b, a3a, v25b, a5a;
-                ubyte val3a, val5a, val5b, val6a, val8a;
-                short v21;
+                TbScreenCoord fr_beg_x, fr_end_x, fr_beg_y, fr_end_y;
+                TbScreenCoord stand_x, stand_y;
+                // shadows are expected to fit in bitmap with both sizes
+                // MUCOL_SHADOW_BITMAP_DIM, so coords within can be 8-bit
+                ubyte fr_scr_beg_x, fr_scr_beg_y, fr_scr_end_x, fr_scr_end_y;
 
-                get_frame_bounds_05(fr, &a2b, &a3a, &v25b, &a5a);
-                if (v23hw + a3a - a2b + 1 > 255)
+                get_frame_bounds_05(frm, &fr_beg_x, &fr_end_x, &fr_beg_y, &fr_end_y);
+
+                // if cannot fit the sprite in this line, move to next line
+                if (cur_scr_x + fr_end_x - fr_beg_x + 1 >= MUCOL_SHADOW_BITMAP_DIM)
                 {
-                    v23hw = 0;
-                    v25a += v23mw;
-                    v23mw = 0;
+                    cur_scr_x = 0;
+                    cur_scr_y += fr_max_height;
+                    fr_max_height = 0;
+                    assert(cur_scr_y < MUCOL_SHADOW_BITMAP_DIM);
                 }
-                if (a5a - v25b + 1 > v23mw)
-                    v23mw = a5a - v25b + 1;
-                v23hw -= a2b;
-                v21 = v25a - v25b;
-                draw_sorted_sprite1a(fr, v23hw, v21, 10);
+                if (fr_end_y - fr_beg_y + 1 > fr_max_height)
+                    fr_max_height = fr_end_y - fr_beg_y + 1;
 
-                val3a = v23hw + a2b;
-                val5a = v21 + v25b;
-                val5b = v23hw + a2b;
-                val6a = v23hw + a3a;
-                val8a = v21 + a5a;
+                stand_x = cur_scr_x - fr_beg_x;
+                stand_y = cur_scr_y - fr_beg_y;
+                draw_sorted_sprite1a(frm, stand_x, stand_y, 10);
 
-                idx = base_idx + 6 * spr;
-                sprshadow_EE90[kk + idx + 0] = val5b;
-                sprshadow_F100[kk + idx + 0] = val5a;
-                sprshadow_F370[kk + idx + 0] = val6a;
-                sprshadow_F100[kk + idx + 1] = val5a;
-                sprshadow_F370[kk + idx + 1] = val6a;
-                sprshadow_F5E0[kk + idx + 0] = val8a;
-                sprshadow_EE90[kk + idx + 1] = val3a;
-                sprshadow_F5E0[kk + idx + 1] = val8a;
-                if (spr != 0)
+                fr_scr_beg_x = stand_x + fr_beg_x;
+                fr_scr_beg_y = stand_y + fr_beg_y;
+                fr_scr_end_x = stand_x + fr_end_x;
+                fr_scr_end_y = stand_y + fr_end_y;
+
+                // Prepare UV coordinates for drawing the shadow as texture
+                idx = (base_idx + angl) * MUCOL_SHADOW_FRAMES_COUNT;
+                mucol_shadow_p3_Ua[idx + sbfrm + 0] = fr_scr_beg_x;
+                mucol_shadow_p1_Vb[idx + sbfrm + 0] = fr_scr_beg_y;
+                mucol_shadow_p4_Ua[idx + sbfrm + 0] = fr_scr_end_x;
+                mucol_shadow_p1_Vb[idx + sbfrm + 1] = fr_scr_beg_y;
+                mucol_shadow_p4_Ua[idx + sbfrm + 1] = fr_scr_end_x;
+                mucol_shadow_p3_Vb[idx + sbfrm + 0] = fr_scr_end_y;
+                mucol_shadow_p3_Ua[idx + sbfrm + 1] = fr_scr_beg_x;
+                mucol_shadow_p3_Vb[idx + sbfrm + 1] = fr_scr_end_y;
+                if (angl != 0)
                 {
-                  idx = base_idx + 6 * (8 - spr);
-                  sprshadow_F370[kk + idx + 0] = val3a;
-                  sprshadow_F100[kk + idx + 0] = val5a;
-                  sprshadow_EE90[kk + idx + 0] = val6a;
-                  sprshadow_F5E0[kk + idx + 0] = val8a;
-                  sprshadow_F370[kk + idx + 1] = val3a;
-                  sprshadow_F100[kk + idx + 1] = val5a;
-                  sprshadow_EE90[kk + idx + 1] = val6a;
-                  sprshadow_F5E0[kk + idx + 1] = val8a;
+                    idx = (base_idx + (MUCOL_SHADOW_ANGLES_COUNT - angl)) * MUCOL_SHADOW_FRAMES_COUNT;
+                    mucol_shadow_p4_Ua[idx + sbfrm + 0] = fr_scr_beg_x;
+                    mucol_shadow_p1_Vb[idx + sbfrm + 0] = fr_scr_beg_y;
+                    mucol_shadow_p3_Ua[idx + sbfrm + 0] = fr_scr_end_x;
+                    mucol_shadow_p3_Vb[idx + sbfrm + 0] = fr_scr_end_y;
+                    mucol_shadow_p4_Ua[idx + sbfrm + 1] = fr_scr_beg_x;
+                    mucol_shadow_p1_Vb[idx + sbfrm + 1] = fr_scr_beg_y;
+                    mucol_shadow_p3_Ua[idx + sbfrm + 1] = fr_scr_end_x;
+                    mucol_shadow_p3_Vb[idx + sbfrm + 1] = fr_scr_end_y;
                 }
                 else
                 {
-                  idx = base_idx;
-                  sprshadow_F388[kk + idx + 0] = val3a;
-                  sprshadow_F118[kk + idx + 0] = val5a;
-                  sprshadow_EEA8[kk + idx + 0] = val6a;
-                  sprshadow_F5F8[kk + idx + 0] = val8a;
-                  sprshadow_F388[kk + idx + 1] = val3a;
-                  sprshadow_F118[kk + idx + 1] = val5a;
-                  sprshadow_EEA8[kk + idx + 1] = val6a;
-                  sprshadow_F5F8[kk + idx + 1] = val8a;
+                    idx = (base_idx + MUCOL_SHADOW_ANGLES_COUNT/2) * MUCOL_SHADOW_FRAMES_COUNT;
+                    mucol_shadow_p4_Ua[idx + sbfrm + 0] = fr_scr_beg_x;
+                    mucol_shadow_p1_Vb[idx + sbfrm + 0] = fr_scr_beg_y;
+                    mucol_shadow_p3_Ua[idx + sbfrm + 0] = fr_scr_end_x;
+                    mucol_shadow_p3_Vb[idx + sbfrm + 0] = fr_scr_end_y;
+                    mucol_shadow_p4_Ua[idx + sbfrm + 1] = fr_scr_beg_x;
+                    mucol_shadow_p1_Vb[idx + sbfrm + 1] = fr_scr_beg_y;
+                    mucol_shadow_p3_Ua[idx + sbfrm + 1] = fr_scr_end_x;
+                    mucol_shadow_p3_Vb[idx + sbfrm + 1] = fr_scr_end_y;
                 }
-                fr = frame[frame[fr].Next].Next;
-                v23hw += a3a + 1;
+                frm = frame[frame[frm].Next].Next;
+                cur_scr_x += fr_end_x - fr_beg_x + 1;
             }
         }
     }
@@ -426,8 +436,8 @@ void generate_shadows_angle_shifts(void)
         if (y < -128)
             y = -128;
 
-        sprshadow_F850[2 * i + 0] = x;
-        sprshadow_F850[2 * i + 1] = y;
+        mucol_shadow_F850[2 * i + 0] = x;
+        mucol_shadow_F850[2 * i + 1] = y;
     }
 }
 

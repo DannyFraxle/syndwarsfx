@@ -97,6 +97,43 @@ ubyte weapon_tech_level[33] = {
   0, 1, 1, 3, 3, 5, 6, 2, 4, 3, 3, 2, 4, 4, 255, 5, 7, 8, 1, 255, 9, 6, 6, 255, 8, 7, 5, 2, 6, 7, 5, 255, 255,
 };
 
+ushort weapon_text_index[WEP_TYPES_COUNT] = {0};
+
+ushort weapon_nrg[WEP_TYPES_COUNT] = {
+  0, 2, 4, 1, 1, 6, 7, 0,
+  2, 1, 6, 6, 3, 3, 0, 3,
+  1, 2, 2, 0, 2, 1, 4, 0,
+  3, 5, 5, 1, 1, 2, 3, 0,
+};
+
+ushort weapon_range[WEP_TYPES_COUNT] = {
+  0, 3, 4, 5, 5, 6, 3, 1,
+  2, 0, 3, 3, 2, 2, 2, 8,
+  7, 5, 0, 0, 6, 1, 3, 0,
+  2, 3, 5, 0, 0, 0, 0, 0,
+};
+
+ushort weapon_damage[WEP_TYPES_COUNT] = {
+  0, 1, 3, 4, 4, 5, 7, 0,
+  2, 0, 0, 0, 1, 7, 0, 7,
+  8, 6, 2, 0, 8, 0, 0, 0,
+  0, 0, 5, 0, 0, 6, 0, 0,
+};
+
+ubyte weapon_sound[WEP_TYPES_COUNT] = {
+   0, 10, 11, 14, 13, 16, 37, 12,
+  36, 17, 18, 19, 20, 22, 22, 21,
+  23, 15, 25,  0, 24, 26, 27,  0,
+  28, 29, 30, 31, 32, 33, 34,  0,
+};
+
+ubyte weapon_sound_z[WEP_TYPES_COUNT] = {
+   0, 10, 11, 14, 13, 16, 37, 35,
+  36, 17, 18, 19, 20, 22, 22, 21,
+  23, 15, 25,  0, 24, 35, 27,  0,
+  28, 29, 30, 31, 32, 33, 34,  0,
+};
+
 struct WeaponDefAdd weapon_defs_a[33] = {0};
 struct TbNamedEnum weapon_names[33] = {0};
 
@@ -448,6 +485,13 @@ void init_weapon_text(void)
     s = weapon_text;
     weapon_text[totlen] = '\0';
 
+    for (i = 0; i < WEP_TYPES_COUNT; i++) {
+        weapon_text_index[i] = totlen;
+    }
+    for (i = 0; i < MOD_TYPES_COUNT; i++) {
+        cybmod_text_index[i] = totlen;
+    }
+
     // section_start = s;
     weptxt_pos = 0;
 
@@ -478,7 +522,6 @@ void init_weapon_text(void)
             const char *codename;
             codename = weapon_codename(i);
             if (strcmp(codename, locstr) == 0) {
-                i--;
                 break;
             }
         }
@@ -529,7 +572,6 @@ void init_weapon_text(void)
             const char *codename;
             codename = cybmod_codename(i);
             if (strcmp(codename, locstr) == 0) {
-                i--;
                 break;
             }
         }
@@ -575,6 +617,20 @@ ushort weapon_sprite_index(WeaponType wtype, TbBool enabled)
         sprid = 0 + wdef->Sprite;
     }
     return sprid;
+}
+
+ushort weapon_sound_name_speech_index(WeaponType wtype)
+{
+    ushort smp;
+
+    if (wtype >= WEP_TYPES_COUNT)
+        return 0;
+
+    if (background_type == 1)
+        smp = weapon_sound_z[wtype];
+    else
+        smp = weapon_sound[wtype];
+    return smp;
 }
 
 TbBool weapon_is_for_throwing(WeaponType wtype)
@@ -1367,27 +1423,15 @@ void thing_fire_shot_finish_position_at_marked_spot(struct M31 *prc_fin_pt,
 
     if (wtype == WEP_STASISFLD)
     {
-        short plyr; // stores PlayerIdx or -1
-        short user_vy;
+        MapCoord user_vy;
 
         user_vy = 0;
-        plyr = person_get_dcontrol_player(p_owner->ThingOffset);
-        if (plyr >= 0)
-        {
-            PlayerInfo *p_player;
-            ushort plagent;
-
-            p_player = &players[plyr];
-            plagent = p_owner->U.UPerson.ComCur & 3;
-            user_vy = p_player->UserVY[plagent];
-            player_clear_user_vect_y(plyr, plagent);
+        if (person_has_slot_in_any_player_dcontrol(p_owner->ThingOffset)) {
+            user_vy = player_agent_person_clear_user_vect_y(p_owner);
         }
-        if (user_vy != 0)
-        {
+        if (user_vy != 0) {
             prc_fin_pt->R[1] = MAPCOORD_TO_PRCCOORD(user_vy,0);
-        }
-        else
-        {
+        } else {
             prc_fin_pt->R[1] = alt_at_point(prc_fin_pt->R[0], prc_fin_pt->R[2]) + MAPCOORD_TO_PRCCOORD(20,0);
         }
     }
@@ -1473,14 +1517,29 @@ int bul_path_end(int x1, int y1, int z1, int *x2, int *y2, int *z2,
   int radius, struct Thing *p_owner, ubyte *status)
 {
     int ret;
+    // The five arguments which go on the stack are gathered first, and pushed
+    // through a register holding the address of that array. A "g" operand may
+    // be placed relative to the stack pointer, and each push moves it, so
+    // pushing straight from the operands reads the wrong slot from the second
+    // push on - which is what an optimised build does.
+    int stkargs[5];
+
+    stkargs[0] = (int)(intptr_t)y2;
+    stkargs[1] = (int)(intptr_t)z2;
+    stkargs[2] = radius;
+    stkargs[3] = (int)(intptr_t)p_owner;
+    stkargs[4] = (int)(intptr_t)status;
+
     asm volatile (
-      "push %9\n"
-      "push %8\n"
-      "push %7\n"
-      "push %6\n"
-      "push %5\n"
+      "push 16(%5)\n"
+      "push 12(%5)\n"
+      "push 8(%5)\n"
+      "push 4(%5)\n"
+      "push 0(%5)\n"
       "call ASM_bul_path_end\n"
-        : "=r" (ret) : "a" (x1), "d" (y1), "b" (z1), "c" (x2), "g" (y2), "g" (z2), "g" (radius), "g" (p_owner), "g" (status));
+        : "=a" (ret)
+        : "0" (x1), "d" (y1), "b" (z1), "c" (x2), "S" (stkargs)
+        : "cc", "memory");
     return ret;
 }
 
@@ -1866,12 +1925,114 @@ void init_laser_6shot(struct Thing *p_person, ushort timer)
     p_person->PTarget = p_target;
 }
 
+void create_taser_strand_circle(struct Thing *p_person)
+{
+    MapCoord cor_x, cor_y, cor_z;
+    ushort angl;
+    ushort deviat_m;
+    short deviat_sx, deviat_sz;
+    short deviat_ex, deviat_ez;
+
+    cor_x = PRCCOORD_TO_MAPCOORD(p_person->X);
+    cor_y = PRCCOORD_TO_YCOORD(p_person->Y);
+    cor_z = PRCCOORD_TO_MAPCOORD(p_person->Z);
+
+    deviat_m = ((32 * gameturn) & 0xFF) + 50;
+    angl = 0;
+    deviat_sx = (deviat_m * lbSinTable[(angl & LbFPMath_AngleMask) + LbFPMath_PI/2]) >> 16;
+    deviat_sz = (deviat_m * lbSinTable[(angl & LbFPMath_AngleMask)]) >> 16;
+    for (angl += LbFPMath_PI/4; angl <= 2*LbFPMath_PI; angl += LbFPMath_PI/4)
+    {
+        struct SimpleThing *p_strand;
+
+        deviat_ex = (deviat_m * lbSinTable[(angl & LbFPMath_AngleMask) + LbFPMath_PI/2]) >> 16;
+        deviat_ez = (deviat_m * lbSinTable[(angl & LbFPMath_AngleMask)]) >> 16;
+        p_strand = create_electric_strand(cor_x + deviat_sx, cor_y, cor_z + deviat_sz,
+                          cor_x + deviat_ex, cor_y, cor_z + deviat_ez, 0);
+        if (p_strand != NULL)
+        {
+            p_strand->Timer1 = (p_person->State != PerSt_WAIT) + 1;
+            p_strand->Flag |= 0x2000;
+        }
+        deviat_sz = deviat_ez;
+        deviat_sx = deviat_ex;
+    }
+}
+
+void persons_taser_affecting_things(struct Thing *p_person)
+{
+    MapCoord cor_x, cor_y, cor_z;
+    short dt_x, dt_z;
+
+    cor_x = PRCCOORD_TO_MAPCOORD(p_person->X);
+    cor_y = PRCCOORD_TO_YCOORD(p_person->Y);
+    cor_z = PRCCOORD_TO_MAPCOORD(p_person->Z);
+  
+    // TODO switch to some generic function for affecting things within range
+    for (dt_x = -1; dt_x < 1; dt_x++)
+    {
+        for (dt_z = -1; dt_z < 1; dt_z++)
+        {
+            ulong k;
+            ThingIdx thing;
+            short tile_x, tile_z;
+
+            tile_x = MAPCOORD_TO_TILE(cor_x) + dt_x;
+            if (tile_x <= 0 && tile_x >= 128)
+                continue;
+            tile_z = MAPCOORD_TO_TILE(cor_z) + dt_z;
+            if (tile_z <= 0 && tile_z >= 128)
+                continue;
+            thing = get_mapwho_thing_index(tile_x, tile_z);
+            k = 0;
+            while (thing != 0)
+            {
+                if (thing <= 0)
+                {
+                    struct SimpleThing *p_sthing;
+                    p_sthing = &sthings[thing];
+                    thing = p_sthing->Next;
+                }
+                else
+                {
+                    struct Thing *p_thing;
+                    p_thing = &things[thing];
+                    if ((p_thing->Type == TT_PERSON) && (p_thing->Flag & TngF_Destroyed) == 0 && (p_thing != p_person))
+                    {
+                        int dist_x, dist_y, dist_z;
+                        dist_x = PRCCOORD_TO_MAPCOORD(p_thing->X) - cor_x;
+                        dist_y = PRCCOORD_TO_YCOORD(p_thing->Y) - cor_y;
+                        dist_z = PRCCOORD_TO_MAPCOORD(p_thing->Z) - cor_z;
+                        if ((dist_y < 55) && (dist_y > -55) && (dist_x * dist_x + dist_z * dist_z < 0x100*0x100))
+                        {
+                            if ((p_thing->Flag & TngF_Persuaded) != 0)
+                                stop_being_persuaded(p_thing);
+                            if (p_person->U.UPerson.PersuadePower > 0)
+                                unpersuade_my_peeps(p_person);
+                        }
+                    }
+                    thing = p_thing->Next;
+                }
+                if (k >= 400) //TODO replace with MAX_THINGS_ON_TILE
+                    break;
+                k++;
+            }
+        }
+    }
+}
+
 short init_taser(struct Thing *p_person)
 {
+#if 0
     short ret;
     asm volatile ("call ASM_init_taser\n"
         : "=r" (ret) : "a" (p_person));
     return ret;
+#else
+    create_taser_strand_circle(p_person);
+    persons_taser_affecting_things(p_person);
+    return 0;
+#endif
 }
 
 void init_rocket(struct Thing *p_owner)
@@ -2990,8 +3151,7 @@ void init_air_strike(struct Thing *p_owner)
     p_thing->Y = p_owner->Y;
     p_thing->Owner = p_owner->ThingOffset;
     p_thing->Timer1 = 400;
-    p_thing->StartFrame = 1004;
-    p_thing->Frame = nstart_ani[p_thing->StartFrame];
+    set_thing_frame(p_thing, 1004);
     p_thing->U.UEffect.Object = 0;
     p_thing->Flag = TngF_Unkn0004;
     p_thing->Radius = 50;
@@ -3215,10 +3375,9 @@ void init_grenade(struct Thing *p_owner, ushort gtype)
     p_shot->Timer1 = 999;
     p_shot->Owner = p_owner->ThingOffset;
     p_shot->Speed = 400;
-    p_shot->StartFrame = 1068;
+    set_thing_frame(p_shot, 1068);
     p_shot->U.UEffect.Object = 0;
     p_shot->Parent = 0;
-    p_shot->Frame = nstart_ani[p_shot->StartFrame];
     p_shot->Flag |= 0x0004;
     add_node_thing(p_shot->ThingOffset);
     p_shot->Type = TT_GRENADE;
@@ -3465,10 +3624,6 @@ ushort set_player_weapon_turn(struct Thing *p_person, ushort delay_turns)
 
 void init_fire_weapon(struct Thing *p_person)
 {
-#if 0
-    asm volatile ("call ASM_init_fire_weapon\n"
-        : : "a" (p_person));
-#else
     struct WeaponDef *wdef;
     int plagent;
     struct Thing *p_target;
@@ -3728,7 +3883,6 @@ void init_fire_weapon(struct Thing *p_person)
         p_person->Flag &= ~TngF_ShootAtPos;
     if ((p_person->Flag & TngF_PlayerAgent) != 0)
         set_player_weapon_turn(p_person, p_person->U.UPerson.WeaponTurn);
-#endif
 }
 
 void init_clone_disguise(struct Thing *p_person)
@@ -3918,43 +4072,30 @@ void process_vehicle_weapon(struct Thing *p_vehicle, struct Thing *p_person)
 
     if ((p_person->Flag & TngF_ShootAtPos) != 0)
     {
-        short tdx, tdy, tdz;
+        struct MapCoords trgtd;
 
-        if ((p_person->Flag & TngF_PlayerAgent) != 0)
+        if (person_has_slot_in_any_player_dcontrol(p_person->ThingOffset))
         {
-            PlayerInfo *p_player;
-            PlayerIdx plyr;
-            ushort plagent;
-
-            plyr = p_person->U.UPerson.ComCur >> 2;
-            plagent = p_person->U.UPerson.ComCur & 3;
-            p_player = &players[plyr];
-
-            tdx = p_player->UserVX[plagent];
-            tdz = p_player->UserVZ[plagent];
-            if (p_player->UserVY[plagent] != 0)
-            {
-                tdy = p_player->UserVY[plagent];
-                player_clear_user_vect_y(plyr, plagent);
-            }
-            else
-            {
-                tdy = (alt_at_point(tdx, tdz) >> 8) + 20;
+            player_agent_person_get_user_vect(p_person, &trgtd);
+            if (trgtd.Y != 0) {
+                player_agent_person_clear_user_vect_y(p_person);
+            } else {
+                trgtd.Y = (alt_at_point(trgtd.X, trgtd.Z) >> 8) + 20;
             }
         }
         else
         {
-            tdx = p_vehicle->U.UVehicle.TargetDX;
-            tdy = p_vehicle->U.UVehicle.TargetDY;
-            tdz = p_vehicle->U.UVehicle.TargetDZ;
+            trgtd.X = p_vehicle->U.UVehicle.TargetDX;
+            trgtd.Y = p_vehicle->U.UVehicle.TargetDY;
+            trgtd.Z = p_vehicle->U.UVehicle.TargetDZ;
         }
 
-        if (p_vehicle->U.UVehicle.TargetDX != tdx || p_vehicle->U.UVehicle.TargetDZ != tdz)
+        if (p_vehicle->U.UVehicle.TargetDX != trgtd.X || p_vehicle->U.UVehicle.TargetDZ != trgtd.Z)
             p_vehicle->OldTarget = 20000;
         p_vehicle->PTarget = NULL;
-        p_vehicle->U.UVehicle.TargetDX = tdx;
-        p_vehicle->U.UVehicle.TargetDZ = tdz;
-        p_vehicle->U.UVehicle.TargetDY = tdy;
+        p_vehicle->U.UVehicle.TargetDX = trgtd.X;
+        p_vehicle->U.UVehicle.TargetDZ = trgtd.Z;
+        p_vehicle->U.UVehicle.TargetDY = trgtd.Y;
         p_vehicle->Flag |= TngF_ShootAtPos;
     }
     else if (p_person->PTarget != NULL)
@@ -3994,44 +4135,32 @@ void process_mech_weapon(struct Thing *p_vehicle, struct Thing *p_person)
 #else
     if ((p_person->Flag & TngF_ShootAtPos) != 0)
     {
-        short tdx, tdy, tdz;
+        struct MapCoords trgtd;
 
         p_vehicle->PTarget = NULL;
         p_vehicle->Flag |= TngF_ShootAtPos;
-        if ((p_person->Flag & TngF_PlayerAgent) != 0)
+
+        if (person_has_slot_in_any_player_dcontrol(p_person->ThingOffset))
         {
-            PlayerInfo *p_player;
-            PlayerIdx plyr;
-            ushort plagent;
-
-            plyr = p_person->U.UPerson.ComCur >> 2;
-            plagent = p_person->U.UPerson.ComCur & 3;
-            p_player = &players[plyr];
-
-            tdx = p_player->UserVX[plagent];
-            tdz = p_player->UserVZ[plagent];
-            if (p_player->UserVY[plagent] != 0)
-            {
-                tdy = p_player->UserVY[plagent];
-                player_clear_user_vect_y(plyr, plagent);
-            }
-            else
-            {
-                tdy = (alt_at_point(tdx, tdz) >> 8) + 20;
+            player_agent_person_get_user_vect(p_person, &trgtd);
+            if (trgtd.Y != 0) {
+                player_agent_person_clear_user_vect_y(p_person);
+            } else {
+                trgtd.Y = (alt_at_point(trgtd.X, trgtd.Z) >> 8) + 20;
             }
         }
         else
         {
-            tdy = p_person->VY;
-            tdz = p_person->VZ;
-            tdx = p_person->VX;
+            trgtd.Y = p_person->VY;
+            trgtd.Z = p_person->VZ;
+            trgtd.X = p_person->VX;
         }
-        if ((p_vehicle->U.UVehicle.TargetDX != tdx) || (p_vehicle->U.UVehicle.TargetDZ != tdz))
+        if ((p_vehicle->U.UVehicle.TargetDX != trgtd.X) || (p_vehicle->U.UVehicle.TargetDZ != trgtd.Z))
         {
             p_vehicle->OldTarget = 20000;
-            p_vehicle->U.UVehicle.TargetDY = tdy;
-            p_vehicle->U.UVehicle.TargetDZ = tdz;
-            p_vehicle->U.UVehicle.TargetDX = tdx;
+            p_vehicle->U.UVehicle.TargetDY = trgtd.Y;
+            p_vehicle->U.UVehicle.TargetDZ = trgtd.Z;
+            p_vehicle->U.UVehicle.TargetDX = trgtd.X;
         }
         p_vehicle->PTarget = NULL;
     }
@@ -4072,12 +4201,14 @@ void process_mech_weapon(struct Thing *p_vehicle, struct Thing *p_person)
     if ((p_vehicle->U.UVehicle.TNode & 0x0001) != 0)
     {
         p_vehicle->U.UVehicle.TNode &= ~0x0001;
-        init_mech_rocket(p_person, p_vehicle, mech_unkn_dw_1DC880, mech_unkn_dw_1DC884, mech_unkn_dw_1DC888);
+        init_mech_rocket(p_person, p_vehicle, mech_rocket1_launch_cor_x,
+          mech_rocket1_launch_cor_y, mech_rocket1_launch_cor_z);
     }
     if ((p_vehicle->U.UVehicle.TNode & 0x0002) != 0)
     {
         p_vehicle->U.UVehicle.TNode &= ~0x0002;
-        init_mech_rocket(p_person, p_vehicle, mech_unkn_dw_1DC88C, mech_unkn_dw_1DC890, mech_unkn_dw_1DC894);
+        init_mech_rocket(p_person, p_vehicle, mech_rocket2_launch_cor_x,
+          mech_rocket2_launch_cor_y, mech_rocket2_launch_cor_z);
     }
     if ((p_vehicle->U.UVehicle.TNode & 0x0008) != 0)
     {
@@ -5077,12 +5208,22 @@ void process_weapon(struct Thing *p_person)
 s32 laser_hit_at(s32 x1, s32 y1, s32 z1, s32 *x2, s32 *y2, s32 *z2, struct Thing *p_shot)
 {
     s32 ret;
+    // Pushed through a register holding them: a "g" operand may be placed
+    // relative to the stack pointer, which each push moves.
+    int stkargs[3];
+
+    stkargs[0] = (int)(intptr_t)y2;
+    stkargs[1] = (int)(intptr_t)z2;
+    stkargs[2] = (int)(intptr_t)p_shot;
+
     asm volatile (
-      "push %7\n"
-      "push %6\n"
-      "push %5\n"
+      "push 8(%5)\n"
+      "push 4(%5)\n"
+      "push 0(%5)\n"
       "call ASM_laser_hit_at\n"
-        : "=r" (ret) : "a" (x1), "d" (y1), "b" (z1), "c" (x2), "g" (y2), "g" (z2), "g" (p_shot));
+        : "=r" (ret)
+        : "a" (x1), "d" (y1), "b" (z1), "c" (x2), "S" (stkargs)
+        : "cc", "memory");
     return ret;
 }
 

@@ -73,7 +73,9 @@
 #include "ssampply.h"
 #include "matrix.h"
 #include "dos.h"
+#include "drawshape.h"
 #include "drawtext.h"
+#include "embedanim.h"
 #include "enginbckt.h"
 #include "engindrwlstm_wrp.h"
 #include "engindrwlstx.h"
@@ -199,6 +201,24 @@ enum ReloadMenuFlags {
     RelMnuF_ScrBoxesFull = 0x04,
 };
 
+#define OUTRO_HOT_CHARS_COUNT 8
+
+#pragma pack(1)
+
+/** A character of the outro text which was already drawn, and is still
+ * bright enough to be worth drawing again while it fades out. */
+struct OutroHotChar {
+    s32 x;
+    s32 y;
+    ubyte chr;
+    /** Brightness, used as index within pixmap.fade_table[]. */
+    ubyte fade_lv;
+    /** Font to draw with; 1 selects big_font, anything else med2_font. */
+    ubyte font;
+    ubyte field_B;
+};
+
+#pragma pack()
 
 extern char *fadedat_fname;
 char session_name[20] = "SWARA";
@@ -223,6 +243,8 @@ ulong stored_level3d_inuse;
 
 extern int data_1c8428;
 const char *primvehobj_fname = "qdata/primveh.obj";
+
+extern s32 dword_152E38[5]; // = {-1, -1, -1, -1, -1,};
 
 extern short word_1C6E08;
 extern short word_1C6E0A;
@@ -258,28 +280,16 @@ int mouse_map_z = 0x3200;
 
 extern short last_map_for_lights_func_11;
 
-extern short word_1552F8;
-
-extern long dword_176CBC;
-
 extern char unknmsg_str[100];
 extern short word_1774E8[2 * 150];
 
 char *data_15319c = unknmsg_str;
 
-extern ubyte billboard_anim_no;
-extern ubyte byte_1AAA88;
 extern long dword_1AAB74;
 extern long dword_1AAB78;
-extern ubyte active_anim;
 extern ushort word_1AABD0;
 
-extern long mech_unkn_tile_x1;
-extern long mech_unkn_tile_y1;
-extern long mech_unkn_tile_x2;
-extern long mech_unkn_tile_y2;
-extern long mech_unkn_tile_x3;
-extern long mech_unkn_tile_y3;
+extern struct OutroHotChar outro_hot_chars[OUTRO_HOT_CHARS_COUNT];
 
 //TODO this is not an extern only because I was unable to locate it in asm
 ushort next_bezier_pt = 1;
@@ -332,10 +342,6 @@ struct TbLoadFiles missionspr_load_files[] =
   { "data/pointr0-3.tab",(void **)&pointer_sprites,	(void **)&pointer_sprites_end, 0, 0, 0 },
   { "qdata/pal.pal",	(void **)&display_palette,	(void **)NULL,				0, 0, 0 },
   { "",					(void **)NULL, 				(void **)NULL,				0, 0, 0 }
-};
-
-ubyte byte_154BB4[] = {
-  220, 224, 224, 222, 220, 220,
 };
 
 char unk_credits_text_s[] = "";
@@ -457,12 +463,6 @@ void load_prim_quad(void)
         test_open(100);
 }
 
-void bang_init(void)
-{
-    asm volatile ("call ASM_bang_init\n"
-        :  :  : "eax" );
-}
-
 void bang_set_detail(int a1)
 {
     asm volatile ("call ASM_bang_set_detail\n"
@@ -544,174 +544,6 @@ TbBool game_setup_stuff(void)
     }
 
     return ret;
-}
-
-void anim_show_FLI_SS2_NP(void)
-{
-    struct Animation *p_anim;
-
-    p_anim = &animations[active_anim];
-    anim_show_FLI_SS2(p_anim);
-}
-
-void anim_show_FLI_BRUN_NP(void)
-{
-    struct Animation *p_anim;
-
-    p_anim = &animations[active_anim];
-    anim_show_FLI_BRUN(p_anim);
-}
-
-void anim_show_FLI_LC_NP(void)
-{
-    struct Animation *p_anim;
-
-    p_anim = &animations[active_anim];
-    anim_show_FLI_LC(p_anim);
-}
-
-ubyte *anim_type_get_output_buffer(ubyte anislot)
-{
-    switch (anislot)
-    {
-    case AniSl_FULLSCREEN:
-    default:
-        return lbDisplay.WScreen;
-    case AniSl_BILLBOARD:
-        return vec_tmap[4];
-    case AniSl_EQVIEW:
-    case AniSl_UNKN4:
-    case AniSl_UNKN5:
-    case AniSl_UNKN6:
-    case AniSl_UNKN7:
-    case AniSl_NETSCAN:
-        return vec_tmap[5];
-    case AniSl_CYBORG_INOUT:
-    case AniSl_CYBORG_BRTH:
-        return vec_tmap[5] + 0x8000;
-    case AniSl_SCRATCH:
-        return vec_tmap[4] + 0x8000;
-    }
-}
-
-void anim_billboard_select_rand(void)
-{
-    ushort rnd;
-
-    rnd = LbRandomPosShort() & 7;
-    if (rnd <= 0)
-        billboard_anim_no = 1;
-    else if (rnd <= 2)
-        billboard_anim_no = 2;
-    else if (rnd <= 5)
-        billboard_anim_no = 0;
-    else
-        billboard_anim_no = 3;
-}
-
-void anim_billboard_select_next(void)
-{
-    billboard_anim_no++;
-    if (billboard_anim_no > 3)
-        billboard_anim_no = 0;
-}
-
-void anim_billboard_broadcast_sound(void)
-{
-    struct Thing *p_thing;
-    ushort rnd;
-    ubyte smpl_no;
-
-    if (in_network_game)
-        return;
-    if (ingame.VisibleBillboardThing == 0)
-        return;
-
-    p_thing = &things[ingame.VisibleBillboardThing];
-    smpl_no = byte_154BB4[billboard_anim_no];
-    rnd = LbRandomPosShort() & 1;
-    play_dist_sample(p_thing, smpl_no + rnd, FULL_VOL, EQUL_PAN, NORM_PTCH, LOOP_NO, 1);
-}
-
-void flic_unkn03(ubyte anislot)
-{
-    struct Animation *p_anim;
-    ubyte *frmbuf;
-    PathInfo *pinfo;
-    int k;
-
-    k = anim_slots[anislot];
-    p_anim = &animations[k];
-    if (anim_is_opened(p_anim)) {
-        anim_flic_close(p_anim);
-    }
-
-    anim_scratch = scratch_buf1;
-    anim_flic_init(p_anim, anislot, 0x00);
-    frmbuf = anim_type_get_output_buffer(anislot);
-
-    switch (anislot)
-    {
-    case AniSl_BILLBOARD:
-        byte_1AAA88 = 0;
-        anim_flic_set_frame_buffer(p_anim, frmbuf, 0, 0, 0, 0x20);
-        anim_billboard_select_rand();
-        anim_billboard_broadcast_sound();
-        pinfo = &game_dirs[DirPlace_QData];
-        anim_flic_set_fname(p_anim, "%s/%s-1%d.fli", pinfo->directory, "demo", (int)billboard_anim_no);
-        anim_billboard_select_next();
-        break;
-    case AniSl_EQVIEW:
-        byte_1AAA88 = 0;
-        anim_flic_set_frame_buffer(p_anim, frmbuf, 0, 0, 0, 0x00);
-        break;
-    case AniSl_CYBORG_INOUT:
-        byte_1AAA88 = 0;
-        anim_flic_set_frame_buffer(p_anim, frmbuf, 0, 0, 0, 0x00);
-        break;
-    case AniSl_UNKN4:
-        byte_1AAA88 = 1;
-        anim_flic_set_frame_buffer(p_anim, frmbuf, 0, 0, 0, 0x02);
-        pinfo = &game_dirs[DirPlace_Data];
-        anim_flic_set_fname(p_anim, "%s/%s.fli", pinfo->directory, "intro");
-        break;
-    case AniSl_UNKN5:
-        byte_1AAA88 = 0;
-        anim_flic_set_frame_buffer(p_anim, frmbuf, 10, 30, 0, 0x02);
-        pinfo = &game_dirs[DirPlace_Data];
-        anim_flic_set_fname(p_anim, "%s/%s.fli", pinfo->directory, "mcomp");
-        break;
-    case AniSl_UNKN6:
-        byte_1AAA88 = 0;
-        anim_flic_set_frame_buffer(p_anim, frmbuf, 10, 30, 0, 0x02);
-        pinfo = &game_dirs[DirPlace_Data];
-        anim_flic_set_fname(p_anim, "%s/%s.fli", pinfo->directory, "mcomp");
-        break;
-    case AniSl_UNKN7:
-        byte_1AAA88 = 0;
-        anim_flic_set_frame_buffer(p_anim, frmbuf, 10, 30, 0, 0x02);
-        pinfo = &game_dirs[DirPlace_Data];
-        anim_flic_set_fname(p_anim, "%s/%s.fli", pinfo->directory, "mcomp");
-        break;
-    case AniSl_CYBORG_BRTH:
-        byte_1AAA88 = 0;
-        anim_flic_set_frame_buffer(p_anim, frmbuf, 0, 0, 0, 0x20);
-        break;
-    case AniSl_NETSCAN:
-        byte_1AAA88 = 0;
-        anim_flic_set_frame_buffer(p_anim, frmbuf, 0, 0, 0, 0x00);
-        break;
-      default:
-        break;
-    }
-
-    if (anim_flic_show_open(p_anim) == Lb_FAIL)
-    {
-        if (anislot == AniSl_BILLBOARD)
-            ingame.Flags &= ~GamF_BillboardMovies;
-        return;
-    }
-    p_anim->anfield_4 += 12;
 }
 
 void update_danger_music(ubyte a1)
@@ -1000,6 +832,19 @@ void play_intro(void)
     }
 }
 
+void outro_hot_chars_shift(void)
+{
+    ushort i;
+
+    for (i = 0; i < OUTRO_HOT_CHARS_COUNT - 1; i++)
+    {
+        LbMemoryCopy(&outro_hot_chars[i], &outro_hot_chars[i+1], sizeof(struct OutroHotChar));
+        if (outro_hot_chars[i].fade_lv > 32)
+            outro_hot_chars[i].fade_lv -= 4;
+    }
+    outro_hot_chars[OUTRO_HOT_CHARS_COUNT - 1].chr = 0;
+}
+
 char func_cc638(const char *text1, const char *text2)
 {
     char ret;
@@ -1010,8 +855,73 @@ char func_cc638(const char *text1, const char *text2)
 
 void screen_dark_curtain_down(void)
 {
+#if 0
     asm volatile ("call ASM_screen_dark_curtain_down\n"
         :  :  : "eax" );
+    return;
+#endif
+    int w;
+    ushort range_beg[MAX_SUPPORTED_SCREEN_WIDTH];
+    ushort range_len[MAX_SUPPORTED_SCREEN_WIDTH];
+    uint already_count;
+    short angl_A, angl_B, angl_C;
+    short dt_angl_A, dt_angl_B, dt_angl_C;
+
+    dt_angl_B = 20 + (LbRandomAnyShort() & 0x1F);
+    dt_angl_A = 20 + (LbRandomAnyShort() & 0x1F);
+    dt_angl_C = 20 + (LbRandomAnyShort() & 0x1F);
+    angl_B = LbRandomAnyShort() & LbFPMath_AngleMask;
+    angl_A = LbRandomAnyShort() & LbFPMath_AngleMask;
+    angl_C = LbRandomAnyShort() & LbFPMath_AngleMask;
+    for (w = 0; w < 320; w++)
+    {
+        int mag;
+
+        range_beg[w] = 0;
+        mag = lbSinTable[(angl_A & LbFPMath_AngleMask) + 512];
+        mag += lbSinTable[angl_B & LbFPMath_AngleMask];
+        mag -= lbSinTable[angl_C & LbFPMath_AngleMask];
+        range_len[w] = abs(mag) >> 14;
+
+        angl_C += dt_angl_C;
+        angl_A += dt_angl_A;
+        angl_B += dt_angl_B;
+    }
+
+    do
+    {
+        int h_beg, h_end, h;
+
+        already_count = 0;
+        for (w = 0; w < 320; w++)
+        {
+            h_beg = range_beg[w] / game_num_fps;
+            if (h_beg >= lbDisplay.GraphicsScreenHeight) {
+                already_count++;
+                continue;
+            }
+            h_end = (range_beg[w] + range_len[w]) / game_num_fps;
+            for (h = h_beg; h < h_end; h++)
+            {
+                TbPixel px;
+                uint scr_pos;
+
+                if (h >= lbDisplay.GraphicsScreenHeight)
+                    break;
+
+                scr_pos = 320 * h + w;
+                px = lbDisplay.WScreen[scr_pos];
+                lbDisplay.WScreen[scr_pos] = pixmap.fade_table[px + 4096];
+            }
+            range_beg[w] += range_len[w];
+            range_len[w] += 1 + (range_len[w] >> 5);
+            if (range_len[w] > MAX_SUPPORTED_SCREEN_HEIGHT * 4)
+                range_len[w] = MAX_SUPPORTED_SCREEN_HEIGHT * 4;
+        }
+        swap_wscreen();
+        game_update();
+    }
+    while (already_count < 320);
 }
 
 int load_outro_text(ubyte *buf)
@@ -1218,8 +1128,46 @@ TbResult load_outro_sprites(void)
 
 void fill_floor_textures(void)
 {
+#if 0
     asm volatile ("call ASM_fill_floor_textures\n"
         :  :  : "eax" );
+#endif
+    struct SingleFloorTexture *p_fltextr;
+    uint i;
+
+    for (i = 1; i < next_floor_texture; i++)
+    {
+        p_fltextr = &game_textures[i];
+        if (p_fltextr->Page == 5)
+        {
+            p_fltextr->TMapX1 += 64;
+            p_fltextr->TMapX2 += 64;
+            p_fltextr->TMapX3 += 64;
+            p_fltextr->TMapX4 += 64;
+            p_fltextr->TMapY1 -= 96;
+            p_fltextr->TMapY2 -= 96;
+            p_fltextr->TMapY3 -= 96;
+            p_fltextr->TMapY4 -= 96;
+            p_fltextr->Page = 4;
+        }
+    }
+
+    for (i = 1; i < prim4_textures_count; i++)
+    {
+        p_fltextr = &prim4_textures[i];
+        if (p_fltextr->Page == 5)
+        {
+            p_fltextr->TMapX1 += 64;
+            p_fltextr->TMapX2 += 64;
+            p_fltextr->TMapX3 += 64;
+            p_fltextr->TMapX4 += 64;
+            p_fltextr->TMapY1 -= 96;
+            p_fltextr->TMapY2 -= 96;
+            p_fltextr->TMapY3 -= 96;
+            p_fltextr->TMapY4 -= 96;
+            p_fltextr->Page = 4;
+        }
+    }
 }
 
 void fill_netgame_agent_pos(int plyr, int group, int num_agents)
@@ -1407,170 +1355,23 @@ void process_view_inputs(int thing)
     process_overall_scale(zoom);
 }
 
-void draw_hud_target_mouse(short dcthing)
-{
-    PlayerInfo *p_locplayer;
-    struct Thing *p_dcthing;
-
-    p_dcthing = &things[dcthing];
-    p_locplayer = &players[local_player_no];
-    if (p_locplayer->Target > 0)
-    {
-        struct Thing *p_targtng;
-        int weprange;
-        ushort msspr;
-        uint range;
-
-        weprange = current_hand_weapon_range(p_dcthing);
-        switch (p_locplayer->TargetType)
-        {
-        case TrgTp_Unkn1:
-        case TrgTp_Unkn2:
-        case TrgTp_Unkn6:
-        case TrgTp_Unkn7:
-            p_locplayer->field_102 = p_locplayer->Target;
-            p_locplayer->TargetType = TrgTp_Unkn7;
-            p_targtng = &things[p_locplayer->Target];
-            range = weprange * weprange;
-            if (can_i_see_thing(p_dcthing, p_targtng, range, 3) ) {
-                msspr = 3;
-            } else {
-                msspr = 2;
-            }
-            do_change_mouse(msspr);
-            break;
-        case TrgTp_Unkn3:
-            p_locplayer->field_102 = p_locplayer->Target;
-            do_change_mouse(7);
-            break;
-        case TrgTp_Unkn4:
-            p_locplayer->field_102 = p_locplayer->Target;
-            p_targtng = &things[p_locplayer->field_102];
-            p_dcthing = &things[p_locplayer->DirectControl[mouser]];
-            if (can_i_enter_vehicle(p_dcthing, p_targtng)) {
-              msspr = 6;
-            } else {
-              range = p_targtng->Radius * p_targtng->Radius + weprange * weprange;
-              if (can_i_see_thing(p_dcthing, p_targtng, range, 3) ) {
-                msspr = 3;
-              } else {
-                msspr = 2;
-              }
-            }
-            do_change_mouse(msspr);
-            break;
-        default:
-            break;
-        }
-    }
-    else if (p_locplayer->Target < 0)
-    {
-        if (p_locplayer->TargetType == TrgTp_Unkn3) {
-          p_locplayer->field_102 = p_locplayer->Target;
-          do_change_mouse(7);
-        } else {
-          p_locplayer->field_102 = p_locplayer->Target;
-          do_change_mouse(5);
-        }
-    }
-    else
-    {
-        do_change_mouse(8);
-    }
-}
-
-void show_goto_point(uint flag)
-{
-    asm volatile ("call ASM_show_goto_point\n"
-        : : "a" (flag));
-    return;
-}
-
-void draw_hud(int dcthing)
-{
-#if 0
-    asm volatile ("call ASM_draw_hud\n"
-        : : "a" (dcthing));
-    return;
-#endif
-    PlayerInfo *p_locplayer;
-
-    p_locplayer = &players[local_player_no];
-    if (!panel_any_visible()) {
-        return;
-    }
-
-    show_goto_point(0);
-
-    if (target_old_frameno == 0)
-        target_old_frameno = nstart_ani[983];
-
-    {
-        struct Thing *p_mothing;
-
-        p_mothing = &things[p_locplayer->DirectControl[mouser]];
-        if (!lbDisplay.MRightButton
-          || (p_mothing->PTarget == NULL)
-          || current_weapon_has_targetting(p_mothing)
-          || (p_mothing->U.UPerson.WeaponTimer < 14)) {
-            p_locplayer->field_102 = 0;
-        }
-    }
-
-    draw_hud_lock_target();
-
-    if (ingame.DisplayMode == 50)
-    {
-        short plagent;
-        short target;
-
-        for (plagent = 0; plagent < playable_agents; plagent++)
-        {
-            struct Thing *p_agent;
-
-            p_agent = p_locplayer->MyAgent[plagent];
-            number_player(p_agent, plagent);
-            if ((p_agent->Flag & TngF_SelectedAgent) != 0)
-            {
-                short ctlmode;
-                ctlmode = p_locplayer->UserInput[plagent].ControlMode & ~UInpCtr_AllFlagsMask;
-                if (ctlmode != UInpCtr_Mouse)
-                {
-                    if (p_agent->PTarget != NULL)
-                        draw_target_person(p_agent->PTarget, 2);
-                }
-            }
-        }
-
-        if (!PacketRecord_IsPlayback())
-        {
-          draw_hud_target_mouse(dcthing);
-        }
-
-        target = p_locplayer->field_102;
-        if (target > 0)
-        {
-            if (!thing_is_destroyed(target))
-                draw_hud_target2(dcthing, target);
-        }
-        draw_new_panel();
-    }
-}
-
 void func_6fd1c(int a1, int a2, int a3, int a4, int a5, int a6, ubyte a7)
 {
-    asm volatile (
-      "push %6\n"
-      "push %5\n"
-      "push %4\n"
-      "call ASM_func_6fd1c\n"
-        : : "a" (a1), "d" (a2), "b" (a3), "c" (a4), "g" (a5), "g" (a6), "g" (a7));
-}
+    // Pushed through a register holding them: a "g" operand may be placed
+    // relative to the stack pointer, which each push moves.
+    int stkargs[3];
 
-void draw_engine_net_text(void)
-{
-    asm volatile ("call ASM_draw_engine_net_text\n"
-        :  :  : "eax" );
+    stkargs[0] = (int)(intptr_t)a5;
+    stkargs[1] = (int)(intptr_t)a6;
+    stkargs[2] = (int)(intptr_t)a7;
+
+    asm volatile (
+      "push 8(%4)\n"
+      "push 4(%4)\n"
+      "push 0(%4)\n"
+      "call ASM_func_6fd1c\n"
+        : : "a" (a1), "d" (a2), "b" (a3), "c" (a4), "S" (stkargs)
+        : "cc", "memory");
 }
 
 void check_mouse_overvehicle(struct Thing *p_thing, ubyte target_assign)
@@ -1609,117 +1410,6 @@ void process_map_craters(void)
         :  :  : "eax" );
 }
 
-void engine_draw_things(int pos_beg_x, int pos_beg_z, int rend_beg_x, int rend_beg_z, short tlcount_x, short tlcount_z)
-{
-    int tlno_x, pos_x;
-    int view_end_x, view_beg_z;
-    int view_beg_x, view_end_z;
-
-    view_end_x = rend_beg_x + 512;
-    view_beg_z = rend_beg_z - 512;
-    view_beg_x = rend_beg_x - ((render_area_a << 8) + 512);
-    view_end_z = rend_beg_z + ((render_area_b << 8) + 512);
-
-    for (tlno_x = 0, pos_x = pos_beg_x; tlno_x < tlcount_x; tlno_x++, pos_x += -256)
-    {
-        int tlno_z, pos_z;
-
-        for (tlno_z = 0, pos_z = pos_beg_z; tlno_z < tlcount_z; tlno_z++, pos_z += 256)
-        {
-            struct MyMapElement *p_mapel;
-
-            if (pos_x <= TILE_TO_MAPCOORD(0,0) || pos_x >= MAP_COORD_WIDTH)
-                continue;
-            if (pos_z <= TILE_TO_MAPCOORD(0,0) || pos_z >= MAP_COORD_HEIGHT)
-                continue;
-
-            p_mapel = &game_my_big_map[MAPCOORD_TO_TILE(pos_x) + MAPCOORD_TO_TILE(pos_z) * MAP_TILE_WIDTH];
-
-            if (pos_x >= view_beg_x && pos_x <= view_end_x && pos_z >= view_beg_z && pos_z <= view_end_z)
-            {
-                ThingIdx thing;
-                ushort lv;
-
-                lv = p_mapel->ColHead;
-                if (lv != 0)
-                {
-                    thing = game_col_vects_list[lv].Object;
-                    if (thing > 0)
-                    {
-                        struct Thing *p_thing;
-                        p_thing = &things[thing];
-                        if ((p_thing->Type == TT_BUILDING)
-                         && (p_thing->U.UObject.DrawTurn != gameturn)) {
-                            draw_thing_object(p_thing);
-                        }
-                    }
-                }
-                thing = p_mapel->Child;
-                while (thing != 0)
-                {
-                    if (thing > 0)
-                    {
-                        struct Thing *p_thing;
-                        p_thing = &things[thing];
-                        thing = draw_thing_object(p_thing);
-                        continue;
-                    }
-                    else
-                    {
-                        struct SimpleThing *p_sthing;
-                        p_sthing = &sthings[thing];
-                        thing = draw_sthing_object(p_sthing);
-                        continue;
-                    }
-                }
-            }
-            else
-            {
-                ThingIdx thing;
-                ushort lv;
-
-                lv = p_mapel->ColHead;
-                if (lv != 0)
-                {
-                    thing = game_col_vects_list[lv].Object;
-                    if (thing > 0)
-                    {
-                        struct Thing *p_thing;
-                        p_thing = &things[thing];
-                        if ((p_thing->Type == TT_BUILDING)
-                          && (p_thing->U.UObject.DrawTurn != gameturn)
-                          && (p_thing->U.UObject.BHeight > 1400)) {
-                            draw_thing_object(p_thing);
-                        }
-                    }
-                }
-                thing = p_mapel->Child;
-                while (thing != 0)
-                {
-                    if (thing > 0)
-                    {
-                        struct Thing *p_thing;
-                        p_thing = &things[thing];
-                        if ( p_thing->Type == TT_BUILDING
-                          && (p_thing->U.UObject.DrawTurn != gameturn)
-                          && (p_thing->U.UObject.BHeight > 1400)) {
-                            thing = draw_thing_object(p_thing);
-                            continue;
-                        }
-                        thing = p_thing->Next;
-                    }
-                    else
-                    {
-                        struct SimpleThing *p_sthing;
-                        p_sthing = &sthings[thing];
-                        thing = p_sthing->Next;
-                    }
-                }
-            }
-        }
-    }
-}
-
 ubyte get_engine_inputs(void)
 {
     ubyte did_inp;
@@ -1743,7 +1433,7 @@ ubyte get_engine_inputs(void)
         clear_gamekey_pressed(GKey_TRANS_OBJ_LINE_COL);
         did_inp |= GINPUT_DIRECT;
     }
-    if (game_perspective == 3)
+    if (game_perspective == ProjM_IsomObjWirefr)
     {
         if (lbKeyOn[KC_RALT]) {
             render_faces_flags |= RendFacF_Perspectv3SkipWireframe;
@@ -1755,91 +1445,10 @@ ubyte get_engine_inputs(void)
     return did_inp;
 }
 
-void screen_position_face_render_callback(
-  struct PolyPoint *p_pt1,
-  struct PolyPoint *p_pt2,
-  struct PolyPoint *p_pt3,
-  ushort face, ubyte type)
-{
-    PlayerInfo *p_locplayer;
-
-    p_locplayer = &players[local_player_no];
-    if (p_locplayer->TargetType < TrgTp_Unkn3) {
-        check_mouse_over_face(p_pt1, p_pt2, p_pt3, face, type);
-    }
-}
-
-void screen_sorted_sprite_statc_render_callback(ushort sspr)
-{
-    struct Thing *p_thing;
-    PlayerInfo *p_locplayer;
-
-    p_locplayer = &players[local_player_no];
-    p_thing = (struct Thing *)game_sort_sprites[sspr].SrcItem;
-
-    if ((p_locplayer->TargetType <= TrgTp_DroppedTng) && (p_thing->Type == SmTT_DROPPED_ITEM)) {
-        check_mouse_overlap_item(sspr);
-    }
-
-    if ((p_locplayer->TargetType < TrgTp_Unkn6) && (p_thing->Type == TT_MINE))
-    {
-        if ((p_thing->SubType == 7) || (p_thing->SubType == 3))
-            check_mouse_overlap_item(sspr);
-        else if (p_thing->SubType == 48)
-            check_mouse_overlap(sspr);
-    }
-}
-
-void screen_sorted_sprite_persn_render_callback(ushort sspr)
-{
-    struct Thing *p_thing;
-
-    p_thing = (struct Thing *)game_sort_sprites[sspr].SrcItem;
-
-    if (p_thing->U.UPerson.EffectiveGroup != ingame.MyGroup)
-    {
-        PlayerInfo *p_locplayer;
-
-        p_locplayer = &players[local_player_no];
-        if ((p_thing->Flag & TngF_Destroyed) != 0)
-        {
-            if (p_locplayer->TargetType < TrgTp_Unkn1)
-                check_mouse_overlap_corpse(sspr);
-        }
-        else
-        {
-            if (p_locplayer->TargetType < TrgTp_Unkn7)
-                check_mouse_overlap(sspr);
-        }
-    }
-
-    if (in_network_game)
-    {
-        struct Thing *p_owntng;
-
-        p_owntng = NULL;
-        if (person_is_other_players_agent(p_thing, local_player_no))
-        {
-            p_owntng = p_thing;
-        }
-        else if ((p_thing->Flag & TngF_Persuaded) != 0)
-        {
-            p_owntng = &things[p_thing->Owner];
-            if (!person_is_other_players_agent(p_owntng, local_player_no))
-                p_owntng = NULL;
-        }
-        if ((p_owntng != NULL) && (p_owntng->U.UPerson.CurrentWeapon != WEP_CLONESHLD)) {
-            check_mouse_over_unkn2(sspr, p_owntng);
-        }
-    }
-}
-
 static TbBool gameturn_animation_advance = false;
 
 void process_engine_unk3(void)
 {
-    PlayerInfo *p_locplayer;
-
     get_engine_inputs();
 
     /* FX3D Phase 8: clear the deep-radar transparent-object mask once per frame,
@@ -1868,108 +1477,20 @@ void process_engine_unk3(void)
      * depth-tested by the hardware renderer. */
     hwr_beam_count = 0;
 
-    reset_drawlist();
-    ingame.NextRocket = 0;
-    screen_position_face_render_cb = screen_position_face_render_callback;
-    screen_sorted_sprite_statc_render_cb = screen_sorted_sprite_statc_render_callback;
-    screen_sorted_sprite_persn_render_cb = screen_sorted_sprite_persn_render_callback;
-    player_target_clear(local_player_no);
-    mech_unkn_dw_1DC880 = mech_unkn_tile_x1;
-    mech_unkn_dw_1DC884 = mech_unkn_tile_y1;
-    mech_unkn_dw_1DC888 = mech_unkn_tile_x2;
-    mech_unkn_dw_1DC88C = mech_unkn_tile_y2;
-    mech_unkn_dw_1DC890 = mech_unkn_tile_x3;
-    mech_unkn_dw_1DC894 = mech_unkn_tile_y3;
+    mech_gameturn_reinit();
 
+    /* FX3D framerate decouple: crater/texture animation advances once per
+     * logical 16Hz turn, not once per presented frame. */
     if (gameturn_animation_advance)
         process_map_craters();
 
-    if (gameturn_animation_advance
-      && ((ingame.Flags & GamF_BillboardBAT) == 0)
-      && ((ingame.Flags & GamF_BillboardMovies) != 0))
-    {
-        dword_176CBC += fifties_per_gameturn;
-        if (dword_176CBC > 80)
-        {
-            dword_176CBC = 0;
-            if (!in_network_game && ((ingame.Flags & GamF_Unkn00040000) != 0))
-            {
-                ingame.Flags &= ~GamF_Unkn00040000;
-                xdo_next_frame(AniSl_BILLBOARD);
-            }
-        }
-    }
+    engine_draw_whole_screen_top_down();
 
-    int rend_beg_x, rend_beg_z;
-    int pos_beg_x, pos_beg_z;
-    int tlcount_x, tlcount_z;
-
-    camera_setup_view(&pos_beg_x, &pos_beg_z, &rend_beg_x, &rend_beg_z, &tlcount_x, &tlcount_z);
-
-    if ((ingame.Flags & GamF_RenderScene) != 0)
-    {
-        engine_draw_things(pos_beg_x, pos_beg_z, rend_beg_x, rend_beg_z, tlcount_x, tlcount_z);
-    }
-
-    if ((ingame.Flags & GamF_RenderScene) != 0)
-    {
-        if ((gamep_scene_effect_type == ScEff_SPACE) && engine_render_lights)
-            draw_background_stars();
-        if (game_perspective == 6) {
-            draw_background_stars();
-        } else if (!hwrender_floor_gate()) {
-            /* When the FX3D renderer is active it draws the floor as 3D geometry;
-             * hwrender_floor_gate() keys the framebuffer and we skip the SW floor.
-             * Inert (returns false) in a software-only build. */
-            lvdraw_do_floor();
-            engine_hwr_suppress_faces = 0;
-        } else {
-            /* Floor gated for 3D: also suppress the SW opaque object/building
-             * faces so the FX3D renderer draws them as geometry instead. */
-            engine_hwr_suppress_faces = 1;
-        }
-    }
-
-    if (word_1552F8 != 36 && !byte_1C8444)
-    {
-        clear_super_quick_lights();
-    }
-    if (gameturn_animation_advance) {
-        process_explode();
-        // Snapshot ex_faces for the FX3D renderer's fragment interpolation
-        // AFTER this turn's update, not before (see hwrender_explode_captured
-        // doc comment) - otherwise collapsing-building debris always lerps
-        // against a turn-stale snapshot and looks locked to the 16Hz sim rate.
-        hwrender_explode_captured();
-    }
-    assert(vec_tmap[1] != NULL);
-    vec_map = vec_tmap[1];
-    face_transp_tinted_surface_col = deep_radar_surface_col;
-    face_transp_tinted_line_col = deep_radar_line_col;
-
-    p_locplayer = &players[local_player_no];
-    if ((ingame.Flags & GamF_RenderScene) != 0)
-    {
-        /* When the FX3D renderer gated the floor this frame, the exploding
-         * object panels (ex_faces[]) are emitted as depth-tested 3D geometry
-         * with 60fps interpolation via emit_explode_faces() in the GL path.
-         * Skip the SW draw_explode() so it doesn't overpaint the composite with
-         * flat, un-depth-tested fragments locked to the 16Hz sim rate. */
-        if (!hwr_floor_gated_frame)
-            draw_explode();
-        draw_screen();
-        draw_hud(p_locplayer->DirectControl[0]);
-        if (in_network_game)
-            draw_engine_net_text();
-        if (debug_hud_collision)
-            draw_engine_unk3_last(engn_xc, engn_zc);
-    }
-    else
-    {
-        draw_hud(p_locplayer->DirectControl[0]);
-        reset_drawlist();
-        ingame.NextRocket = 0;
-    }
+    // Which frame of an animated texture is on screen is not part of the game
+    // state - no simulation code reads it. Advanced here, after the frame was
+    // enlisted, it keeps the pace it had within process_things().
+    if (gameturn_animation_advance)
+        animate_textures();
 }
 
 void process_sound_heap(void)
@@ -2104,7 +1625,6 @@ void init_outro(void)
     setup_heaps(SHSC_CreditsSnd, language_3str);
     play_sample_using_heap(0, 1, FULL_VOL, EQUL_PAN, NORM_PTCH, LOOP_4EVER, 3);
 
-    data_197150 = 1;
     data_1dd91c = 0;
     unkn_flags_01 = 1;
     overall_scale = 40;
@@ -2137,9 +1657,10 @@ void init_outro(void)
         gameturn++;
         render_anim_turn = gameturn;
         traffic_unkn_func_01();
-        process_engine_unk1();
+        camera_apply_velocity();
+        prepare_drawlist();
         process_sound_heap();
-        func_2e440();
+        engine_draw_whole_screen_flyby();
         if (outro_credits_enabled)
         {
             outro_unkn02++;
@@ -2464,7 +1985,7 @@ TbBool setup_host(void)
 
     setup_host_sub6();
     play_intro();
-    flic_unkn03(AniSl_BILLBOARD);
+    embanim_reinit(AniSl_BILLBOARD);
 
     return ret;
 }
@@ -2475,10 +1996,63 @@ void init_engine(void)
         :  :  : "eax" );
 }
 
+void net_player_colors_reassign(void)
+{
+    s32 npcolors[5];
+    ubyte incolors[8];
+    ushort plyr;
+    ushort incol_idx;
+
+    //TODO would probalny make more sense to memset with -1, as the source is never written to
+    LbMemoryCopy(npcolors, dword_152E38, sizeof(npcolors));
+    incolors[0] = colour_lookup[ColLU_GREEN];
+    incolors[1] = colour_lookup[ColLU_RED];
+    incolors[2] = colour_lookup[ColLU_WHITE];
+    incolors[3] = colour_lookup[ColLU_PINK];
+    incolors[4] = colour_lookup[ColLU_CYAN];
+    incolors[5] = colour_lookup[ColLU_YELLOW];
+    incolors[6] = colour_lookup[ColLU_GREYMD];
+    incolors[7] = colour_lookup[ColLU_BLACK];
+
+    incol_idx = 0;
+    for (plyr = 0; plyr < PLAYERS_LIMIT; plyr++)
+    {
+        ubyte v12;
+        TbPixel c;
+
+        if (((1 << plyr) & ingame.InNetGame_UNSURE) == 0)
+            continue;
+
+        v12 = byte_1C5C28[plyr];
+        if (v12 == 0)
+        {
+            c = incolors[incol_idx];
+            net_player_colours[plyr] = c;
+            incol_idx++;
+        }
+        else if (npcolors[v12] == -1)
+        {
+            c = incolors[incol_idx];
+            net_player_colours[plyr] = c;
+            npcolors[v12] = c;
+            incol_idx++;
+        }
+        else
+        {
+            c = npcolors[v12];
+            net_player_colours[plyr] = c;
+        }
+    }
+}
+
 void unkn_truce_groups(void)
 {
+#if 0
     asm volatile ("call ASM_unkn_truce_groups\n"
         :  :  : "eax" );
+#endif
+    unkn_truce_groups_sub1();
+    net_player_colors_reassign();
 }
 
 void blind_progress_game(ulong nturns)
@@ -2731,11 +2305,7 @@ void init_level(void)
     if (in_network_game)
     {
         ingame.DetailLevel = 1;
-        for (plyr_no = 0; plyr_no < PLAYERS_LIMIT; plyr_no++)
-        {
-            player_message_timer[plyr_no] = 0;
-            player_message_text[plyr_no][0] =  '\0';
-        }
+        player_chat_clear();
     }
     else
     {
@@ -2751,7 +2321,7 @@ void init_level(void)
         p_player = &players[plyr_no];
         for (plagent = 0; plagent < LOCAL_USERS_MAX_COUNT; plagent++)
         {
-            player_clear_user_vect(plyr_no, plagent);
+            player_agent_clear_user_vect(plyr_no, plagent);
             p_player->SpecialItems[plagent] = 0;
             p_player->PanelItem[plagent] = 0;
             p_player->PanelState[plagent] = PANEL_STATE_NORMAL;
@@ -3222,7 +2792,7 @@ void restart_back_into_mission(ushort missi)
     mission_result = 0;
     ingame.MissionEndFade = 0;
     ingame.CurrentMission = missi;
-    mission_list[missi].Complete = 0;
+    mission_list[missi].Complete = MResol_UNDECIDED;
     change_current_map(mapno);
     map_lights_update();
     if (ingame.GameMode == GamM_Unkn2)
@@ -3550,95 +3120,6 @@ TbBool game_setup(void)
     return ret;
 }
 
-void anim_show_draw_next_frame(struct Animation *p_anim)
-{
-    ubyte pal_change;
-
-    pal_change = anim_show_frame(p_anim);
-    p_anim->FrameNumber++;
-
-    if (pal_change)
-    {
-        LbScreenWaitVbi();
-        if (byte_1AAA88) {
-            LbPaletteSet(anim_palette);
-        }
-    }
-}
-
-int xdo_next_frame(ubyte anislot)
-{
-    struct Animation *p_anim;
-    ushort k;
-
-    k = anim_slots[anislot];
-    active_anim = k;
-    p_anim = &animations[k];
-
-    if (anislot >= AniSl_EQVIEW && anislot <= AniSl_CYBORG_INOUT)
-    {
-        if (p_anim->FrameNumber == 0) {
-            play_sample_using_heap(0, 135, FULL_VOL, EQUL_PAN, NORM_PTCH, LOOP_NO, 3u);
-        } else if (p_anim->FrameNumber == p_anim->FLCFileHeader.NumberOfFrames >> 1) {
-            play_sample_using_heap(0, 115, FULL_VOL, EQUL_PAN, NORM_PTCH, LOOP_NO, 3u);
-        }
-    }
-
-    if (p_anim->FrameNumber >= p_anim->FLCFileHeader.NumberOfFrames)
-    {
-        anim_flic_close(p_anim);
-        if ((p_anim->Flags & 0x20) != 0) {
-            flic_unkn03(p_anim->Type);
-        }
-        return 1;
-    }
-
-    anim_show_prep_next_frame(p_anim, anim_type_get_output_buffer(p_anim->Type));
-    anim_show_draw_next_frame(p_anim);
-
-    return 0;
-}
-
-int xdo_prev_frame(ubyte anislot)
-{
-    struct Animation *p_anim;
-    ubyte *p_frmbuf;
-    uint i, rq_frame;
-    ushort k;
-
-    k = anim_slots[anislot];
-    active_anim = k;
-    p_anim = &animations[k];
-
-    if (p_anim->FrameNumber == 0)
-        rq_frame = p_anim->FLCFileHeader.NumberOfFrames;
-    else
-        rq_frame = p_anim->FrameNumber - 1;
-
-    p_frmbuf = anim_type_get_output_buffer(p_anim->Type);
-
-    if (rq_frame == 0)
-    {
-        LbMemorySet(p_frmbuf, 0, p_anim->FLCFileHeader.Width * p_anim->FLCFileHeader.Height);
-        anim_flic_close(p_anim);
-        if ((p_anim->Flags & 0x20) != 0) {
-            flic_unkn03(p_anim->Type);
-        }
-        return 1;
-    }
-
-    anim_flic_show_replay(p_anim);
-    LbMemorySet(p_frmbuf, 0, p_anim->FLCFileHeader.Width * p_anim->FLCFileHeader.Height);
-    anim_show_prep_next_frame(p_anim, p_frmbuf);
-    anim_show_draw_next_frame(p_anim);
-    for (i = 1; i < rq_frame; i++)
-    {
-        anim_show_prep_next_frame(p_anim, NULL);
-        anim_show_draw_next_frame(p_anim);
-    }
-    return 0;
-}
-
 void mapwho_unkn01(int a1, int a2)
 {
     asm volatile ("call ASM_mapwho_unkn01\n"
@@ -3666,7 +3147,7 @@ void compute_scanner_zoom(void)
     SCANNER_set_zoom(zoom);
 }
 
-void calc_mouse_pos(void)
+void recalc_mouse_pos(void)
 {
     int cor_dx, cor_dy, cor_dz;
     int fctr_xz;
@@ -3702,37 +3183,30 @@ void calc_mouse_pos(void)
     }
 }
 
-void process_engine_unk2(void)
+void prepare_mouse_on_map(void)
 {
     short msx, msy;
     int offs_y;
     int scr_x, scr_y;
     int map_dxc, map_dzc;
 
+    msx = lbDisplay.MMouseX;
+    msy = lbDisplay.MMouseY;
+
     if (ingame.DisplayMode == DpM_ENGINEPLY)
-      offs_y = overall_scale * engn_yc >> 8;
+      offs_y = (engn_yc * overall_scale) >> 8;
     else
       offs_y = 0;
-    msx = lbDisplay.GraphicsScreenHeight < 400 ? 2 * lbDisplay.MMouseX : lbDisplay.MMouseX;
-    msy = lbDisplay.GraphicsScreenHeight < 400 ? 2 * lbDisplay.MMouseY : lbDisplay.MMouseY;
 
-    if (lbDisplay.GraphicsScreenHeight < 400)
-    {
-        scr_y = (msy >> 1) - offs_y;
-        scr_x = msx >> 1;
-    }
-    else
-    {
-        scr_y = msy - offs_y;
-        scr_x = msx;
-    }
+    scr_y = msy - offs_y;
+    scr_x = msx;
 
     transform_screen_to_map_isometric(&map_dxc, &map_dzc, scr_x, scr_y);
 
     mouse_map_x = engn_xc + map_dxc;
     mouse_map_z = engn_zc + map_dzc;
     if (ingame.DisplayMode == DpM_ENGINEPLY)
-        calc_mouse_pos();
+        recalc_mouse_pos();
 }
 
 void show_game_engine(void)
@@ -3745,9 +3219,26 @@ void show_game_engine(void)
     process_view_inputs(dcthing);// inlined call gengine_ctrl
 
     compute_scanner_zoom();
-    process_engine_unk1();
-    process_engine_unk2();
+    camera_apply_velocity();
+    prepare_drawlist();
+    prepare_mouse_on_map();
     process_engine_unk3();
+}
+
+TbResult clear_vecs_screen(TbPixel colour)
+{
+    TbPixel *ptr;
+    long h;
+
+    ptr = vec_screen;
+    if (ptr == NULL)
+        return Lb_FAIL;
+    for (h = vec_window_height; h >= 0; h--)
+    {
+        LbMemorySet(ptr, colour, vec_window_width);
+        ptr += vec_screen_width;
+    }
+    return Lb_SUCCESS;
 }
 
 void gproc3_unknsub2(void)
@@ -3757,16 +3248,13 @@ void gproc3_unknsub2(void)
         :  :  : "eax" );
     return;
 #endif
-    short ms_x, ms_y;
+    struct CameraState cam_bkp;
+    short ms_x, ms_y, ms_limit;
+    TbPixel *outbuf;
     int i;
 
-    int bkp_ingame_flags;
-    int long bkp_engn_anglexz;
-    ushort bkp_render_area_a, bkp_render_area_b;
-    long bkp_cam_tilt;
+    u32 bkp_ingame_flags;
     ubyte bkp_unkn_flags_01;
-    ushort bkp_overall_scale;
-    s32 bkp_engn_xc, bkp_engn_yc, bkp_engn_zc;
 
     ingame.Flags &= ~GamF_BillboardMovies;
     if (is_key_pressed(KC_Q, KMod_DONTCARE))
@@ -3778,28 +3266,27 @@ void gproc3_unknsub2(void)
         dword_155018 = 50;
     }
 
-    bkp_render_area_a = render_area_a;
-    bkp_render_area_b = render_area_b;
-    bkp_overall_scale = overall_scale;
-    bkp_engn_xc = engn_xc;
-    bkp_engn_yc = engn_yc;
-    bkp_engn_zc = engn_zc;
-    bkp_engn_anglexz = engn_anglexz;
     bkp_ingame_flags = ingame.Flags;
-    bkp_cam_tilt = cam_tilt;
     bkp_unkn_flags_01 = unkn_flags_01;
+
+    camera_save_backup_state(&cam_bkp);
 
     render_area_a = 24;
     render_area_b = 24;
+    overall_scale = 18;
+
+    unkn_flags_01 = 1;
     ingame.Flags = 0;
 
-    ms_x = lbDisplay.GraphicsScreenHeight < 400 ? 2 * lbDisplay.MMouseX : lbDisplay.MMouseX;
-    ms_y = lbDisplay.GraphicsScreenHeight < 400 ? 2 * lbDisplay.MMouseY : lbDisplay.MMouseY;
+    ms_x = lbDisplay.MMouseX;
+    ms_y = lbDisplay.MMouseY;
 
-    if (ms_x < 200)
-      dword_1AAB74 -= 16;
-    if (ms_x > 440)
-      dword_1AAB74 += 16;
+    ms_limit = lbDisplay.MouseWindowX + lbDisplay.MouseWindowWidth * 1 / 3;
+    if (ms_x < ms_limit)
+        dword_1AAB74 -= 16;
+    ms_limit = lbDisplay.MouseWindowX + lbDisplay.MouseWindowWidth * 2 / 3;
+    if (ms_x > ms_limit)
+        dword_1AAB74 += 16;
     dword_1AAB74 &= 0x7FF;
 
     if (!lbDisplay.MRightButton)
@@ -3808,10 +3295,12 @@ void gproc3_unknsub2(void)
         dword_155014 += lbSinTable[dword_1AAB74 + LbFPMath_PI/2] >> 9;
     }
 
-    if (ms_y < 180)
-        dword_1AAB78 -= (180 - ms_y) >> 5;
-    if (ms_y > 220)
-        dword_1AAB78 -= (220 - ms_y) >> 5;
+    ms_limit = lbDisplay.MouseWindowY + lbDisplay.MouseWindowHeight * 1 / 3;
+    if (ms_y < ms_limit)
+        dword_1AAB78 -= (ms_limit - ms_y) >> 5;
+    ms_limit = lbDisplay.MouseWindowY + lbDisplay.MouseWindowHeight * 2 / 3;
+    if (ms_y > ms_limit)
+        dword_1AAB78 -= (ms_limit - ms_y) >> 5;
     if (dword_1AAB78 > 300)
         dword_1AAB78 = 300;
     if (dword_1AAB78 < -300)
@@ -3831,41 +3320,37 @@ void gproc3_unknsub2(void)
     if (dword_155014 > 0x8000)
         dword_155014 = 0;
 
-    cam_tilt = dword_1AAB78;
+    engn_cam_tilt = dword_1AAB78;
     engn_xc = dword_155010;
     engn_yc = dword_155018;
     engn_zc = dword_155014;
-    engn_anglexz = 32 * dword_1AAB74;
+    engn_cam_yaw = 32 * dword_1AAB74;
 
-    setup_vecs(vec_tmap[5], vec_tmap[0], 0x100u, 0x60u, 64);
-    process_engine_unk1();
+#if 0
+    outbuf = vec_tmap[5];
+#else
+    outbuf = vec_tmap[4] + 256 * (5 * 32) + 2 * 32;
+#endif
+    setup_vecs(outbuf, vec_tmap[0], 256, 96, 64);
+    prepare_drawlist();
 
-    unkn_flags_01 = 1;
-    overall_scale = 18;
-    memset(vec_tmap[5], 0, 0x4000);
-    gameturn -= 10;
-    func_2e440();
-    gameturn += 10;
+    clear_vecs_screen(0);
+    drawturn -= 10;
+    engine_draw_whole_screen_flyby();
+    drawturn += 10;
 
     setup_vecs(lbDisplay.WScreen, vec_tmap[0],
       lbDisplay.PhysicalScreenWidth,
       lbDisplay.PhysicalScreenWidth,
       lbDisplay.PhysicalScreenHeight);
-    dword_176D3C = vec_window_width / 2;
-    dword_176D40 = vec_window_height / 2;
+    transform_reinit_vec_window();
 
-    render_area_a = bkp_render_area_a;
-    render_area_b = bkp_render_area_b;
-    overall_scale = bkp_overall_scale;
-    engn_xc = bkp_engn_xc;
-    engn_yc = bkp_engn_yc;
-    engn_zc = bkp_engn_zc;
-    engn_anglexz = bkp_engn_anglexz;
+    camera_load_backup_state(&cam_bkp);
+
     ingame.Flags = bkp_ingame_flags;
-    cam_tilt = bkp_cam_tilt;
     unkn_flags_01 = bkp_unkn_flags_01;
 
-    process_engine_unk1();
+    prepare_drawlist();
 }
 
 ubyte accept_mission(ubyte click)
@@ -4022,7 +3507,7 @@ void my_preprocess_text(char *text)
         :  : "a" (text));
 }
 
-void research_unkn_func_006(ushort missi)
+void mission_over_give_extra_reward(ushort missi)
 {
     struct Mission *p_missi;
     int i;
@@ -4262,7 +3747,7 @@ TbBool check_mission_conds(ushort missi)
     for (i = 0; i < 5; i++)
     {
         cmissi = mission_list[missi].MissionCond[i];
-        if ((cmissi > 0) && (mission_list[cmissi].Complete != 1))
+        if ((cmissi > 0) && (mission_list[cmissi].Complete != MResol_COMPLETED))
           return false;
     }
     return true;
@@ -4321,7 +3806,7 @@ void mission_special_triggers_0_1_set_fail(ushort missi)
     {
         ushort tmp_missi;
 
-        mission_list[next_missi].Complete = -1;
+        mission_list[next_missi].Complete = MResol_FAILED;
 
         // TODO Why only one these? If failing, shouldn't we fail both?
         tmp_missi = mission_list[next_missi].SpecialTrigger[0];
@@ -4392,13 +3877,20 @@ void update_mission_list_to_mission_state(ushort missi, sbyte state)
     if (state == MResol_COMPLETED) {
         mission_list[missi].Complete = state;
     } else if (mission_remain_until_success(missi)) {
-          mission_list[missi].Complete = 0;
+          mission_list[missi].Complete = MResol_UNDECIDED;
           set_mission_state_using_state_slot(missi, MResol_UNDECIDED);
     } else {
           mission_list[missi].Complete = state;
     }
 }
 
+/** Return the way forward in regard to opening more missions for the player.
+ *
+ * If the mission was either completed or failed, the function returns
+ * whether more missions, and from which group, should become available to
+ * the player. It also updates special triggers to acknowledge given
+ * state of given mission.
+ */
 ubyte check_open_next_mission(ushort missi, sbyte state)
 {
     if (mission_has_no_special_triggers(missi))
@@ -4571,7 +4063,8 @@ ubyte check_delete_open_mission(ushort missi, sbyte state)
 
     conds_met = check_mission_conds(missi);
 
-    research_unkn_func_006(missi);
+    if ((state == MResol_COMPLETED) || (state == MResol_FAILED))
+        mission_over_give_extra_reward(missi);
 
     misend = check_open_next_mission(missi, state);
 
@@ -4601,6 +4094,8 @@ ubyte check_delete_open_mission(ushort missi, sbyte state)
     case OMiSta_ContSuccess:
         break;
     case OMiSta_ContFailed:
+        break;
+    default:
         break;
     }
     return misend;
@@ -4652,19 +4147,19 @@ void mission_over(void)
         ingame.Credits += cr_award;
         if (email != 0)
             queue_up_new_mail(0, -email);
-        misend = check_delete_open_mission(missi, mstate);
         break;
     case MResol_FAILED:
         email = mission_list[missi].FailID;
         ingame.fld_unkC57++;
         if (email != 0)
             queue_up_new_mail(0, -email);
-        misend = check_delete_open_mission(missi, mstate);
         break;
     default:
         mstate = MResol_UNDECIDED;
         break;
     }
+
+    misend = check_delete_open_mission(missi, mstate);
 
     if (misend == OMiSta_EndSuccess) {
         if (mission_is_final_at_game_end(missi))
@@ -4733,12 +4228,6 @@ void campaign_new_game_prepare(void)
 
 ubyte goto_savegame(ubyte click)
 {
-#if 0
-    ubyte ret;
-    asm volatile ("call ASM_goto_savegame\n"
-        : "=r" (ret) : "a" (click));
-    return ret;
-#endif
     restore_savegame = 1;
     game_system_screen = SySc_STORAGE;
     screentype = SCRT_SYSMENU;
@@ -4941,7 +4430,7 @@ void do_scroll_map(void)
         }
         if (dcthing)
         {
-            ctlmode = p_locplayer->UserInput[0].ControlMode & ~UInpCtr_AllFlagsMask;
+            ctlmode = user_input_control_mode_get(local_player_no, 0);
             if (ctlmode == UInpCtr_Mouse || PacketRecord_IsPlayback())
                 move_camera(ingame.TrackX, engn_yc, ingame.TrackZ);
             else
@@ -4950,7 +4439,7 @@ void do_scroll_map(void)
     }
     dy = 0;
     dx = 0;
-    ctlmode = p_locplayer->UserInput[byte_153198-1].ControlMode & ~UInpCtr_AllFlagsMask;
+    ctlmode = user_input_control_mode_get(local_player_no, byte_153198-1);
     engn_xc_orig = engn_xc;
     engn_zc_orig = engn_zc;
         if ((ctlmode == UInpCtr_Mouse && !lbDisplay.MMiddleButton) || PacketRecord_IsPlayback())
@@ -4964,7 +4453,7 @@ void do_scroll_map(void)
             }
         }
 
-    abase = -engn_anglexz >> 5;
+    abase = -engn_cam_yaw >> 5;
     angle = -1;
     if (dx > 0)
         angle = (abase + 3583) & LbFPMath_AngleMask;
@@ -5021,16 +4510,16 @@ void do_scroll_map(void)
     }
     if ((engn_zc - engn_zc_orig) || (engn_xc - engn_xc_orig)) {
         engn_x_vel = engn_xc - engn_xc_orig;
-        engn_y_vel = engn_zc - engn_zc_orig;
+        engn_z_vel = engn_zc - engn_zc_orig;
     } else {
         engn_x_vel >>= 2;
-        engn_y_vel >>= 2;
+        engn_z_vel >>= 2;
         if (abs(engn_x_vel) < 5)
             engn_x_vel = 0;
-        if (abs(engn_y_vel) < 5)
-            engn_y_vel = 0;
+        if (abs(engn_z_vel) < 5)
+            engn_z_vel = 0;
         engn_xc += engn_x_vel;
-        engn_zc += engn_y_vel;
+        engn_zc += engn_z_vel;
     }
 }
 
@@ -5150,16 +4639,16 @@ void do_rotate_map(void)
         long delta_y = lbDisplay.MMouseY - mmb_prev_mouse_y;
 
         if (delta_x != 0)
-            engn_anglexz += delta_x * MOUSE_ROTATE_SENSITIVITY;
+            engn_cam_yaw += delta_x * MOUSE_ROTATE_SENSITIVITY;
 
         if (delta_y != 0)
         {
-            long new_cam_tilt = cam_tilt + delta_y * MOUSE_TILT_SENSITIVITY;
+            long new_cam_tilt = engn_cam_tilt + delta_y * MOUSE_TILT_SENSITIVITY;
             if (new_cam_tilt < CAMERA_TILT_MIN)
                 new_cam_tilt = CAMERA_TILT_MIN;
             if (new_cam_tilt > CAMERA_TILT_MAX)
                 new_cam_tilt = CAMERA_TILT_MAX;
-            cam_tilt = new_cam_tilt;
+            engn_cam_tilt = new_cam_tilt;
         }
 
         mmb_prev_mouse_x = lbDisplay.MMouseX;
@@ -5234,19 +4723,19 @@ void do_rotate_map(void)
 
     if (tilt_input != 0)
     {
-        long new_cam_tilt = cam_tilt + (tilt_input * CAMERA_TILT_INPUT_MULTIPLIER);
+        s32 new_cam_tilt = engn_cam_tilt + (tilt_input * CAMERA_TILT_INPUT_MULTIPLIER);
         if (new_cam_tilt < CAMERA_TILT_MIN) {
             new_cam_tilt = CAMERA_TILT_MIN;
         }
         else if (new_cam_tilt > CAMERA_TILT_MAX) {
             new_cam_tilt = CAMERA_TILT_MAX;
         }
-        cam_tilt = new_cam_tilt;
+        engn_cam_tilt = new_cam_tilt;
     }
 
-    long new_cam_rotation_velocity = cam_rotation_velocity + (rotate_input * CAMERA_ROTATION_INPUT_MULTIPLIER);
-    new_cam_rotation_velocity = (3 * new_cam_rotation_velocity) / 4;
-    cam_rotation_velocity = new_cam_rotation_velocity;
+    s32 new_cam_yaw_vel = engn_cam_yaw_vel + (rotate_input * CAMERA_ROTATION_INPUT_MULTIPLIER);
+    new_cam_yaw_vel = (3 * new_cam_yaw_vel) / 4;
+    engn_cam_yaw_vel = new_cam_yaw_vel;
 }
 
 ubyte process_mouse_inputs(void)
@@ -5268,9 +4757,9 @@ ubyte process_mouse_inputs(void)
     p_locplayer = &players[local_player_no];
 
     if (!lbDisplay.MLeftButton)
-        p_locplayer->UserInput[mouser].ControlMode &= ~UInpCtrF_Unkn8000;
+        user_input_control_flags_clear(local_player_no, mouser, UInpCtrF_LBtnDown);
     if (!lbDisplay.MRightButton)
-        p_locplayer->UserInput[mouser].ControlMode &= ~UInpCtrF_Unkn4000;
+        user_input_control_flags_clear(local_player_no, mouser, UInpCtrF_RBtnDown);
     if ((ingame.DisplayMode != DpM_ENGINEPLY) && (ingame.DisplayMode != DpM_UNKN_3B))
         return did_inp;
     did_inp |= process_panel_state();
@@ -5361,8 +4850,8 @@ ubyte process_mouse_inputs(void)
 
         if (!p_locplayer->DoubleMode)
         {
-            short ctlmode;
-            ctlmode = p_locplayer->UserInput[0].ControlMode & ~UInpCtr_AllFlagsMask;
+            ushort ctlmode;
+            ctlmode = user_input_control_mode_get(local_player_no, 0);
             if (ctlmode != UInpCtr_Mouse)
             {
                 do_change_mouse(8);
@@ -5395,7 +4884,7 @@ ubyte process_mouse_inputs(void)
         return did_inp;
     }
 
-    if (lbDisplay.RightButton && ((p_locplayer->UserInput[mouser].ControlMode & 0x4000) == 0))
+    if (lbDisplay.RightButton && !user_input_control_flags_check(local_player_no, mouser, UInpCtrF_RBtnDown))
     {
         WeaponType wtype;
         lbDisplay.RightButton = 0;
@@ -5459,7 +4948,7 @@ ubyte process_mouse_inputs(void)
         }
     }
 
-    if ( lbDisplay.MRightButton && ((p_locplayer->UserInput[mouser].ControlMode & 0x4000) == 0))
+    if (lbDisplay.MRightButton && !user_input_control_flags_check(local_player_no, mouser, UInpCtrF_RBtnDown))
     {
         p_pckt = &packets[local_player_no];
         map_y = (alt_at_point(mouse_map_x, mouse_map_z) >> 8) + 20;
@@ -5590,12 +5079,11 @@ ubyte do_user_interface(void)
         {
             clear_key_pressed(KC_RETURN);
             if ((p_locplayer->PanelState[mouser] != PANEL_STATE_SEND_MESSAGE)
-              && (player_message_timer[local_player_no] <= 140))
+              && player_message_add_allowed(local_player_no))
             {
                 p_locplayer->PanelState[mouser] = PANEL_STATE_SEND_MESSAGE;
                 reset_buffered_keys();
-                player_message_text[local_player_no][0] = '\0';
-                player_message_timer[local_player_no] = 0;
+                player_message_clear(local_player_no);
                 scanner_unkn370 = 0;
                 scanner_unkn3CC = 0;
                 did_inp |= GINPUT_DIRECT;
@@ -5765,12 +5253,14 @@ ubyte do_user_interface(void)
     {
         if (is_key_pressed(KC_E, KMod_ALT) || is_key_pressed(KC_E, KMod_ALT|KMod_SHIFT))
         {
+            short dt;
+
             if (lbShift & KMod_SHIFT)
-                n = -2;
+                dt = -2;
             else
-                n = 2;
-            render_area_a = bound_render_area(render_area_a + n);
-            render_area_b = bound_render_area(render_area_b + n);
+                dt = 2;
+            render_area_a = bound_render_area(render_area_a + dt);
+            render_area_b = bound_render_area(render_area_b + dt);
             did_inp |= GINPUT_DIRECT;
         }
     }
@@ -5852,7 +5342,7 @@ ubyte do_user_interface(void)
                     short dcthing;
                     dcthing = p_locplayer->DirectControl[n];
                     my_build_packet(&packets[local_player_no], PAct_SELECT_AGENT, dcthing, p_agent->ThingOffset, 0, 0);
-                    p_locplayer->UserInput[0].ControlMode |= UInpCtrF_Unkn8000;
+                    user_input_control_flags_raise(local_player_no, 0, UInpCtrF_LBtnDown);
                     // Double tapping - center view on the agent
                     if (gameturn - last_sel_agent_turn[n] < 7)
                     {
@@ -5888,17 +5378,18 @@ ubyte do_user_interface(void)
     }
 
     struct SpecialUserInput *p_usrinp;
-    short ctlmode;
+    ushort ctlmode;
+    ubyte dmuser;
 
     if (p_locplayer->DoubleMode)
     {
-        for (n = 0; n < p_locplayer->DoubleMode + 1; n++)
+        for (dmuser = 0; dmuser < p_locplayer->DoubleMode + 1; dmuser++)
         {
             short dcthing;
 
-            p_usrinp = &p_locplayer->UserInput[n];
+            p_usrinp = &p_locplayer->UserInput[dmuser];
             do_user_input_bits_control_clear_nonmove(p_usrinp);
-            ctlmode = p_usrinp->ControlMode & ~UInpCtr_AllFlagsMask;
+            ctlmode = user_input_control_mode_get(local_player_no, dmuser);
             if (ctlmode == UInpCtr_Mouse)
             {
                 do_user_input_bits_control_clear_all(p_usrinp);
@@ -5906,7 +5397,7 @@ ubyte do_user_interface(void)
             }
             else if (ctlmode <= UInpCtr_Keyboard)
             {
-                dcthing = p_locplayer->DirectControl[n];
+                dcthing = p_locplayer->DirectControl[dmuser];
                 if (person_can_accept_control(dcthing))
                 {
                     did_inp = weapon_select_input();
@@ -5920,7 +5411,7 @@ ubyte do_user_interface(void)
             }
             else
             {
-                dcthing = p_locplayer->DirectControl[n];
+                dcthing = p_locplayer->DirectControl[dmuser];
                 if (!person_can_accept_control(dcthing))
                     return did_inp;
 
@@ -5928,7 +5419,7 @@ ubyte do_user_interface(void)
                 do_user_input_bits_direction_from_joy(p_usrinp, ctlmode - 2);
                 do_user_input_bits_actions_from_joy(p_usrinp, ctlmode - 2);
             }
-            ctlmode = p_usrinp->ControlMode & ~UInpCtr_AllFlagsMask;
+            ctlmode = user_input_control_mode_get(local_player_no, dmuser);
             if (ctlmode != UInpCtr_Mouse)
             {
                 update_agent_move_direction_deltas(p_usrinp);
@@ -5937,7 +5428,7 @@ ubyte do_user_interface(void)
             if ((debug_log_things & 0x02) != 0)
             {
                 LOGSYNC_F("User %d.%d ControlMode 0x%04X Bits 0x%04X Turn %u Dt(%d,%d) OnFace %d",
-                  (int)local_player_no, (int)n, (uint)p_usrinp->ControlMode, (uint)p_usrinp->Bits,
+                  (int)local_player_no, (int)dmuser, (uint)p_usrinp->ControlMode, (uint)p_usrinp->Bits,
                   (uint)p_usrinp->Turn, (int)p_usrinp->DtX, (int)p_usrinp->DtZ,
                   (int)p_usrinp->OnFace);
             }
@@ -5948,7 +5439,7 @@ ubyte do_user_interface(void)
         short dcthing;
 
         p_usrinp = &p_locplayer->UserInput[0];
-        ctlmode = p_usrinp->ControlMode & ~UInpCtr_AllFlagsMask;
+        ctlmode = user_input_control_mode_get(local_player_no, 0);
         if ((ctlmode == UInpCtr_Mouse) && is_gamekey_pressed(GKey_KEY_CONTROL))
         {
             clear_gamekey_pressed(GKey_KEY_CONTROL);
@@ -5974,7 +5465,7 @@ ubyte do_user_interface(void)
         {
             do_user_input_bits_actions_from_joy_and_kbd(p_usrinp);
 
-            ctlmode = p_usrinp->ControlMode & ~UInpCtr_AllFlagsMask;
+            ctlmode = user_input_control_mode_get(local_player_no, 0);
             if (ctlmode != UInpCtr_Mouse)
             {
                 do_user_input_bits_direction_clear(p_usrinp);
@@ -6310,8 +5801,8 @@ void show_load_and_prep_mission(void)
         generate_shadows_for_multicolor_sprites();
         adjust_mission_engine_to_video_mode();
 
-        flic_unkn03(AniSl_BILLBOARD);
-        xdo_next_frame(AniSl_BILLBOARD);
+        embanim_reinit(AniSl_BILLBOARD);
+        embanim_do_next_frame(AniSl_BILLBOARD);
 
         if (in_network_game)
         {
@@ -6346,7 +5837,7 @@ void mouse_sprite_animate(void)
 
 void menu_screen_redraw(void)
 {
-    mo_weapon = -1;
+    mo_weapon = 0;
     reload_background_flag = 1;
     if (screentype == SCRT_WORLDMAP)
     {
@@ -6739,7 +6230,6 @@ void show_game_screen(void)
 
     if (skip_redraw_this_turn())
         return;
-
     show_game_engine();
 
     if ((ingame.Flags & GamF_Unkn0800) != 0)
@@ -6763,6 +6253,11 @@ void show_game_screen(void)
 
 void draw_game(void)
 {
+    // One more frame is about to be drawn. The counters the drawing uses
+    // advance here, so that they follow the frames and not the game turns.
+    drawturn++;
+    render_anim_turn++;
+
     switch (ingame.DisplayMode)
     {
     case DpM_UNKN_1:
@@ -6781,25 +6276,6 @@ void draw_game(void)
         LOGERR("DisplayMode %d empty\n", (int)ingame.DisplayMode);
         break;
     }
-}
-
-/** Draws simple purple rect directly, without drawlists.
- */
-void draw_purple_rect(int x, int y, int w, int h, ubyte active)
-{
-    TbPixel col1, col2;
-
-    lbDisplay.DrawFlags &= ~Lb_SPRITE_OUTLINE;
-    if (active) {
-        col1 = 0x0E;
-        col2 = 0x0C;
-    } else {
-        col1 = 0x10;
-        col2 = 0x0E;
-    }
-    LbDrawBox(x, y, w, h, col1);
-    LbDrawLine(x, y, x + w - 2, y, col2);
-    LbDrawLine(x, y, x, y + h - 2, col2);
 }
 
 ubyte critical_action_input(void)
@@ -6832,12 +6308,44 @@ ubyte critical_action_input(void)
     return (key == KC_Y);
 }
 
-ubyte process_send_person(ushort player, int i)
+ubyte process_send_person(PlayerIdx plyr, ubyte dmuser)
 {
+#if 0
     ubyte ret;
     asm volatile ("call ASM_process_send_person\n"
-        : "=r" (ret) : "a" (player), "d" (i));
+        : "=r" (ret) : "a" (plyr), "d" (dmuser));
     return ret;
+#endif
+    PlayerInfo *p_player;
+    TbBool usrinp_is_goto_point;
+
+    p_player = &players[plyr];
+
+    if (p_player->State[dmuser] != 1)
+    {
+        p_player->State[dmuser] = 1;
+        p_player->SubState[dmuser] = 0;
+    }
+
+    usrinp_is_goto_point = ((p_player->UserInput[dmuser].Bits & SpUIn_GotoPoint) != 0);
+
+    if (!usrinp_is_goto_point && (p_player->SubState[dmuser] == 0))
+    {
+        p_player->SubState[dmuser] = 1;
+        return 0;
+    }
+    if (usrinp_is_goto_point && (p_player->SubState[dmuser] == 1))
+    {
+        p_player->SubState[dmuser] = 2;
+        return 0;
+    }
+    if (!usrinp_is_goto_point && (p_player->SubState[dmuser] == 2))
+    {
+        p_player->SubState[dmuser] = 3;
+        p_player->State[dmuser] = 0;
+        return 1;
+    }
+    return 0;
 }
 
 void do_agent_track_only(void)
@@ -7052,8 +6560,8 @@ void load_packet(void)
         for (dmuser = 0; dmuser < p_locplayer->DoubleMode + 1; dmuser++)
         {
             if (p_locplayer->DoubleMode != 0) {
-                ulong ctlmode;
-                ctlmode = p_locplayer->UserInput[dmuser].ControlMode & ~UInpCtr_AllFlagsMask;
+                ushort ctlmode;
+                ctlmode = user_input_control_mode_get(local_player_no, dmuser);
                 if (ctlmode == UInpCtr_Mouse)
                     continue;
             }
@@ -7093,12 +6601,7 @@ void load_packet(void)
 
 void joy_input(void)
 {
-#if 0
-    asm volatile ("call ASM_joy_input\n"
-        :  :  : "eax" );
-    return;
-#endif
-    joy_update_inputs(&joy);
+    JoyUpdateInputs(&joy);
 
     PlayerInfo *p_locplayer = &players[local_player_no];
 
@@ -7233,6 +6736,19 @@ void game_process(void)
         // beating at ~4Hz against 60fps (60Hz vs 16Hz turn boundaries).
         if (new_logical_turn)
         {
+            // Faces thrown by an explosion can hit people once they land, so they
+            // are world state and progress with the world - not from within the
+            // renderer, where this used to be called from.
+            if ((ingame.DisplayMode == DpM_ENGINEPLY)
+              && ((ingame.Flags & TngF_ProgressAction) != 0))
+            {
+                process_explode();
+                // Snapshot ex_faces for the FX3D renderer's fragment interpolation
+                // AFTER this turn's update, not before (see hwrender_explode_captured
+                // doc comment) - otherwise collapsing-building debris always lerps
+                // against a turn-stale snapshot and looks locked to the 16Hz sim rate.
+                hwrender_explode_captured();
+            }
             gameturn_animation_advance = true;
             draw_game();
             draw_fps_counter();

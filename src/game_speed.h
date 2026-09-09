@@ -32,6 +32,16 @@ extern ulong curr_tick_time;
 extern ulong prev_tick_time;
 extern GameTurn gameturn;
 extern GameTurn prev_gameturn;
+
+/** Counter of frames drawn to the screen.
+ *
+ * Advances once per drawn frame. It is the counter for things which only
+ * exist while drawing - marking which elements were already drawn within the
+ * current frame, for instance. Nothing in the simulation reads it, so drawing
+ * code should use it rather than `gameturn` whenever it only needs to tell
+ * one frame from the next.
+ */
+extern GameTurn drawturn;
 extern ulong turns_delta;
 extern ushort fifties_per_gameturn;
 

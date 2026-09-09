@@ -76,8 +76,9 @@ struct ScreenButton main_login_button = {0};
 struct ScreenButton main_map_editor_button = {0};
 struct ScreenButton main_load_button = {0};
 
-extern struct ScreenBox alert_box;
-extern struct ScreenButton alert_OK_button;
+struct ScreenBox alert_box;
+struct ScreenButton alert_OK_button;
+ubyte show_alert = 0;
 
 struct ScreenTextBox heading_box = {0};
 struct ScreenTextBox loading_INITIATING_box = {0};
@@ -91,7 +92,7 @@ extern ubyte month_days[12];
 extern ubyte enter_game;
 
 extern char alert_text[200];
-extern short alert_textpos;
+short alert_textpos = 0;
 
 struct ScreenBoxBase global_top_bar_box = {4, 4, 632, 15};
 struct ScreenBoxBase global_apps_bar_box = {3, 432, 634, 48};
@@ -107,11 +108,6 @@ ubyte ac_do_sysmnu_button(ubyte click);
 
 long time_difference(struct SynTime *tm1, struct SynTime *tm2)
 {
-#if 0
-    asm volatile ("call ASM_time_difference\n"
-        : : "a" (tm1), "d" (tm2));
-    return;
-#endif
     return 60 * (tm1->Hour - (long)tm2->Hour) + tm1->Minute - (long)tm2->Minute;
 }
 
@@ -248,12 +244,6 @@ void reload_background(void)
 
 ubyte main_do_my_quit(ubyte click)
 {
-#if 0
-    ubyte ret;
-    asm volatile ("call ASM_main_do_my_quit\n"
-        : "=r" (ret) : "a" (click));
-    return ret;
-#endif
     stop_sample_using_heap(0, 122);
     exit_game = 1;
     return 1;
@@ -261,24 +251,12 @@ ubyte main_do_my_quit(ubyte click)
 
 ubyte main_do_map_editor(ubyte click)
 {
-#if 0
-    ubyte ret;
-    asm volatile ("call ASM_main_do_map_editor\n"
-        : "=r" (ret) : "a" (click));
-    return ret;
-#endif
     map_editor = 1;
     return 1;
 }
 
 ubyte main_do_login_1(ubyte click)
 {
-#if 0
-    ubyte ret;
-    asm volatile ("call ASM_main_do_login_1\n"
-        : "=r" (ret) : "a" (click));
-    return ret;
-#endif
     screentype = SCRT_LOGIN;
     edit_flag = 1;
     reload_background_flag = 1;
@@ -350,12 +328,6 @@ void set_flag01_main_screen_boxes(void)
 
 ubyte alert_OK(ubyte click)
 {
-#if 0
-    ubyte ret;
-    asm volatile ("call ASM_alert_OK\n"
-        : "=r" (ret) : "a" (click));
-    return ret;
-#endif
     screentype = old_screentype;
     redraw_screen_flag = 1;
     if (old_screentype == SCRT_SYSMENU)
@@ -365,10 +337,6 @@ ubyte alert_OK(ubyte click)
 
 void show_alert_box(void)
 {
-#if 0
-    asm volatile ("call ASM_show_alert_box\n"
-        :  :  : "eax" );
-#endif
     ubyte drawn = 0;
 
     if ((alert_box.Flags & 0x01) != 0)
@@ -444,6 +412,11 @@ void skip_flashy_draw_sysmenu_boxes(void)
         sysmnu_buttons[i].Flags |= GBxFlg_Unkn0002;
 }
 
+TbBool button_is_modal_alert(struct ScreenButton *p_btn)
+{
+    return p_btn == &alert_OK_button;
+}
+
 void alert_box_text_va(const char *fmt, va_list arg)
 {
     vsnprintf(alert_text, sizeof(alert_text), fmt, arg);
@@ -460,12 +433,6 @@ void alert_box_text_fmt(const char *fmt, ...)
 
 ubyte show_title_box(struct ScreenTextBox *p_box)
 {
-#if 0
-    ubyte ret;
-    asm volatile ("call ASM_show_title_box\n"
-        : "=r" (ret) : "a" (p_box));
-    return ret;
-#endif
     short scr_x, scr_y;
     short tx_width, tx_height;
     ubyte cyan;
@@ -631,12 +598,6 @@ void show_sysmenu_screen(void)
 
 ubyte do_sysmnu_button(ubyte click)
 {
-#if 0
-    ubyte ret;
-    asm volatile ("call ASM_do_sysmnu_button\n"
-        : "=r" (ret) : "a" (click));
-    return ret;
-#endif
     enter_game = 1;
     return 1;
 }

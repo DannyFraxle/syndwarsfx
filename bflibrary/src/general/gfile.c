@@ -134,6 +134,8 @@ long LbFileStringSearch(TbFileHandle handle, const char *sstr, ubyte *buf, ulong
     prevpos = LbFilePosition(handle);
     if (prevpos == (long)Lb_FAIL)
         return -1;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-truncation"
     if (flags & 0x02) {
         locbuf[0] = '\x0a';
         strncpy(&locbuf[1], sstr, sslen);
@@ -141,6 +143,7 @@ long LbFileStringSearch(TbFileHandle handle, const char *sstr, ubyte *buf, ulong
     } else {
         strncpy(locbuf, sstr, sslen);
     }
+#pragma GCC diagnostic pop
     locbuf[sslen] = '\x00';
 
     cmpflag = (flags & 0x01) != 0;

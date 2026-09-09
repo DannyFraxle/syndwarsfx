@@ -296,6 +296,7 @@ ulong load_level_pc_handle(TbFileHandle lev_fh)
             if (p_thing->Type == SmTT_DROPPED_ITEM)
             {
                 // SimpleThings should not be on this list. But many level do have them.
+                //TODO verify and/or unify to allow use of reset_thing_frame(p_thing);
                 p_thing->Frame = nstart_ani[p_thing->StartFrame + 1];
             }
 
@@ -466,13 +467,14 @@ ulong load_level_pc_handle(TbFileHandle lev_fh)
             }
             else
             {
-              if (p_thing->Type == SmTT_DROPPED_ITEM) {
-                  p_thing->Frame = nstart_ani[p_thing->StartFrame + 1];
-              }
-              p_thing->LinkParent = loc_thing.LinkParent;
-              p_thing->LinkChild = loc_thing.LinkChild;
-              if (thing != 0)
-                  add_node_sthing(thing);
+                if (p_thing->Type == SmTT_DROPPED_ITEM) {
+                     //TODO verify and/or unify to allow use of reset_sthing_frame(p_thing);
+                     p_thing->Frame = nstart_ani[p_thing->StartFrame + 1];
+                }
+                p_thing->LinkParent = loc_thing.LinkParent;
+                p_thing->LinkChild = loc_thing.LinkChild;
+                if (thing != 0)
+                    add_node_sthing(thing);
             }
         }
     }
@@ -511,7 +513,7 @@ ulong load_level_pc_handle(TbFileHandle lev_fh)
     }
 
     if (fmtver >= 16) {
-        n = LbFileRead(lev_fh, &engn_anglexz, 4);
+        n = LbFileRead(lev_fh, &engn_cam_yaw, 4);
         if (n < 4)
             LOGWARN("Field anglexz truncated, got %d bytes", n);
     }
@@ -629,7 +631,7 @@ void save_level_pc_handle(TbFileHandle lev_fh)
 
     LbFileWrite(lev_fh, game_level_miscs, sizeof(struct LevelMisc) * 200);
 
-    LbFileWrite(lev_fh, &engn_anglexz, 4);
+    LbFileWrite(lev_fh, &engn_cam_yaw, 4);
 }
 
 
@@ -1600,9 +1602,9 @@ void load_mad_pc_buffer(ubyte *mad_ptr, long rdsize)
     }
 
     if (mad_ptr - (ubyte *)dword_177750 >= 100000)
-        unkn_mech_arr7 = mad_ptr;
+        unkn_mech_stct7 = (struct unkn_mech_struc7 *)mad_ptr;
     else
-        unkn_mech_arr7 = dword_177750 + 100000;
+        unkn_mech_stct7 = (struct unkn_mech_struc7 *)((ubyte *)dword_177750 + 100000);
 }
 
 TbResult load_map_dat(ushort mapno)

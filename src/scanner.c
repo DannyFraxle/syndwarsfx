@@ -42,6 +42,8 @@
 /******************************************************************************/
 #pragma pack(1)
 
+#define BBP_ADDS_COUNT 16
+
 struct BbpAdds {
     s32 du;
     s32 dv;
@@ -55,7 +57,7 @@ extern ushort signal_count;
 extern ulong turn_last; // = 999;
 extern ulong SCANNER_keep_arcs;
 extern ulong dword_1DB1A0;
-extern struct BbpAdds SCANNER_bbpadds[16];
+extern struct BbpAdds SCANNER_bbpadds[BBP_ADDS_COUNT];
 
 ushort SCANNER_base_zoom_factor = 180;
 ushort SCANNER_user_zoom_factor = 192;
@@ -77,11 +79,11 @@ void SCANNER_init_bbpoints(void)
     int i;
 
     k = 0;
-    for (i = 0; i < 16; i++, k += 2048)
+    for (i = 0; i < BBP_ADDS_COUNT; i++, k += 2048)
     {
-      angle = (k >> 4);
-      SCANNER_bbpadds[i+1].du = lbSinTable[angle] >> 2;
-      SCANNER_bbpadds[i+1].dv = lbSinTable[angle + 512] >> 2;
+        angle = (k >> 4);
+        SCANNER_bbpadds[i].du = lbSinTable[angle] >> 2;
+        SCANNER_bbpadds[i].dv = lbSinTable[angle + 512] >> 2;
     }
 }
 
@@ -185,6 +187,10 @@ void SCANNER_fill_in_a_little_bit(int x1, int z1, int x2, int z2)
                 col1 = SCANNER_colour[ScnClr_Roadway];
             else if (sc_col == 2)
                 col1 = SCANNER_colour[ScnClr_LiquidDk];
+            else {
+                LOGWARN("invalid scanner colour found");
+                col1 = SCANNER_colour[ScnClr_Outline];
+            }
 
             alt1 = alt_at_point(cor_z, cor_x + 128);
             alt2 = alt_at_point(cor_z, cor_x - 128);

@@ -98,12 +98,22 @@ struct SampleInfo *play_sample_using_heap(ulong bank_id, short smptbl_id,
   ulong volume, ulong pan, ulong pitch, sbyte loop_count, ubyte type)
 {
     struct SampleInfo *ret;
+    // Pushed through a register holding them: a "g" operand may be placed
+    // relative to the stack pointer, which each push moves.
+    int stkargs[3];
+
+    stkargs[0] = (int)(intptr_t)pitch;
+    stkargs[1] = (int)(intptr_t)loop_count;
+    stkargs[2] = (int)(intptr_t)type;
+
     asm volatile (
-      "push %7\n"
-      "push %6\n"
-      "push %5\n"
+      "push 8(%5)\n"
+      "push 4(%5)\n"
+      "push 0(%5)\n"
       "call ASM_play_sample_using_heap\n"
-        : "=r" (ret) : "a" (bank_id), "d" (smptbl_id), "b" (volume), "c" (pan), "g" (pitch), "g" (loop_count), "g" (type));
+        : "=r" (ret)
+        : "a" (bank_id), "d" (smptbl_id), "b" (volume), "c" (pan), "S" (stkargs)
+        : "cc", "memory");
     return ret;
 }
 
@@ -131,22 +141,40 @@ void play_disk_sample(short id, ushort sample, short vol, short pan, int pitch, 
 
 void play_dist_sample(struct Thing *p_thing, ushort smptbl_id, ushort vol, ushort pan, int pitch, int loop, ubyte type)
 {
+    // Pushed through a register holding them: a "g" operand may be placed
+    // relative to the stack pointer, which each push moves.
+    int stkargs[3];
+
+    stkargs[0] = (int)(intptr_t)pitch;
+    stkargs[1] = (int)(intptr_t)loop;
+    stkargs[2] = (int)(intptr_t)type;
+
     asm volatile (
-      "push %6\n"
-      "push %5\n"
-      "push %4\n"
+      "push 8(%4)\n"
+      "push 4(%4)\n"
+      "push 0(%4)\n"
       "call ASM_play_dist_sample\n"
-        : : "a" (p_thing), "d" (smptbl_id), "b" (vol), "c" (pan), "g" (pitch), "g" (loop), "g" (type));
+        : : "a" (p_thing), "d" (smptbl_id), "b" (vol), "c" (pan), "S" (stkargs)
+        : "cc", "memory");
 }
 
 void play_dist_ssample(struct SimpleThing *p_sthing, ushort smptbl_id, ushort vol, ushort pan, int pitch, int loop, ubyte type)
 {
+    // Pushed through a register holding them: a "g" operand may be placed
+    // relative to the stack pointer, which each push moves.
+    int stkargs[3];
+
+    stkargs[0] = (int)(intptr_t)pitch;
+    stkargs[1] = (int)(intptr_t)loop;
+    stkargs[2] = (int)(intptr_t)type;
+
     asm volatile (
-      "push %6\n"
-      "push %5\n"
-      "push %4\n"
+      "push 8(%4)\n"
+      "push 4(%4)\n"
+      "push 0(%4)\n"
       "call ASM_play_dist_ssample\n"
-        : : "a" (p_sthing), "d" (smptbl_id), "b" (vol), "c" (pan), "g" (pitch), "g" (loop), "g" (type));
+        : : "a" (p_sthing), "d" (smptbl_id), "b" (vol), "c" (pan), "S" (stkargs)
+        : "cc", "memory");
 }
 
 void stop_looped_weapon_sample(struct Thing *p_person, short weapon)

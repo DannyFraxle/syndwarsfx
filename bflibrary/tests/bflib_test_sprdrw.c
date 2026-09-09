@@ -359,7 +359,6 @@ TbBool test_spritedraw(void)
     make_general_palette(pal);
     LbFileSaveAt("tst_gp.pal", &pal, sizeof(pal));
     LbColourTablesGenerate(pal, unaffected_colours, "tst_gptbl.dat");
-    render_ghost = &pixmap.ghost_table[0*PALETTE_8b_COLORS];
 
     // Generate sprite DAT/TAB loaded data to test
     if (!test_spritedraw_generate(sprfile_no, pal, &p_sprdata, &p_sprlist, &tot_sprites)) {

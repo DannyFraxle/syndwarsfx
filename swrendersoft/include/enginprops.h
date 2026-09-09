@@ -48,8 +48,10 @@ enum RenderFacesFlags {
  * Such animations use this value as a measure of progressing time, and
  * therefore progressing animation frames.
  *
- * The value is expected to be incremented or set to game turns within
- * the game code.
+ * The value is expected to be incremented once per drawn frame within the
+ * game code. It is deliberately not tied to game turns: nothing in the
+ * simulation reads it, and an animation which does not touch the game world
+ * has no reason to wait for one.
  */
 extern u32 render_anim_turn;
 
@@ -201,9 +203,20 @@ extern ubyte *scratch_buf1;
  */
 extern u32 stat_drawlist_faces;
 
+/** Amount of faces for whom drawlist execution was performed, for statistics.
+ *
+ *  Double sided faces count as one. But square faces countas two triangles.
+ */
+extern s32 stat_drawexec_faces;
+
 /** Callback for debug of 3D objects primitives.
  */
 extern void (*prim_obj_mem_debug)(ubyte itm_kind, int itm_beg, int itm_end);
+
+/******************************************************************************/
+
+void reset_drawlist_stats(void);
+
 /******************************************************************************/
 #ifdef __cplusplus
 }

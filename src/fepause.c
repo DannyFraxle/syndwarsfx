@@ -435,7 +435,7 @@ void wait_for_keypress_end(ushort game_key, TbBool impatient)
     ended = false;
     while (!ended)
     {
-        joy_update_inputs(&joy);
+        JoyUpdateInputs(&joy);
 
         if (!is_gamekey_pressed(game_key))
             ended = true;
@@ -664,7 +664,7 @@ TbBool pause_screen_handle(void)
     resume_game = false;
     while (!resume_game)
     {
-        joy_update_inputs(&joy);
+        JoyUpdateInputs(&joy);
 
         affected = input_pause_screen();
 

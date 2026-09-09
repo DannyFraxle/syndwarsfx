@@ -26,7 +26,7 @@
 #include "poly_trigp.h"
 #include "privbflog.h"
 
-const long gpoly_countdown[] = { 0,-15,-14,-13,-12,-11,-10, -9,  -8, -7, -6, -5, -4, -3, -2, -1 };
+#define PITCH_SH VEC_MAP_PITCH_SH
 
 const long gpoly_reptable[] = {
          0x0,0x7FFFFFFF,0x3FFFFFFF,0x2AAAAAAA,0x1FFFFFFF,0x19999999,0x15555555,0x12492492,
@@ -398,7 +398,7 @@ static TbPixel gpoly_pixel_shaded(struct gpoly_blends *p_bld, const struct gpoly
     p_bld->B[2] = loc_2d + p_inc->S[1];
     loc_2d = p_bld->B[0] + loc_carry;
 
-    ret_l = vec_map[(a3b_h << 8) | a3b_l];
+    ret_l = vec_map[(a3b_h << PITCH_SH) | a3b_l];
 
     loc_carry = __CFADDL__(loc_2d, p_inc->S[2]);
     p_bld->B[0] = loc_2d + p_inc->S[2];
@@ -426,7 +426,7 @@ static TbPixel gpoly_pixel_noshade(struct gpoly_blends *p_bld, const struct gpol
     p_bld->B[2] = loc_2d + p_inc->S[1];
     loc_2d = p_bld->B[0] + loc_carry;
 
-    ret_l = vec_map[(a3b_h << 8) | a3b_l];
+    ret_l = vec_map[(a3b_h << PITCH_SH) | a3b_l];
 
     loc_carry = __CFADDL__(loc_2d, p_inc->S[2]);
     p_bld->B[0] = loc_2d + p_inc->S[2];
@@ -1073,26 +1073,17 @@ void gpoly_rasterize_shaded_bound(struct gpoly_state *st)
             if (range_len > 0)
             {
                 ubyte *o;
-                int kk_max;
 
-                kk_max = range_len & 0xF;
-                o = &loc_0F4[curr_X + gpoly_countdown[kk_max]];
+                // Writes range_len consecutive pixels. This used to be a
+                // variable trip count loop entered at an offset through
+                // gpoly_countdown[], which no compiler can unroll.
+                o = &loc_0F4[curr_X];
                 range_remain = range_len;
-                while ( 1 )
+                while (range_remain > 0)
                 {
-                    int kk;
-
-                    for (kk = kk_max; kk > 0; kk--) {
-                        o[16-kk] = gpoly_pixel_shaded(&bld, &st->incB);
-                    }
-                    if (kk_max != 0) {
-                        o += 16;
-                        range_remain -= 16;
-                        if (range_remain <= 0)
-                            break;
-                    }
-                    o[0] = gpoly_pixel_shaded(&bld, &st->incB);
-                    kk_max = 15;
+                    *o = gpoly_pixel_shaded(&bld, &st->incB);
+                    o++;
+                    range_remain--;
                 }
             }
             range_end = loc_128 + loc_0F8;
@@ -1217,26 +1208,17 @@ void gpoly_rasterize_shaded_nobound(struct gpoly_state *st)
             if (range_len > 0)
             {
                 ubyte *o;
-                int kk_max;
 
-                kk_max = range_len & 0xF;
-                o = &loc_0F4[range_beg_scr + gpoly_countdown[kk_max]];
+                // Writes range_len consecutive pixels. This used to be a
+                // variable trip count loop entered at an offset through
+                // gpoly_countdown[], which no compiler can unroll.
+                o = &loc_0F4[range_beg_scr];
                 range_remain = range_len;
-                while ( 1 )
+                while (range_remain > 0)
                 {
-                    int kk;
-
-                    for (kk = kk_max; kk > 0; kk--) {
-                        o[16-kk] = gpoly_pixel_shaded(&bld, &st->incB);
-                    }
-                    if (kk_max != 0) {
-                        o += 16;
-                        range_remain -= 16;
-                        if (range_remain <= 0)
-                            break;
-                    }
-                    o[0] = gpoly_pixel_shaded(&bld, &st->incB);
-                    kk_max = 15;
+                    *o = gpoly_pixel_shaded(&bld, &st->incB);
+                    o++;
+                    range_remain--;
                 }
             }
             range_beg = loc_12C + loc_0FC;
@@ -1372,27 +1354,16 @@ void gpoly_rasterize_noshade_bound(struct gpoly_state *st)
             range_len = range_end_scr - curr_X;
             if (range_len > 0)
             {
-                int kk_max;
-
-                kk_max = range_len & 0xF;
-                o = &loc_0F4[curr_X + gpoly_countdown[kk_max]];
+                // Writes range_len consecutive pixels. This used to be a
+                // variable trip count loop entered at an offset through
+                // gpoly_countdown[], which no compiler can unroll.
+                o = &loc_0F4[curr_X];
                 range_remain = range_len;
-
-                while ( 1 )
+                while (range_remain > 0)
                 {
-                    int kk;
-
-                    for (kk = kk_max; kk > 0; kk--) {
-                        o[16-kk] = gpoly_pixel_noshade(&bld, &st->incB);
-                    }
-                    if (kk_max != 0) {
-                        o += 16;
-                        range_remain -= 16;
-                        if (range_remain <= 0)
-                            break;
-                    }
-                    o[0] = gpoly_pixel_noshade(&bld, &st->incB);
-                    kk_max = 15;
+                    *o = gpoly_pixel_noshade(&bld, &st->incB);
+                    o++;
+                    range_remain--;
                 }
             }
             range_beg = loc_12C + loc_0FC;
@@ -1519,27 +1490,16 @@ void gpoly_rasterize_noshade_nobound(struct gpoly_state *st)
             range_len = range_end_scr - curr_X;
             if (range_len > 0)
             {
-                int kk_max;
-
-                kk_max = range_len & 0xF;
-                o = &loc_0F4[curr_X + gpoly_countdown[kk_max]];
+                // Writes range_len consecutive pixels. This used to be a
+                // variable trip count loop entered at an offset through
+                // gpoly_countdown[], which no compiler can unroll.
+                o = &loc_0F4[curr_X];
                 range_remain = range_len;
-
-                while ( 1 )
+                while (range_remain > 0)
                 {
-                    int kk;
-
-                    for (kk = kk_max; kk > 0; kk--) {
-                        o[16-kk] = gpoly_pixel_noshade(&bld, &st->incB);
-                    }
-                    if (kk_max != 0) {
-                        o += 16;
-                        range_remain -= 16;
-                        if (range_remain <= 0)
-                            break;
-                    }
-                    o[0] = gpoly_pixel_noshade(&bld, &st->incB);
-                    kk_max = 15;
+                    *o = gpoly_pixel_noshade(&bld, &st->incB);
+                    o++;
+                    range_remain--;
                 }
             }
             range_beg = loc_12C + loc_0FC;

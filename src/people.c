@@ -213,8 +213,11 @@ ubyte sfx_woman_shot[] = {
   12, 27,
 };
 
-extern ushort female_peep;
-extern sbyte byte_154F6C[8];
+ushort female_peep = 0x2028;
+ushort head_my_path = 1;
+ushort word_1531DA = 1;
+
+extern sbyte burning_timer_delatas[8];
 extern short word_1AA38E;
 extern short word_1AA390;
 extern short word_1AA392;
@@ -984,8 +987,9 @@ short person_get_dcontrol_player(ThingIdx person)
 {
     struct Thing *p_person;
 
-    if (!person_has_slot_in_any_player_dcontrol(person))
+    if (!person_has_slot_in_any_player_dcontrol(person)) {
         return -1;
+    }
 
     p_person = &things[person];
 
@@ -1009,6 +1013,28 @@ short person_slot_in_player_dcontrol(ThingIdx person, PlayerIdx plyr)
     }
 
     return (p_person->U.UPerson.ComCur & 3);
+}
+
+MapCoord player_agent_person_clear_user_vect_y(struct Thing *p_person)
+{
+    PlayerIdx plyr;
+    ushort plagent;
+
+    plyr = p_person->U.UPerson.ComCur >> 2;
+    plagent = p_person->U.UPerson.ComCur & 3;
+
+    return player_agent_clear_user_vect_y(plyr, plagent);
+}
+
+void player_agent_person_get_user_vect(struct Thing *p_person, struct MapCoords *p_usrv)
+{
+    PlayerIdx plyr;
+    ushort plagent;
+
+    plyr = p_person->U.UPerson.ComCur >> 2;
+    plagent = p_person->U.UPerson.ComCur & 3;
+
+    player_agent_get_user_vect(plyr, plagent, p_usrv);
 }
 
 ubyte person_sex(struct Thing *p_person)
@@ -1172,6 +1198,22 @@ void reset_person_frame(struct Thing *p_person)
     person_anim = people_frames[p_person->SubType][p_person->U.UPerson.AnimMode];
     p_person->StartFrame = person_anim - 1;
     p_person->Frame = nstart_ani[p_person->StartFrame + 1 + p_person->U.UPerson.Angle];
+}
+
+ushort get_person_anim_subframe(struct Thing *p_person)
+{
+    short sbfrm;
+
+    sbfrm = p_person->Frame - nstart_ani[p_person->StartFrame + 1 + p_person->U.UPerson.Angle];
+
+    // Person animations have limited frames, as some arrays are indexing on them
+    // though if some special effect frames exceed that, no problem - we will limit the value
+    // We may also encounter outranged value here if frame was modified to an animation
+    // which is not stored in StartFrame, this happens for some effects
+    if ((sbfrm < 0) || (sbfrm >= PERSON_ANIM_MAX_FRAMES))
+        sbfrm = 0;
+
+    return sbfrm;
 }
 
 void switch_person_anim_mode(struct Thing *p_person, ubyte animode)
@@ -1412,6 +1454,15 @@ void set_person_persuaded(struct Thing *p_person, struct Thing *p_attacker, usho
                 p_agent->U.UPerson.Target2 = 0;
         }
     }
+}
+
+void stop_being_persuaded(struct Thing *p_person)
+{
+#if 1
+    asm volatile ("call ASM_stop_being_persuaded\n"
+        :  : "a" (p_person));
+    return;
+#endif
 }
 
 void unpersuade_my_peeps(struct Thing *p_owntng)
@@ -4752,7 +4803,7 @@ void thing_shoot_at_point(struct Thing *p_thing, short x, short y, short z, uint
 
     if ((p_thing->Flag & TngF_PlayerAgent) != 0)
     {
-        player_set_user_vect(plyr, plagent, x, y, z);
+        player_agent_set_user_vect(plyr, plagent, x, y, z);
     }
     else
     {
@@ -5502,22 +5553,22 @@ void process_protect_person(struct Thing *p_person)
         }
         else if ((p_leadtng->PTarget == NULL) && (p_person->U.UPerson.Target2 == 0))
         {
-            short face_cor_x, face_cor_y, face_cor_z;
+            short face_cor_X, face_cor_Y, face_cor_Z; // store both full positions and delta pos on map
             int weapon_range;
             PlayerIdx prot_plyr;
 
             p_person->Flag |= TngF_ShootAtPos;
             prot_plyr = p_leadtng->U.UPerson.ComCur >> 2;
-            face_cor_x = players[prot_plyr].SpecialItems[0];
-            face_cor_y = players[prot_plyr].SpecialItems[1];
-            face_cor_z = players[prot_plyr].SpecialItems[2];
+            face_cor_X = players[prot_plyr].SpecialItems[0];
+            face_cor_Y = players[prot_plyr].SpecialItems[1];
+            face_cor_Z = players[prot_plyr].SpecialItems[2];
 
             weapon_range = get_weapon_range(p_person);
             map_limit_distance_to_target_fast(
               PRCCOORD_TO_MAPCOORD(p_person->X),
               PRCCOORD_TO_MAPCOORD(p_person->Y),
               PRCCOORD_TO_MAPCOORD(p_person->Z),
-              &face_cor_x, &face_cor_y, &face_cor_z, weapon_range);
+              &face_cor_X, &face_cor_Y, &face_cor_Z, weapon_range);
 
             if ((p_person->Flag & TngF_PlayerAgent) != 0)
             {
@@ -5526,7 +5577,7 @@ void process_protect_person(struct Thing *p_person)
 
                 plyr = p_person->U.UPerson.ComCur >> 2;
                 plagent = p_person->U.UPerson.ComCur & 3;
-                player_set_user_vect(plyr, plagent, face_cor_x, face_cor_y, face_cor_z);
+                player_agent_set_user_vect(plyr, plagent, face_cor_X, face_cor_Y, face_cor_Z);
             }
             p_person->Flag |= TngF_TriggerUse;
             if ((p_person->Flag & TngF_InVehicle) != 0) {
@@ -5537,7 +5588,7 @@ void process_protect_person(struct Thing *p_person)
                 short full_angle;
 
                 full_angle = angle_between_points(PRCCOORD_TO_MAPCOORD(p_person->X),
-                  PRCCOORD_TO_MAPCOORD(p_person->Z), face_cor_x, face_cor_z);
+                  PRCCOORD_TO_MAPCOORD(p_person->Z), face_cor_X, face_cor_Z);
                 change_person_angle_full(p_person, full_angle);
             }
         }
@@ -6562,7 +6613,7 @@ void person_burning(struct Thing *p_person)
     if ((p_person->Flag & TngF_PlayerAgent) != 0)
         p_person->U.UPerson.RecoilTimer--;
     else
-        p_person->U.UPerson.RecoilTimer -= byte_154F6C[LbRandomAnyShort() & 3];
+        p_person->U.UPerson.RecoilTimer -= burning_timer_delatas[LbRandomAnyShort() & 3];
 
     if (p_person->U.UPerson.RecoilTimer != 0)
     {

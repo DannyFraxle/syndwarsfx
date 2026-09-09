@@ -22,6 +22,7 @@
 #include "bffile.h"
 #include "bfpalette.h"
 #include "bfscreen.h"
+#include "insspr.h"
 #include "privbflog.h"
 
 static void ghost_table_generate(const ubyte *pal, short mix_ratio,
@@ -130,6 +131,7 @@ TbResult LbGhostTableGenerate(const ubyte *pal, short mix_ratio, const char *fna
         }
     }
     lbDisplay.GlassMap = pixmap.ghost_table;
+    render_ghost = pixmap.ghost_table;
     return Lb_SUCCESS;
 }
 
@@ -139,6 +141,7 @@ TbResult LbGhostTableLoad(const ubyte *pal, short mix_ratio, const char *fname)
 
     len = LbFileLoadAt(fname, pixmap.ghost_table);
     lbDisplay.GlassMap = pixmap.ghost_table;
+    render_ghost = pixmap.ghost_table;
 
     // At 50% mix ratio, the palette should be diagonally symmetrical.
     if (mix_ratio == 50) {

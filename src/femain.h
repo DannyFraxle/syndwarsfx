@@ -50,6 +50,7 @@ struct SynTime {
     ubyte Year;
 };
 
+struct ScreenButton;
 struct ScreenTextBox;
 
 #pragma pack()
@@ -64,6 +65,8 @@ extern struct SynTime research_curr_wep_date;
 extern struct SynTime research_curr_mod_date;
 
 extern ubyte game_projector_speed;
+
+extern ubyte show_alert;
 
 /******************************************************************************/
 
@@ -80,6 +83,7 @@ void init_alert_screen_boxes(void);
 void reset_alert_screen_boxes_flags(void);
 void set_flag01_alert_screen_boxes(void);
 void alert_box_text_fmt(const char *fmt, ...);
+TbBool button_is_modal_alert(struct ScreenButton *p_btn);
 
 ubyte show_title_box(struct ScreenTextBox *p_box);
 

@@ -51,10 +51,10 @@ typedef enum {
 
 static void devinput_clear(struct DevInput *dinp);
 
-int JoySetInterrupt(short val)
+TbResult JoySetInterrupt(short val)
 {
     // SDL2 does not use hardware interrupts for joystick input
-    return -1;
+    return Lb_FAIL;
 }
 
 
@@ -85,7 +85,7 @@ static ControllerLayout detect_controller_layout(SDL_GameController *controller)
     return LAYOUT_XBOX;
 }
 
-const char* joy_get_button_label(int button)
+const char *JoyGetButtonLabel(int button)
 {
 
     SDL_GameController *controller = sdl_controllers[0];    
@@ -200,7 +200,7 @@ const char* joy_get_button_label(int button)
     }
 }
 
-int joy_get_device_name(char *textbuf)
+TbResult JoyGetDeviceName(char *textbuf)
 {
     const char *name = sdl_controllers[0] ? SDL_GameControllerName(sdl_controllers[0]) : "No Controller";
     strncpy(textbuf, name, 52);
@@ -208,10 +208,10 @@ int joy_get_device_name(char *textbuf)
     return Lb_SUCCESS;
 }
 
-int joy_update_inputs(struct DevInput *dinp)
+TbResult JoyUpdateInputs(struct DevInput *dinp)
 {
     if (dinp->Type == -1)
-        return -1;
+        return Lb_FAIL;
     
     // Clear all device states
     for (int i = 0; i < MAX_JOYSTICK_COUNT; i++)
@@ -327,11 +327,11 @@ int joy_update_inputs(struct DevInput *dinp)
        
     }
     
-    return 1;
+    return Lb_SUCCESS;
     
 }
 
-int joy_refresh_devices(struct DevInput *dinp)
+TbResult JoyRefreshDevices(struct DevInput *dinp)
 {
     for (int i = 0; i < sdl_num_controllers; i++) {
         if (sdl_controllers[i]) {
@@ -355,7 +355,7 @@ int joy_refresh_devices(struct DevInput *dinp)
         }
     }
     
-    return 1;
+    return Lb_SUCCESS;
 }
 
 static void devinput_clear(struct DevInput *dinp)
@@ -377,13 +377,13 @@ static void devinput_clear(struct DevInput *dinp)
     dinp->NumberOfDevices = 0;
 }
 
-int joy_setup_device(struct DevInput *dinp, int jtype)
+TbResult JoySetupDevice(struct DevInput *dinp, int jtype)
 {
     devinput_clear(dinp);
     
     if (sdl_num_controllers == 0) {
         dinp->Type = -1;
-        return -1;
+        return Lb_FAIL;
     }
     
     // Setup basic controller parameters
@@ -415,7 +415,7 @@ int joy_setup_device(struct DevInput *dinp, int jtype)
     dinp->Type = jtype;
     dinp->NumberOfDevices = sdl_num_controllers;
     
-    return 1;
+    return Lb_SUCCESS;
 }
 
 static int get_JoyId_by_instanceId(SDL_JoystickID instance_id)
@@ -454,7 +454,7 @@ TbResult JEvent(const SDL_Event *ev)
     switch (ev->type)
     {
     case SDL_CONTROLLERAXISMOTION:
-        // Currently handled in joy_update_inputs()
+        // Currently handled in JoyUpdateInputs()
         break;
     case SDL_CONTROLLERBUTTONDOWN:
         i = get_JoyId_by_instanceId(ev->cbutton.which);
@@ -479,16 +479,14 @@ TbResult JEvent(const SDL_Event *ev)
 
     case SDL_CONTROLLERDEVICEADDED:
     case SDL_CONTROLLERDEVICEREMOVED:
-        joy_refresh_devices(&joy);
+        JoyRefreshDevices(&joy);
         break;
     }
         
     return Lb_OK;
 }
 
-/** Joystick drivers initialization.
- */
-int joy_driver_init(void)
+TbResult JoyDriverInit(void)
 {    
     if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) < 0) {
         LOGERR("Failed to initialize SDL game controller subsystem: %s", SDL_GetError());
@@ -515,10 +513,10 @@ int joy_driver_init(void)
         }
     }
     
-    return 1;
+    return Lb_SUCCESS;
 }
 
-int joy_driver_shutdown(void)
+TbResult JoyDriverShutdown(void)
 {
     // Close all opened game controllers
     for (int i = 0; i < sdl_num_controllers; i++) {
@@ -531,6 +529,6 @@ int joy_driver_shutdown(void)
     
     SDL_QuitSubSystem(SDL_INIT_GAMECONTROLLER);
     
-    return 1;
+    return Lb_SUCCESS;
 }
 /******************************************************************************/
