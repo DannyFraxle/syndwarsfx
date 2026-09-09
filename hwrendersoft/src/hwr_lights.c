@@ -36,87 +36,87 @@ static unsigned char hwr_thing_cats[256][256];
  * Matches SW inverse-square additive model. Was cyberpunk noir before the rewrite. */
 static HwrLightDefaults hwr_defaults = {
     1.0f,           /* intensity/gain — linear model needs 1.0, no inverse-square */
-    21.0f,           /* radius (21 = exact SW inverse-square constant at 34019) */
-    2.0f,           /* shadow_strength (heavy anti-light darkening) */
+    8.0f,            /* radius (8 = exact SW inverse-square constant at 34019) */
+    1.0f,           /* shadow_strength (heavy anti-light darkening) */
     0.0f,           /* falloff (unused with inverse-square model, kept for compat) */
-    0.55f,          /* ambient — daylight base fill (sun off by default; the
+    1.0f,           /* ambient — daylight base fill (sun off by default; the
                      * smoothed baked-Ambient floor shade modulates this) */
-    1.0f, 1.0f, 1.0f, /* tint */
-    1.0f,           /* ao — full strength: applies the baked floor shade/shadows */
-    4194304.0f,     /* max_light_dist2 (8 tiles squared in PRCCOORD) */
-    0,              /* ssao_enable — off by default (less GPU, no G-buffer) */
-    90.0f,          /* ssao_max_px (screen radius cap, pixels) — high enough that
+    1.0f, 0.98039f, 0.90196f, /* tint (255 250 230) */
+    3.0f,           /* ao — full strength: applies the baked floor shade/shadows */
+    6553600.0f,     /* max_light_dist2 (10 tiles squared in PRCCOORD) */
+    1,              /* ssao_enable — off by default (less GPU, no G-buffer) */
+    88.0f,          /* ssao_max_px (screen radius cap, pixels) — high enough that
                        ssao_world governs the reach at normal zoom */
     256.0f,         /* ssao_world (AO reach, world units; tile = 256) */
-    5.0f,           /* ssao_strength — the scene is dark and already carries baked
+    3.0f,           /* ssao_strength — the scene is dark and already carries baked
                        SW shading, so a physically-modest multiply is invisible in
                        the final frame; this is what actually reads on screen */
-    16.0f,          /* ssao_bias (min occluder height, world units) */
+    10.0f,          /* ssao_bias (min occluder height, world units) */
     0,              /* ssao_debug */
     /* --- sun (visible highlights, subtle shadows) --- */
     0,              /* sun_enable — OFF by default; baked-Ambient floor shade is
                      * the default shadow system. Set 1 to use the GL sun shadow map. */
-    0.10f,          /* sun_bright */
-    0.02f,          /* sun_ambient */
-    315.0f,         /* sun_azimuth (NW) */
-    0,              /* sun_auto_azimuth (per-level derive from baked shading; unreliable, off) */
-    35.0f,          /* sun_elevation */
-    2,              /* sun_pcf (5x5) */
+    0.35f,          /* sun_bright */
+    0.05f,          /* sun_ambient */
+    360.0f,         /* sun_azimuth */
+    1,              /* sun_auto_azimuth (per-level derive from baked shading; unreliable, off) */
+    45.0f,          /* sun_elevation */
+    12,             /* sun_pcf */
     0.0005f,        /* sun_bias */
     2.0f,           /* sun_slope */
     4.0f,           /* sun_units */
     0,              /* sun_debug */
-    0.0f,           /* sun_haze (crisp shadow edges) */
+    0.30f,          /* sun_haze */
     0,              /* light_debug */
      0,              /* thingno_debug */
      0,              /* sprite_debug */
     /* Per-category brightness: fillers off, buildings moderate, streetlamps vivid */
-    0.0f,           /* filler_brightness (0% — fillers off entirely) */
-    0.3f,           /* building_brightness (30% — dim building pools) */
-    1.5f,           /* street_brightness (150% — streetlamp glow spots) */
-    21.0f,          /* filler_radius (21 = SW default) */
-    21.0f,          /* building_radius (21 = SW default) */
-    21.0f,          /* street_radius (21 = SW default) */
+    1.0f,           /* filler_brightness */
+    1.0f,           /* building_brightness */
+    1.0f,           /* street_brightness */
+    10.0f,          /* filler_radius */
+    3.0f,           /* building_radius */
+    13.0f,          /* street_radius */
     50,             /* filler_maxint — Intensity ≤ 50 = filler */
     200,            /* building_maxint — Intensity ≤ 200 = building, > 200 = street */
-    0,              /* sprite_filter — off by default (0=none,1=xbr,2=scalefx) */
+    2,              /* sprite_filter (0=none,1=xbr,2=scalefx) */
     3,              /* sprite_scale — used only when sprite_filter=xbr */
     /* --- transparency (Phase 8) --- */
     1,              /* transp_enable — blended faces on */
     0.5f,           /* transp_alpha */
     1,              /* transp_sprite_enable — blended sprites on */
-    0.85f,          /* transp_sprite_alpha — slightly see-through glow */
+    0.8f,           /* transp_sprite_alpha — slightly see-through glow */
     0,              /* transp_debug — diagnostic: force all faces transparent */
     /* --- glare billboard settings --- */
-    6.5f,           /* glare_headlamp_width */
+    6.0f,           /* glare_headlamp_width */
     6.5f,           /* glare_red_width */
     6.5f,           /* glare_blue_width */
-    1.0f,           /* glare_headlamp_alpha (vi) */
-    3.5f,           /* glare_red_alpha (vi) */
-    5.5f,           /* glare_blue_alpha (vi) */
+    1.5f,           /* glare_headlamp_alpha */
+    4.0f,           /* glare_red_alpha */
+    6.0f,           /* glare_blue_alpha */
     /* --- fire dynamic light --- */
     1,              /* firelight_enable */
-    1.6f,           /* firelight_brightness */
-    11.0f,          /* firelight_radius (~5.7 tile pool) */
-    0.30f,          /* firelight_flicker */
-    3.0f,           /* firelight_cluster (merge radius, tiles) */
+    1.5f,           /* firelight_brightness */
+    9.0f,           /* firelight_radius (~5.7 tile pool) */
+    0.20f,          /* firelight_flicker */
+    4.0f,           /* firelight_cluster (merge radius, tiles) */
     1,              /* firelight_min_flames (light all clusters) */
     /* --- persuaded-person light --- */
     1,              /* persuadelight_enable */
-    0.8f,           /* persuadelight_brightness (half the fire gain) */
-    8.0f,           /* persuadelight_radius */
+    0.75f,          /* persuadelight_brightness */
+    6.0f,           /* persuadelight_radius */
     0.15f,          /* persuadelight_pulse */
     2.0f,           /* persuadelight_cluster (merge radius, tiles) */
     0.10f,          /* persuadelight_r */
     0.95f,          /* persuadelight_g */
     0.85f,          /* persuadelight_b (turquoise) */
-    1.0f,           /* face_ao (1.0 = SW-linear building shade, >1 = darker curve) */
-    0.6f,           /* shade_sat (shadow saturation boost; 0 = plain linear) */
-    1.6f,           /* shadow_depth (baked floor-shadow gamma; 1 = linear SW) */
+    0.9f,           /* face_ao (1.0 = SW-linear building shade, >1 = darker curve) */
+    1.0f,           /* shade_sat (shadow saturation boost; 0 = plain linear) */
+    0.8f,           /* shadow_depth (baked floor-shadow gamma; 1 = linear SW) */
     0.3f,           /* sprite_persp_strength (0=distance-flat, 1=full 3D
                      * perspective; see hwr_billboard_dist_scale in
                      * hwr_sprite.c). Tune live via [sprites] persp_strength. */
-    468.0f,         /* sprite_persp_zoom_ref (zoom/scale at which sprite size is
+    156.0f,         /* sprite_persp_zoom_ref (zoom/scale at which sprite size is
                      * nominal; size ∝ scale/ref. <=0 disables zoom scaling.
                      * Tune live via [sprites] persp_zoom_ref). */
     3.0f,           /* sprite_persp_max_scale (ceiling on the perspective-cancel
@@ -127,44 +127,46 @@ static HwrLightDefaults hwr_defaults = {
     0.35f,          /* rain_alpha (translucent) */
     600.0f,         /* rain_density (columns per screen-height of width) */
     2.5f,           /* rain_speed (screen-heights/second) */
-    0.6f,           /* rain_width (very thin streaks, pixels) */
+    1.0f,           /* rain_width (very thin streaks, pixels) */
     0.05f,          /* rain_length (fraction of screen height) */
     0.0f,           /* rain_angle (degrees, 0 = straight down) */
     /* --- distance fog (weather haze, drawn with the rain) --- */
     1,              /* fog_enable */
     0.55f, 0.58f, 0.62f,  /* fog_r/g/b (cool grey mist) */
-    0.55f,          /* fog_density (max opacity at full distance) */
+    0.66f,          /* fog_density (max opacity at full distance) */
     -1500.0f,       /* fog_start (view depth; 0 = screen-centre look-at point,
                      * negative starts the haze nearer than mid-screen) */
     6000.0f,        /* fog_end (view depth of full haze) */
-    0.0f,           /* fog_scr_start (fallback screen-Y ramp, 0 = top) */
+    0.25f,          /* fog_scr_start (fallback screen-Y ramp, 0 = top) */
     0.55f,          /* fog_scr_end */
     /* --- bullet-time-on-explosion --- */
     1,              /* bullettime_enable */
-    0.66f,          /* bullettime_scale (two-thirds speed while dipped) */
+    0.50f,          /* bullettime_scale (half speed while dipped) */
     2500,           /* bullettime_hold_ms */
     1500,           /* bullettime_ramp_ms */
     100,            /* bullettime_min_intensity (filters out plain bullet hits) */
-    20,             /* bullettime_range_tiles (explosions further than this never trigger it) */
-    0.06f,          /* bullettime_blur_strength (radial zoom-blur max reach, UV units) */
-    0.4f,           /* bullettime_trail (motion-trail/ghosting strength) */
+    25,             /* bullettime_range_tiles (explosions further than this never trigger it) */
+    0.07f,          /* bullettime_blur_strength (radial zoom-blur max reach, UV units) */
+    0.75f,          /* bullettime_trail (motion-trail/ghosting strength) */
     /* --- water surface --- */
     1,              /* water_shine_enable */
     1.0f,           /* water_shine_strength (scales SW's wobble-driven ReflShade;
                      * 1.0 = software-exact, higher = stronger shine blobs) */
-    0,              /* water_reflect_enable (SSR off by default) */
+    1,              /* water_reflect_enable */
     0.25f,          /* water_reflect_strength (mild) */
     0.10f,          /* water_reflect_sky_r  (dark blue/grey) */
     0.13f,          /* water_reflect_sky_g */
     0.18f,          /* water_reflect_sky_b */
-    2.0f,           /* water_reflect_blur (pixels; softens reflection edges) */
+    2.5f,           /* water_reflect_blur (pixels; softens reflection edges) */
     0,              /* water_reflect_debug */
     0,              /* floor_no_surface_mode (0 = skip tile) */
     /* --- world texture upscale ([upscale] section) --- */
-    0,              /* texture_filter — off by default (0=none,1=xbr,2=scalefx);
+    2,              /* texture_filter (0=none,1=xbr,2=scalefx);
                      * baking itself (sparkle-free, GL_NEAREST) always runs
                      * regardless of this filter (see hwr_floor.c). */
     3,              /* texture_scale — used only when texture_filter=xbr */
+    1,              /* sprite_edge_aa (alpha-to-coverage on sprite cutouts;
+                     * no-op unless the MSAA G-buffer is up) */
 };
 
 static void table_defaults(void)
@@ -638,6 +640,8 @@ static void parse_sprites_line(const char *p)
         hwr_defaults.sprite_persp_zoom_ref = fv;
     } else if (sscanf(p, "persp_max_scale = %f", &fv) == 1) {
         hwr_defaults.sprite_persp_max_scale = fv;
+    } else if (sscanf(p, "edge_aa = %d", &iv) == 1) {
+        hwr_defaults.sprite_edge_aa = (iv != 0);
     }
 }
 

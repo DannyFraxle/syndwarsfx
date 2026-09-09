@@ -243,6 +243,13 @@ typedef struct {
                                      1=xBR, 2=ScaleFX. */
     int   texture_scale;        /**< xBR scale factor (2/3/4) when texture_filter=1;
                                      ignored (fixed 3x) when texture_filter=2. */
+    int   sprite_edge_aa;       /**< Antialias alpha-tested sprite cutout edges
+                                     via alpha-to-coverage. MSAA smooths polygon
+                                     silhouettes only; sprites are billboards
+                                     whose shape comes from `discard`, so their
+                                     outlines stay hard however high AntiAliasing
+                                     is set. Needs a multisample G-buffer to do
+                                     anything (0 = off, keeps hard pixel edges). */
 } HwrLightDefaults;
 
 /** Reset every entry to white (1,1,1) at scale 1.0 and defaults to sane values. */

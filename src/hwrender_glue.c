@@ -20,15 +20,16 @@
 static TbBool hwr_glue_requested = true;
 
 /* FX3D config, with defaults (overridden by fx3d.ini [fx3d] then CLI). */
-int fx3d_aa_samples = 0;
+int fx3d_aa_samples = 4;
 int fx3d_filter_ground = 1;
 int fx3d_filter_objects = 1;
-int fx3d_filter_sprites = 0;
+int fx3d_filter_sprites = 1;
 
-/* Frame-rate: default 60fps target, vsync on, FPS overlay off. */
-int fx3d_target_fps = 60;
+/* Frame-rate: uncapped present rate, vsync on, FPS overlay on.
+ * These match the shipped conf/fx3d.ini [fx3d] section. */
+int fx3d_target_fps = 0;
 int fx3d_vsync = 1;
-int fx3d_show_fps = 0;
+int fx3d_show_fps = 1;
 int fx3d_debug_things = 0;
 
 int fx3d_cli_aa = -1;

@@ -850,13 +850,38 @@ static const char *spr_frag_src =
     "uniform int   uSunDebug;\n"
     "uniform float uSunHaze;\n"
     "uniform float uAlpha;\n"            /* output alpha (1 = opaque; <1 = translucent) */
+    "uniform int   uEdgeAA;\n"           /* 1 = antialias the cutout via alpha-to-coverage */
     "uniform int  uUnlit;\n"             /* 1 = self-lit (ignore scene lights) — effects */
     "uniform float uShadeSat;\n"         /* shadow saturation boost (0 = plain linear) */
     RECOLOUR_GLSL
     "void main(){\n"
     "    fragPos = vec4(vWorldPos, -1.0);\n"  /* w: 1=water, 0=3D geom, -1=sprite/billboard */
     "    vec4 atex = texture(uAtlas, vUV);\n"
-    "    if (atex.a < 0.5) discard;\n"
+    /* Cutout coverage. A billboard's outline comes from `discard`, not from
+     * polygon edges, so MSAA cannot touch it however high AntiAliasing is.
+     * uEdgeAA feeds a fractional coverage to alpha-to-coverage instead, which
+     * resolves the outline across the G-buffer's samples. The alpha is
+     * bilinear-filtered by hand so the colour can stay NEAREST (crisp pixel
+     * art), and the transition is then narrowed to about one screen pixel with
+     * fwidth - a magnified sprite would otherwise feather over several pixels
+     * and read as blur rather than antialiasing. Taps reach at most one texel
+     * outside the sprite rect, which ATLAS_PAD fills with a clamped copy of
+     * the sprite's own edge, so this never samples a neighbouring tile. */
+    "    float cov = atex.a;\n"
+    "    if (uEdgeAA == 1) {\n"
+    "        vec2 ts = vec2(textureSize(uAtlas, 0));\n"
+    "        vec2 t  = vUV * ts - 0.5;\n"
+    "        vec2 f  = fract(t);\n"
+    "        ivec2 b = ivec2(floor(t));\n"
+    "        float a00 = texelFetch(uAtlas, b + ivec2(0, 0), 0).a;\n"
+    "        float a10 = texelFetch(uAtlas, b + ivec2(1, 0), 0).a;\n"
+    "        float a01 = texelFetch(uAtlas, b + ivec2(0, 1), 0).a;\n"
+    "        float a11 = texelFetch(uAtlas, b + ivec2(1, 1), 0).a;\n"
+    "        float ab  = mix(mix(a00, a10, f.x), mix(a01, a11, f.x), f.y);\n"
+    "        float w   = max(fwidth(ab), 1.0e-4);\n"
+    "        cov = smoothstep(0.5 - w, 0.5 + w, ab);\n"
+    "        if (cov < 0.02) discard;\n"
+    "    } else if (atex.a < 0.5) discard;\n"
     /* Remap the tile's frozen bake-palette colours to the live palette, so
      * infrared/thermal view (and brightness changes) recolour cached sprites
      * exactly like the software renderer's palette swap. */
@@ -864,7 +889,7 @@ static const char *spr_frag_src =
     "    /* Effects (smoke/fire/glow) are self-lit like the software renderer: the\n"
     "     * baked colour at full brightness, with the per-sprite shade used as an\n"
     "     * ALPHA multiplier so particles can fade out over their life. */\n"
-    "    if (uUnlit == 1) { frag = vec4(c, uAlpha * clamp(vShade, 0.0, 1.0)); return; }\n"
+    "    if (uUnlit == 1) { frag = vec4(c, cov * uAlpha * clamp(vShade, 0.0, 1.0)); return; }\n"
     "    vec3 light_col = vec3(0.0);\n"
     "    float shadow = 0.0;\n"
     "    for (int i = 0; i < uNumLights; i++) {\n"
@@ -902,7 +927,7 @@ static const char *spr_frag_src =
     "            lit = sum_lit / sum_w;\n"
     "            lit = mix(lit, 1.0, uSunHaze);\n"
     "        }\n"
-    "        if (uSunDebug == 1) { frag = vec4(vec3(lit) * vShade, uAlpha); return; }\n"
+    "        if (uSunDebug == 1) { frag = vec4(vec3(lit) * vShade, cov * uAlpha); return; }\n"
     "        base += uSunAmbient + uSunBright * lit;\n"
     "    }\n"
     "    light_col = light_col * uGain * uTint + base;\n"
@@ -924,7 +949,7 @@ static const char *spr_frag_src =
     "    float sboost = 1.0 + uShadeSat * clamp(1.0 - lv, 0.0, 1.0);\n"
     "    vec3 lin = c * light_col * vShade;\n"
     "    float g = dot(lin, vec3(0.299, 0.587, 0.114));\n"
-    "    frag = vec4(max(mix(vec3(g), lin, sboost), 0.0), uAlpha);\n"
+    "    frag = vec4(max(mix(vec3(g), lin, sboost), 0.0), cov * uAlpha);\n"
     "}\n";
 
 /* Shadow blob shader: simple radial gradient on the ground */
@@ -1055,6 +1080,10 @@ static GLint spr_loc_sun_mvp = -1, spr_loc_sun_bright = -1, spr_loc_sun_ambient 
 static GLint spr_loc_sun_bias = -1, spr_loc_sun_enable = -1, spr_loc_sun_pcf = -1;
 static GLint spr_loc_sun_debug = -1, spr_loc_sun_haze = -1;
 static GLint spr_loc_alpha = -1;
+static GLint spr_loc_edge_aa = -1;
+/* [sprites] edge_aa AND the MSAA G-buffer being up; decided per frame in
+ * spr_setup_program and read by the draw to gate GL_SAMPLE_ALPHA_TO_COVERAGE. */
+static int   spr_edge_aa_live = 0;
 static GLint spr_loc_invpal = -1, spr_loc_pallive = -1, spr_loc_recolour = -1;
 static GLint spr_loc_unlit = -1;
 static GLint spr_loc_shadesat = -1;
@@ -1144,6 +1173,7 @@ static int spr_init(void)
     spr_loc_sun_debug  = glGetUniformLocation(spr_prog, "uSunDebug");
     spr_loc_sun_haze   = glGetUniformLocation(spr_prog, "uSunHaze");
     spr_loc_alpha      = glGetUniformLocation(spr_prog, "uAlpha");
+    spr_loc_edge_aa    = glGetUniformLocation(spr_prog, "uEdgeAA");
     spr_loc_unlit      = glGetUniformLocation(spr_prog, "uUnlit");
     spr_loc_shadesat   = glGetUniformLocation(spr_prog, "uShadeSat");
     spr_loc_invpal     = glGetUniformLocation(spr_prog, "uInvPal");
@@ -1336,6 +1366,16 @@ static void spr_setup_program(const HwrCamera *cam,
     glUseProgram(spr_prog);
     glUniform1f(spr_loc_alpha, 1.0f);   /* opaque; translucent pass overrides */
     glUniform1i(spr_loc_unlit, 0);      /* opaque sprites are scene-lit */
+    /* Cutout antialiasing is only meaningful with samples to spread the
+     * coverage over, so it follows the MSAA G-buffer rather than AntiAliasing
+     * alone - with a single-sample target alpha-to-coverage would just
+     * round the coverage back to a hard edge. */
+    {
+        int ms = 0;
+        hwr_ssao_msaa_info(NULL, NULL, NULL, NULL, &ms, NULL);
+        spr_edge_aa_live = (hwr_lights_defaults().sprite_edge_aa && ms > 1);
+        glUniform1i(spr_loc_edge_aa, spr_edge_aa_live ? 1 : 0);
+    }
     /* Same [defaultlighting] shade_sat the floor/faces use, so sprites and the
      * world they stand on desaturate identically as they darken. */
     glUniform1f(spr_loc_shadesat, hwr_lights_defaults().shade_sat);
@@ -1644,6 +1684,12 @@ int hwr_sprites_render(const unsigned char *pal8, int filter_linear)
     (void)i;
     spr_setup_program(&cam, s);
     glBindVertexArray(spr_vao);
+    /* Turn the fragment's fractional coverage into a real sample mask. This is
+     * the opaque pass (blending is off), so coverage is the only way an edge
+     * sample can be partially kept - which is exactly what antialiases the
+     * cutout without needing the sprites sorted back-to-front. */
+    if (spr_edge_aa_live)
+        glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
 
     if (!spr_tr_enable) {
         /* All sprites, unlit=0 (legacy path — translucent pass disabled). */
@@ -1677,6 +1723,8 @@ int hwr_sprites_render(const unsigned char *pal8, int filter_linear)
         glUniform1i(spr_loc_unlit, 0);   /* restore for safety */
     }
 
+    if (spr_edge_aa_live)
+        glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
     glBindVertexArray(0);
     hwr_gl_check("hwr_sprites_render");
     return 1;
