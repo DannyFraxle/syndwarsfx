@@ -26,6 +26,8 @@
 #include "poly_trigp.h"
 #include "privbflog.h"
 
+#define PITCH_SH VEC_MAP_PITCH_SH
+
 const long gpoly_reptable[] = {
          0x0,0x7FFFFFFF,0x3FFFFFFF,0x2AAAAAAA,0x1FFFFFFF,0x19999999,0x15555555,0x12492492,
   0x0FFFFFFF,0x0E38E38E,0x0CCCCCCC,0x0BA2E8BA,0x0AAAAAAA, 0x9D89D89, 0x9249249, 0x8888888,
@@ -396,7 +398,7 @@ static TbPixel gpoly_pixel_shaded(struct gpoly_blends *p_bld, const struct gpoly
     p_bld->B[2] = loc_2d + p_inc->S[1];
     loc_2d = p_bld->B[0] + loc_carry;
 
-    ret_l = vec_map[(a3b_h << 8) | a3b_l];
+    ret_l = vec_map[(a3b_h << PITCH_SH) | a3b_l];
 
     loc_carry = __CFADDL__(loc_2d, p_inc->S[2]);
     p_bld->B[0] = loc_2d + p_inc->S[2];
@@ -424,7 +426,7 @@ static TbPixel gpoly_pixel_noshade(struct gpoly_blends *p_bld, const struct gpol
     p_bld->B[2] = loc_2d + p_inc->S[1];
     loc_2d = p_bld->B[0] + loc_carry;
 
-    ret_l = vec_map[(a3b_h << 8) | a3b_l];
+    ret_l = vec_map[(a3b_h << PITCH_SH) | a3b_l];
 
     loc_carry = __CFADDL__(loc_2d, p_inc->S[2]);
     p_bld->B[0] = loc_2d + p_inc->S[2];

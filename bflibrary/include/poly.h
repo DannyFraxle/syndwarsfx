@@ -29,6 +29,14 @@ extern "C" {
 
 #define POLY_SCANS_COUNT (MAX_SUPPORTED_SCREEN_HEIGHT * 6 / 5)
 
+/** Shift required to Vb coord get position within vec_map texture data.
+ */
+#define VEC_MAP_PITCH_SH 8
+
+/** Line pitch within vec_map texture data.
+ */
+#define VEC_MAP_PITCH (1 << VEC_MAP_PITCH_SH)
+
 #pragma pack(1)
 
 enum RenderingVectorMode {
